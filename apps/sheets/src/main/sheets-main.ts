@@ -44,27 +44,26 @@ import { createI18n, getUiLang, type Lang, normalizeLang, setUiLang } from '@gen
 import { ProjectStore } from '@genoffice/project-store'
 
 import {
+  acquireAiRequest,
   AiCreditsError,
   AiTimeoutError,
   chatForProvider,
+  configureCodexHome,
+  createAiTurnController,
   defaultAiSettings,
-  resolveAiSettings,
+  getCodexAccountStatus,
+  loginCodex,
+  parseAiChatRequest,
+  parseAiRequestId,
+  parseAiStreamRequest,
+  runIfAiTurnActive,
   streamForProvider,
-  type AiProviderId,
   type AiSettings,
   type AiStreamChunk,
-  type GenSparkAccountStatus,
-  type LegacyAiSettings,
-} from '@genoffice/ai-provider'
+  type CodexAccountStatus,
+} from '@genoffice/ai-provider/node'
 import { csvToXlsxBuffer, decodeCsvBuffer } from '../gateway/csv-import'
-import {
-  gskApiKey,
-  gskLogin,
-  gskLoginInfo,
-  hasGskAuth,
-  webSearch,
-  imageSearch,
-} from '@genoffice/ai-search'
+import { webSearch, imageSearch } from '@genoffice/ai-search'
 import { parseFileToText } from '@genoffice/file-parse'
 import type { CellEdit, SheetStructuralOps } from '../gateway/xlsx-gateway'
 import { readArchiveEntryText, saveWorkbookViaSidecar } from '../gateway/xlsx-package-io'
@@ -79,9 +78,6 @@ import type {
 } from '../shared/desktop-api'
 import {
   ATTACHMENT_IMAGE_EXTS,
-  aiChatRequestSchema,
-  aiSettingsInputSchema,
-  aiStreamRequestSchema,
   workbookFileSchema,
   workbookFormulaCellsRequestSchema,
   workbookFormulaCellsResultSchema,
@@ -128,7 +124,7 @@ const tMain = createI18n({
     errParseFailed: '文件解析失败',
     errImageNoText: '图片附件不提供文本,已作为图像随用户消息发送,直接看图即可',
     errNotImage: '不是支持的图片类型',
-    errGskNotLoggedIn: '未登录 Genspark:请点击下方「登录 Genspark」完成登录后重试',
+    errCodexNotLoggedIn: 'Not signed in to the local Codex account. Sign in below, then retry.',
     errNoApiKey: '未配置 {provider} 的 API Key',
     errNoModel: '未配置模型名称',
     errImgAbsPath: '图片路径必须是绝对路径。',
@@ -171,8 +167,8 @@ const tMain = createI18n({
     errParseFailed: 'Failed to parse file',
     errImageNoText: 'Image attachments have no text; the image is sent along with the user message',
     errNotImage: 'not a supported image type',
-    errGskNotLoggedIn:
-      'Not signed in to Genspark: click “Sign in to Genspark” below, sign in, then retry',
+    errCodexNotLoggedIn:
+      'Not signed in to Codex: click “Sign in to Codex” below, sign in, then retry',
     errNoApiKey: 'No API key configured for {provider}',
     errNoModel: 'No model name configured',
     errImgAbsPath: 'Image path must be absolute.',
@@ -217,8 +213,8 @@ const tMain = createI18n({
     errImageNoText:
       '画像添付にはテキストがありません。画像はユーザー メッセージと一緒に送信されるため、そのまま画像をご確認ください',
     errNotImage: 'サポートされていない画像形式です',
-    errGskNotLoggedIn:
-      'Genspark にサインインしていません。下の「Genspark にサインイン」からサインインして再試行してください',
+    errCodexNotLoggedIn:
+      'Codex にサインインしていません。下の「Codex にサインイン」からサインインして再試行してください',
     errNoApiKey: '{provider} の API キーが設定されていません',
     errNoModel: 'モデル名が設定されていません',
     errImgAbsPath: '画像パスは絶対パスで指定してください。',
@@ -264,8 +260,8 @@ const tMain = createI18n({
     errImageNoText:
       '이미지 첨부에는 텍스트가 없습니다. 이미지는 사용자 메시지와 함께 전송되므로 이미지를 직접 확인하세요',
     errNotImage: '지원되는 이미지 형식이 아닙니다',
-    errGskNotLoggedIn:
-      'Genspark에 로그인되어 있지 않습니다. 아래 "Genspark 로그인"을 눌러 로그인한 뒤 다시 시도하세요',
+    errCodexNotLoggedIn:
+      'Codex에 로그인되어 있지 않습니다. 아래 "Codex 로그인"을 눌러 로그인한 뒤 다시 시도하세요',
     errNoApiKey: '{provider}의 API 키가 설정되지 않았습니다',
     errNoModel: '모델 이름이 설정되지 않았습니다',
     errImgAbsPath: '이미지 경로는 절대 경로여야 합니다.',
@@ -312,8 +308,8 @@ const tMain = createI18n({
     errImageNoText:
       "Les images jointes n'ont pas de texte ; l'image est envoyée avec le message de l'utilisateur",
     errNotImage: "type d'image non pris en charge",
-    errGskNotLoggedIn:
-      'Non connecté à Genspark : cliquez sur « Se connecter à Genspark » ci-dessous, connectez-vous puis réessayez',
+    errCodexNotLoggedIn:
+      'Non connecté à Codex : cliquez sur « Se connecter à Codex » ci-dessous, connectez-vous puis réessayez',
     errNoApiKey: 'Aucune clé API configurée pour {provider}',
     errNoModel: 'Aucun nom de modèle configuré',
     errImgAbsPath: "Le chemin de l'image doit être absolu.",
@@ -360,8 +356,8 @@ const tMain = createI18n({
     errImageNoText:
       'Bildanlagen enthalten keinen Text; das Bild wird zusammen mit der Benutzernachricht gesendet',
     errNotImage: 'kein unterstützter Bildtyp',
-    errGskNotLoggedIn:
-      'Nicht bei Genspark angemeldet: Klicken Sie unten auf „Bei Genspark anmelden“, melden Sie sich an und versuchen Sie es erneut',
+    errCodexNotLoggedIn:
+      'Nicht bei Codex angemeldet: Klicken Sie unten auf „Bei Codex anmelden“, melden Sie sich an und versuchen Sie es erneut',
     errNoApiKey: 'Kein API-Schlüssel für {provider} konfiguriert',
     errNoModel: 'Kein Modellname konfiguriert',
     errImgAbsPath: 'Der Bildpfad muss absolut sein.',
@@ -408,8 +404,8 @@ const tMain = createI18n({
     errImageNoText:
       'Las imágenes adjuntas no tienen texto; la imagen se envía junto con el mensaje del usuario',
     errNotImage: 'no es un tipo de imagen compatible',
-    errGskNotLoggedIn:
-      'No has iniciado sesión en Genspark: pulsa «Iniciar sesión en Genspark» abajo, inicia sesión y vuelve a intentarlo',
+    errCodexNotLoggedIn:
+      'No has iniciado sesión en Codex: pulsa «Iniciar sesión en Codex» abajo, inicia sesión y vuelve a intentarlo',
     errNoApiKey: 'No hay clave de API configurada para {provider}',
     errNoModel: 'No hay nombre de modelo configurado',
     errImgAbsPath: 'La ruta de la imagen debe ser absoluta.',
@@ -455,8 +451,8 @@ const tMain = createI18n({
     errImageNoText:
       'รูปภาพแนบไม่มีข้อความ รูปภาพจะถูกส่งไปพร้อมข้อความของผู้ใช้ ให้ดูที่รูปภาพโดยตรง',
     errNotImage: 'ไม่ใช่ชนิดรูปภาพที่รองรับ',
-    errGskNotLoggedIn:
-      'ยังไม่ได้ลงชื่อเข้าใช้ Genspark: แตะ “ลงชื่อเข้าใช้ Genspark” ด้านล่าง แล้วลองอีกครั้ง',
+    errCodexNotLoggedIn:
+      'ยังไม่ได้ลงชื่อเข้าใช้ Codex: แตะ “ลงชื่อเข้าใช้ Codex” ด้านล่าง แล้วลองอีกครั้ง',
     errNoApiKey: 'ยังไม่ได้ตั้งค่า API Key ของ {provider}',
     errNoModel: 'ยังไม่ได้กำหนดชื่อโมเดล',
     errImgAbsPath: 'เส้นทางรูปภาพต้องเป็นเส้นทางแบบสัมบูรณ์',
@@ -500,7 +496,7 @@ const tMain = createI18n({
     errParseFailed: 'Gagal mengurai file',
     errImageNoText: 'Lampiran gambar tidak memiliki teks; gambar dikirim bersama pesan pengguna',
     errNotImage: 'bukan jenis gambar yang didukung',
-    errGskNotLoggedIn: 'Belum masuk ke Genspark: klik “Masuk ke Genspark” di bawah, lalu coba lagi',
+    errCodexNotLoggedIn: 'Not signed in to the local Codex account. Sign in below, then retry.',
     errNoApiKey: 'API Key untuk {provider} belum dikonfigurasi',
     errNoModel: 'Nama model belum dikonfigurasi',
     errImgAbsPath: 'Jalur gambar harus berupa jalur absolut.',
@@ -546,8 +542,8 @@ const tMain = createI18n({
     errImageNoText:
       'Вложенные изображения не содержат текста; изображение отправляется вместе с сообщением пользователя',
     errNotImage: 'неподдерживаемый тип изображения',
-    errGskNotLoggedIn:
-      'Вы не вошли в Genspark: нажмите «Войти в Genspark» ниже, войдите и повторите попытку',
+    errCodexNotLoggedIn:
+      'Вы не вошли в Codex: нажмите «Войти в Codex» ниже, войдите и повторите попытку',
     errNoApiKey: 'API-ключ для {provider} не настроен',
     errNoModel: 'Имя модели не настроено',
     errImgAbsPath: 'Путь к изображению должен быть абсолютным.',
@@ -592,8 +588,8 @@ const tMain = createI18n({
     errParseFailed: 'فشل تحليل الملف',
     errImageNoText: 'مرفقات الصور لا تحتوي على نص؛ تُرسل الصورة مع رسالة المستخدم',
     errNotImage: 'نوع صورة غير مدعوم',
-    errGskNotLoggedIn:
-      'لم تسجّل الدخول إلى Genspark: انقر على «تسجيل الدخول إلى Genspark» أدناه ثم أعد المحاولة',
+    errCodexNotLoggedIn:
+      'لم تسجّل الدخول إلى Codex: انقر على «تسجيل الدخول إلى Codex» أدناه ثم أعد المحاولة',
     errNoApiKey: 'لم يتم تكوين مفتاح API لـ {provider}',
     errNoModel: 'لم يتم تكوين اسم النموذج',
     errImgAbsPath: 'يجب أن يكون مسار الصورة مسارًا مطلقًا.',
@@ -638,8 +634,8 @@ const tMain = createI18n({
     errImageNoText:
       'Anexos de imagem não têm texto; a imagem é enviada junto com a mensagem do usuário',
     errNotImage: 'não é um tipo de imagem suportado',
-    errGskNotLoggedIn:
-      'Não conectado ao Genspark: clique em “Entrar no Genspark” abaixo, entre e tente novamente',
+    errCodexNotLoggedIn:
+      'Não conectado ao Codex: clique em “Entrar no Codex” abaixo, entre e tente novamente',
     errNoApiKey: 'Nenhuma chave de API configurada para {provider}',
     errNoModel: 'Nenhum nome de modelo configurado',
     errImgAbsPath: 'O caminho da imagem deve ser absoluto.',
@@ -685,8 +681,8 @@ const tMain = createI18n({
     errImageNoText:
       "Gli allegati immagine non hanno testo; l'immagine viene inviata insieme al messaggio dell'utente",
     errNotImage: 'tipo di immagine non supportato',
-    errGskNotLoggedIn:
-      'Accesso a Genspark non effettuato: fai clic su “Accedi a Genspark” qui sotto, accedi e riprova',
+    errCodexNotLoggedIn:
+      'Accesso a Codex non effettuato: fai clic su “Accedi a Codex” qui sotto, accedi e riprova',
     errNoApiKey: 'Nessuna chiave API configurata per {provider}',
     errNoModel: 'Nessun nome di modello configurato',
     errImgAbsPath: "Il percorso dell'immagine deve essere assoluto.",
@@ -733,8 +729,8 @@ const tMain = createI18n({
     errImageNoText:
       'Załączniki graficzne nie zawierają tekstu; obraz jest wysyłany razem z wiadomością użytkownika',
     errNotImage: 'nieobsługiwany typ obrazu',
-    errGskNotLoggedIn:
-      'Nie zalogowano do Genspark: kliknij „Zaloguj się do Genspark” poniżej, zaloguj się i spróbuj ponownie',
+    errCodexNotLoggedIn:
+      'Nie zalogowano do Codex: kliknij „Zaloguj się do Codex” poniżej, zaloguj się i spróbuj ponownie',
     errNoApiKey: 'Nie skonfigurowano klucza API dla {provider}',
     errNoModel: 'Nie skonfigurowano nazwy modelu',
     errImgAbsPath: 'Ścieżka obrazu musi być bezwzględna.',
@@ -780,8 +776,8 @@ const tMain = createI18n({
     errImageNoText:
       'Afbeeldingsbijlagen bevatten geen tekst; de afbeelding wordt samen met het gebruikersbericht verzonden',
     errNotImage: 'geen ondersteund afbeeldingstype',
-    errGskNotLoggedIn:
-      'Niet aangemeld bij Genspark: klik hieronder op “Aanmelden bij Genspark”, meld u aan en probeer het opnieuw',
+    errCodexNotLoggedIn:
+      'Niet aangemeld bij Codex: klik hieronder op “Aanmelden bij Codex”, meld u aan en probeer het opnieuw',
     errNoApiKey: 'Geen API-sleutel geconfigureerd voor {provider}',
     errNoModel: 'Geen modelnaam geconfigureerd',
     errImgAbsPath: 'Het afbeeldingspad moet absoluut zijn.',
@@ -827,8 +823,8 @@ const tMain = createI18n({
     errParseFailed: 'Gagal menghurai fail',
     errImageNoText: 'Lampiran imej tiada teks; imej dihantar bersama mesej pengguna',
     errNotImage: 'bukan jenis imej yang disokong',
-    errGskNotLoggedIn:
-      'Belum log masuk ke Genspark: klik “Log masuk ke Genspark” di bawah, kemudian cuba lagi',
+    errCodexNotLoggedIn:
+      'Belum log masuk ke Codex: klik “Log masuk ke Codex” di bawah, kemudian cuba lagi',
     errNoApiKey: 'Kunci API untuk {provider} belum dikonfigurasikan',
     errNoModel: 'Nama model belum dikonfigurasikan',
     errImgAbsPath: 'Laluan imej mestilah laluan mutlak.',
@@ -873,7 +869,7 @@ const tMain = createI18n({
     errParseFailed: 'ניתוח הקובץ נכשל',
     errImageNoText: 'קבצים מצורפים מסוג תמונה אינם מכילים טקסט; התמונה נשלחת יחד עם הודעת המשתמש',
     errNotImage: 'סוג תמונה שאינו נתמך',
-    errGskNotLoggedIn: 'לא מחובר ל-Genspark: לחץ על "התחבר ל-Genspark" למטה, התחבר ונסה שוב',
+    errCodexNotLoggedIn: 'Not signed in to the local Codex account. Sign in below, then retry.',
     errNoApiKey: 'לא הוגדר מפתח API עבור {provider}',
     errNoModel: 'לא הוגדר שם מודל',
     errImgAbsPath: 'נתיב התמונה חייב להיות מוחלט.',
@@ -916,8 +912,8 @@ const tMain = createI18n({
     errParseFailed: 'फ़ाइल पार्स करने में विफल',
     errImageNoText: 'छवि अनुलग्नक में टेक्स्ट नहीं होता; छवि उपयोगकर्ता संदेश के साथ भेजी जाती है',
     errNotImage: 'समर्थित छवि प्रकार नहीं है',
-    errGskNotLoggedIn:
-      'Genspark में साइन इन नहीं है: नीचे “Genspark में साइन इन करें” पर क्लिक करें, साइन इन करें और फिर से कोशिश करें',
+    errCodexNotLoggedIn:
+      'Codex में साइन इन नहीं है: नीचे “Codex में साइन इन करें” पर क्लिक करें, साइन इन करें और फिर से कोशिश करें',
     errNoApiKey: '{provider} के लिए कोई API कुंजी कॉन्फ़िगर नहीं है',
     errNoModel: 'कोई मॉडल नाम कॉन्फ़िगर नहीं है',
     errImgAbsPath: 'छवि पथ निरपेक्ष होना चाहिए।',
@@ -963,7 +959,7 @@ const tMain = createI18n({
     errParseFailed: '檔案解析失敗',
     errImageNoText: '圖片附件不提供文字,已作為影像隨使用者訊息傳送,直接看圖即可',
     errNotImage: '不是支援的圖片類型',
-    errGskNotLoggedIn: '未登入 Genspark:請點擊下方「登入 Genspark」完成登入後重試',
+    errCodexNotLoggedIn: 'Not signed in to the local Codex account. Sign in below, then retry.',
     errNoApiKey: '未設定 {provider} 的 API Key',
     errNoModel: '未設定模型名稱',
     errImgAbsPath: '圖片路徑必須是絕對路徑。',
@@ -1079,7 +1075,11 @@ function registerSheetsSession(webContents: WebContents, client: XlsxSidecarClie
   webContents.once('destroyed', () => {
     const entry = sheetsTabs.get(webContents.id)
     sheetsTabs.delete(webContents.id)
-    if (entry) void closeAllSessions(entry)
+    if (entry) {
+      for (const controller of entry.aiStreams.values()) controller.abort()
+      entry.aiStreams.clear()
+      void closeAllSessions(entry)
+    }
     if (activeSheetsWebContents === webContents) activeSheetsWebContents = null
   })
 }
@@ -1189,22 +1189,6 @@ function pendingRecoveryFor(filePath: string): string | null {
     return null
   }
 }
-
-function readJson<T>(path: string, fallback: T): T {
-  try {
-    if (existsSync(path)) return JSON.parse(readFileSync(path, 'utf-8')) as T
-  } catch {
-    /* corrupted state file: fall back to defaults */
-  }
-  return fallback
-}
-
-function writeJson(path: string, value: unknown): void {
-  mkdirSync(join(path, '..'), { recursive: true })
-  writeFileSync(path, JSON.stringify(value, null, 2))
-}
-
-const SETTINGS_PATH = () => userDataPath('ai-settings.json')
 
 // Dev-only automation hooks: a fixed CDP port for driving the app from test
 // scripts, and a workbook path that bypasses the native file dialog.
@@ -2008,6 +1992,23 @@ export function registerSheetsIpc(): void {
 }
 
 let aiIpcRegistered = false
+const CODEX_ACCOUNT_CHECK_ERROR = "Unable to verify this app's Codex account. Try again."
+
+async function checkCodexAccount(): Promise<{ loggedIn: boolean; error?: string }> {
+  try {
+    return await getCodexAccountStatus()
+  } catch {
+    return { loggedIn: false, error: CODEX_ACCOUNT_CHECK_ERROR }
+  }
+}
+
+async function loginCodexAccount(signal?: AbortSignal): Promise<CodexAccountStatus> {
+  try {
+    return await loginCodex(signal)
+  } catch {
+    return { loggedIn: false }
+  }
+}
 
 export function registerSheetsAiIpc(): void {
   if (aiIpcRegistered) return
@@ -2015,87 +2016,70 @@ export function registerSheetsAiIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.aiGetSettings, (event): AiSettings => {
     sessionFor(event)
-    const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
-    const settings = resolveAiSettings(stored, defaultAiSettings())
-    // AI features all go through Genspark (gsk login); legacy settings that chose
-    // another provider are reset
-    settings.provider = 'genspark'
-    return settings
+    return defaultAiSettings()
   })
 
-  // Genspark account (gsk login state): the auth source for AI features; the
-  // frontend uses it to guide sign-in when logged out
-  ipcMain.handle(
-    IPC_CHANNELS.aiGskStatus,
-    async (_event, withEmail?: unknown): Promise<GenSparkAccountStatus> => {
-      if (!hasGskAuth()) return { loggedIn: false }
-      if (!withEmail) return { loggedIn: true }
-      const info = await gskLoginInfo()
-      return info?.email ? { loggedIn: true, email: info.email } : { loggedIn: true }
-    },
-  )
+  ipcMain.handle(IPC_CHANNELS.aiCodexStatus, (): Promise<CodexAccountStatus> => checkCodexAccount())
 
-  ipcMain.handle(IPC_CHANNELS.aiGskLogin, () => {
-    gskLogin()
+  ipcMain.handle(IPC_CHANNELS.aiCodexLogin, async (event): Promise<CodexAccountStatus> => {
+    const controller = new AbortController()
+    const abortOnDestroyed = () => controller.abort()
+    event.sender.once('destroyed', abortOnDestroyed)
+    try {
+      return await loginCodexAccount(controller.signal)
+    } finally {
+      event.sender.removeListener('destroyed', abortOnDestroyed)
+    }
   })
 
-  ipcMain.handle(IPC_CHANNELS.aiSetSettings, (event, input: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.aiSetSettings, (event) => {
     sessionFor(event)
-    const settings = aiSettingsInputSchema.parse(input)
-    writeJson(SETTINGS_PATH(), settings)
   })
 
   ipcMain.handle(IPC_CHANNELS.aiChat, async (event, input: unknown) => {
     sessionFor(event)
-    const request = aiChatRequestSchema.parse(input)
-    const provider = request.settings.provider as AiProviderId
-    let config = request.settings.providers[provider]
-    if (provider === 'genspark' && config && !config.apiKey) {
-      config = { ...config, apiKey: gskApiKey() }
-    }
-    if (!config?.apiKey) {
-      return {
-        ok: false,
-        error: provider === 'genspark' ? tm('errGskNotLoggedIn') : tm('errNoApiKey', { provider }),
-      }
-    }
-    if (!config.model) return { ok: false, error: tm('errNoModel') }
+    const request = parseAiChatRequest(input)
+    const provider = 'codex' as const
+    const config = defaultAiSettings().providers.codex
+    const lease = acquireAiRequest(`sheets-chat-${randomUUID()}`, 8192)
+    const deadline = createAiTurnController()
+    const abortOnDestroyed = () => deadline.controller.abort()
+    event.sender.once('destroyed', abortOnDestroyed)
     try {
-      return await chatForProvider(provider, config, request.system, request.user)
-    } catch (err) {
-      return { ok: false, error: String(err) }
+      const account = await checkCodexAccount()
+      if (!account.loggedIn) return { ok: false, error: account.error ?? tm('errCodexNotLoggedIn') }
+      return await chatForProvider(
+        provider,
+        config,
+        request.system,
+        request.user,
+        deadline.controller.signal,
+      )
+    } catch {
+      return { ok: false, error: 'AI request unavailable. Try again.' }
+    } finally {
+      event.sender.removeListener('destroyed', abortOnDestroyed)
+      deadline.release()
+      lease.release()
     }
   })
 
   ipcMain.handle(IPC_CHANNELS.aiStream, async (event, input: unknown) => {
     const entry = sessionFor(event)
-    const request = aiStreamRequestSchema.parse(input)
+    const request = parseAiStreamRequest(input)
     const { requestId, system, messages } = request
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
-    const provider = request.settings.provider as AiProviderId
-    let config = request.settings.providers[provider]
-    // Genspark's key never enters the settings file; it is read from the gsk
-    // login state per request
-    if (provider === 'genspark' && config && !config.apiKey) {
-      config = { ...config, apiKey: gskApiKey() }
-    }
+    const provider = 'codex' as const
+    const config = defaultAiSettings().providers.codex
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.aiStreamChunk, chunk)
     }
-    if (!config?.apiKey) {
-      send({
-        requestId,
-        type: 'error',
-        error: provider === 'genspark' ? tm('errGskNotLoggedIn') : tm('errNoApiKey', { provider }),
-      })
-      return
-    }
-    if (!config.model) {
-      send({ requestId, type: 'error', error: tm('errNoModel') })
-      return
-    }
-    const controller = new AbortController()
+    const lease = acquireAiRequest(requestId, maxTokens)
+    const deadline = createAiTurnController()
+    const controller = deadline.controller
+    const abortOnDestroyed = () => controller.abort()
+    event.sender.once('destroyed', abortOnDestroyed)
     entry.aiStreams.set(requestId, controller)
     // wire-activity keepalive: lets the renderer's silence watchdog tell a slow turn from a dead one
     let lastPing = 0
@@ -2106,21 +2090,41 @@ export function registerSheetsAiIpc(): void {
       send({ requestId, type: 'ping' })
     }
     try {
-      await streamForProvider(provider, config, system, messages, tools, maxTokens, {
-        signal: controller.signal,
-        onDelta: (text) => send({ requestId, type: 'delta', text }),
-        onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
-        onActivity: ping,
-      })
+      const account = await checkCodexAccount()
+      if (!account.loggedIn) {
+        send({ requestId, type: 'error', error: account.error ?? tm('errCodexNotLoggedIn') })
+        return
+      }
+      const started = await runIfAiTurnActive(
+        controller.signal,
+        () => event.sender.isDestroyed(),
+        () =>
+          streamForProvider(provider, config, system, messages, tools, maxTokens, {
+            signal: controller.signal,
+            onDelta: (text) => send({ requestId, type: 'delta', text }),
+            onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
+            onActivity: ping,
+          }),
+      )
+      if (!started) return
       send({ requestId, type: 'done' })
     } catch (err) {
       if (controller.signal.aborted) {
-        send({ requestId, type: 'done' })
+        send(
+          deadline.timedOut
+            ? {
+                requestId,
+                type: 'error',
+                error: 'AI request unavailable. Try again.',
+                errorCode: 'timeout',
+              }
+            : { requestId, type: 'done' },
+        )
       } else {
         send({
           requestId,
           type: 'error',
-          error: err instanceof Error ? err.message : String(err),
+          error: 'AI request unavailable. Try again.',
           ...(err instanceof AiTimeoutError
             ? { errorCode: 'timeout' as const }
             : err instanceof AiCreditsError
@@ -2130,12 +2134,15 @@ export function registerSheetsAiIpc(): void {
       }
     } finally {
       entry.aiStreams.delete(requestId)
+      event.sender.removeListener('destroyed', abortOnDestroyed)
+      deadline.release()
+      lease.release()
     }
   })
 
   ipcMain.handle(IPC_CHANNELS.aiStreamCancel, (event, requestId: unknown) => {
     const entry = sessionFor(event)
-    entry.aiStreams.get(z.string().min(1).parse(requestId))?.abort()
+    entry.aiStreams.get(parseAiRequestId(requestId))?.abort()
   })
 
   // Shared search tools (content + images): Serper with DuckDuckGo fallback
@@ -2146,8 +2153,8 @@ export function registerSheetsAiIpc(): void {
         z.string().parse(query),
         typeof maxResults === 'number' ? maxResults : 6,
       )
-    } catch (err) {
-      return { results: [], method: 'error', error: String(err) }
+    } catch {
+      return { results: [], method: 'error', error: 'Search unavailable. Try again.' }
     }
   })
   ipcMain.handle('ai:image-search', async (_event, query: unknown, maxResults?: unknown) => {
@@ -2156,8 +2163,8 @@ export function registerSheetsAiIpc(): void {
         z.string().parse(query),
         typeof maxResults === 'number' ? maxResults : 8,
       )
-    } catch (err) {
-      return { images: [], method: 'error', error: String(err) }
+    } catch {
+      return { images: [], method: 'error', error: 'Search unavailable. Try again.' }
     }
   })
 }
@@ -2757,6 +2764,7 @@ export function startSheetsStandalone(): void {
   if (!app.isPackaged && process.env.GENOFFICE_USER_DATA) {
     app.setPath('userData', process.env.GENOFFICE_USER_DATA)
   }
+  configureCodexHome(join(app.getPath('userData'), 'codex'))
   void applyMainProcessProxy()
   app.whenReady().then(() => {
     setUiLang(normalizeLang(process.env.GENOFFICE_LANG ?? app.getLocale()))

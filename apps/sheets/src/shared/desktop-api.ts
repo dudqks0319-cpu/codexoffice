@@ -6,7 +6,7 @@ import type {
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
-  GenSparkAccountStatus,
+  CodexAccountStatus,
 } from '@genoffice/ai-provider'
 
 const MAX_RANGE_CELLS = 20_000
@@ -1682,15 +1682,15 @@ export type WorkbookConditionalRule = z.infer<typeof conditionalRuleSchema>
 
 const aiProviderConfigSchema = z
   .object({
-    apiKey: z.string(),
-    model: z.string(),
+    apiKey: z.string().optional(),
+    model: z.string().optional(),
     baseUrl: z.string().optional(),
   })
   .strict()
 
 export const aiSettingsInputSchema = z
   .object({
-    provider: z.string().min(1),
+    provider: z.literal('codex'),
     providers: z.record(z.string(), aiProviderConfigSchema),
   })
   .strict()
@@ -1900,12 +1900,10 @@ export interface DesktopApi {
   /// start a streaming AI call; deltas arrive via onAiStream with the same requestId
   aiStream(request: AiStreamRequest): Promise<void>
   aiStreamCancel(requestId: string): Promise<void>
-  /// Genspark account status (gsk login state); withEmail also returns the email
-  /// (needs a network request, slower)
-  aiGskStatus(withEmail?: boolean): Promise<GenSparkAccountStatus>
-  /// Opens the browser to sign in to Genspark (fire-and-forget; aiGskStatus
-  /// becomes signed-in on completion)
-  aiGskLogin(): Promise<void>
+  /// Status of the app Codex account; credentials never enter the renderer.
+  aiCodexStatus(): Promise<CodexAccountStatus>
+  /// Starts Codex account authentication and returns the resulting status.
+  aiCodexLogin(): Promise<CodexAccountStatus>
   /// Web search (main-process Serper/DuckDuckGo, shared with docs/slides)
   webSearch(query: string, maxResults?: number): Promise<WebSearchResult>
   onAiStream(handler: (chunk: AiStreamChunk) => void): () => void

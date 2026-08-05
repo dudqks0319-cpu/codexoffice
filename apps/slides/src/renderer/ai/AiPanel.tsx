@@ -10,14 +10,13 @@ import {
   type DeckProgressEvent,
   type PageProgressItem,
 } from './slides-skill'
-import { extractJsonObject, parseOutlineJson } from './outline-json'
 import { createFilesSkill } from './files-skill'
 import { createElectronTransport } from './transport'
 import { renderSlidesToPngBase64 } from '../export-render'
-import { isQcEnabled, mergeQcPages, qcSlidePage, QC_MAX_PAGES } from './slide-qc'
+import { isQcEnabled, qcSlidePage, QC_MAX_PAGES } from './slide-qc'
 import { useI18n, t as tGlobal, aiLangDirective, type TFunc } from '../i18n/locale'
 import { Markdown } from '@genoffice/ui'
-import { GensparkMark } from '../components/icons'
+import { CodexMark } from '../components/icons'
 import sendEnterOn from '../assets/send-enter-on.png'
 import sendEnterOff from '../assets/send-enter-off.png'
 import sendStop from '../assets/send-stop.png'
@@ -112,7 +111,7 @@ interface ChatEntry {
   streaming?: boolean
   /** the run failed and this user message was rolled back out of the model context */
   undelivered?: boolean
-  /** the run failed because Genspark is signed out — render an inline sign-in button */
+  /** the run failed because Codex is signed out — render an inline sign-in button */
   loginRequired?: boolean
   tools?: ToolActivity[]
   /** Generation progress card (only one per turn, replaced in real time) */
@@ -299,8 +298,7 @@ export function AiPanel({
   imagesRef.current = images
   const attachmentsRef = useRef(attachments)
   attachmentsRef.current = attachments
-  // Paths of text attachments already read via read_attachment — generate_deck refuses to run
-  // while any current text attachment is still unread
+  // Paths of text attachments already read through the files skill.
   const readAttachmentPathsRef = useRef<Set<string>>(new Set())
 
   const instructionRef = useRef('')
@@ -459,463 +457,23 @@ export function AiPanel({
     })
   }
 
-  /** Update the last assistant message's progress card in real time (no spam; the same card updates in place). */
-  const patchProgressInLastAssistant = (
-    updater: (prev: DeckProgressSnapshot) => DeckProgressSnapshot,
-  ) => {
-    setChat((prev) => {
-      const next = [...prev]
-      const last = next[next.length - 1]
-      if (!last || last.role !== 'assistant') return prev
-      next[next.length - 1] = { ...last, deckProgress: updater(last.deckProgress ?? {}) }
-      return next
-    })
-  }
-
   const loopRef = useRef<AgentLoop | null>(null)
   if (!loopRef.current) {
     // The three slides generation steps (style/planning/per-page HTML) force the high-quality model (only with the anthropic provider;
     // other providers keep the user setting, avoiding passing nonexistent model names). Chat/fine-tuning still uses the user's configured model.
-    const SLIDES_GEN_MODEL = 'claude-opus-4-7'
-    // Return on demand a settings copy with the generation model overridden (deep copy, doesn't pollute settingsRef).
-    const settingsForGen = (): AiSettings => {
-      const cur = settingsRef.current
-      if (cur.provider !== 'anthropic') return cur
-      const ap = cur.providers.anthropic
-      return {
-        ...cur,
-        providers: { ...cur.providers, anthropic: { ...ap, model: SLIDES_GEN_MODEL } },
-      }
-    }
-    // Send one LLM request, aggregating streaming deltas into complete text. Shared by in-tool per-page/planning.
-    // - On timeout/user stop (signal abort) call aiStreamCancel to cancel the main-process stream, leaving no orphan requests.
-    // - useGenModel=true uses SLIDES_GEN_MODEL first; on request errors (non-timeout) automatically falls back to the
-    //   user-configured model and retries once, so generation isn't wiped out when the key lacks access to that model.
-    // errKind marks failure categories that shouldn't retry with another model (timeout/empty output/user stop)
-    type LlmResult = {
-      ok: boolean
-      text?: string
-      error?: string
-      errKind?: 'timeout' | 'empty' | 'stopped'
-    }
-    const runLlmAttempt = (
-      settings: AiSettings,
-      system: string,
-      user: string,
-      timeoutMs: number,
-      signal?: AbortSignal,
-      maxTokens?: number,
-    ): Promise<LlmResult> =>
-      new Promise((resolve) => {
-        if (signal?.aborted) {
-          resolve({ ok: false, error: tGlobal('aiErrStopped'), errKind: 'stopped' })
-          return
-        }
-        const requestId = crypto.randomUUID()
-        let buf = ''
-        let settled = false
-        const finish = (r: LlmResult, cancelUpstream = false) => {
-          if (settled) return
-          settled = true
-          clearTimeout(to)
-          signal?.removeEventListener('abort', onAbort)
-          unsub()
-          // On timeout/abort the main-process stream keeps running; it must be cancelled explicitly or orphan streams eat proxy concurrency
-          if (cancelUpstream) void window.slidesApi.aiStreamCancel(requestId)
-          resolve(r)
-        }
-        const onAbort = () =>
-          finish({ ok: false, error: tGlobal('aiErrStopped'), errKind: 'stopped' }, true)
-        const to = setTimeout(
-          () =>
-            finish(
-              { ok: false, error: tGlobal('aiErrTimeout', { ms: timeoutMs }), errKind: 'timeout' },
-              true,
-            ),
-          timeoutMs,
-        )
-        const unsub = window.slidesApi.onAiStream((chunk) => {
-          if (chunk.requestId !== requestId) return
-          if (chunk.type === 'delta') buf += chunk.text ?? ''
-          else if (chunk.type === 'done')
-            finish(
-              buf.trim()
-                ? { ok: true, text: buf }
-                : { ok: false, text: buf, error: tGlobal('aiErrEmptyOutput'), errKind: 'empty' },
-            )
-          else if (chunk.type === 'error')
-            finish({ ok: false, error: chunk.error ?? tGlobal('aiErrUnknown') })
-        })
-        signal?.addEventListener('abort', onAbort, { once: true })
-        // If invoke itself rejects (IPC-layer failure), fail immediately instead of waiting out the timeout
-        window.slidesApi
-          .aiStream({
-            requestId,
-            settings,
-            system,
-            messages: [{ role: 'user', text: user }],
-            ...(maxTokens ? { maxTokens } : {}),
-          })
-          .catch((e) =>
-            finish({
-              ok: false,
-              error: tGlobal('aiErrRequestFailed', {
-                msg: e instanceof Error ? e.message : String(e),
-              }),
-            }),
-          )
-      })
-    const runLlmOnce = async (
-      system: string,
-      user: string,
-      timeoutMs = 150000,
-      useGenModel = true,
-      signal?: AbortSignal,
-      maxTokens?: number,
-    ): Promise<LlmResult> => {
-      const first = await runLlmAttempt(
-        useGenModel ? settingsForGen() : settingsRef.current,
-        system,
-        user,
-        timeoutMs,
-        signal,
-        maxTokens,
-      )
-      if (first.ok || !useGenModel || signal?.aborted) return first
-      // Only "request errors" fall back to the user's model for a retry; timeouts/empty output don't switch models (mostly network/output problems, switching won't help)
-      if (first.errKind) return first
-      const cur = settingsRef.current
-      if (cur.provider !== 'anthropic') return first // The gen-model override only applies with anthropic
-      if (cur.providers.anthropic?.model === SLIDES_GEN_MODEL) return first
-      return runLlmAttempt(cur, system, user, timeoutMs, signal, maxTokens)
-    }
-
     const access: DeckAccess = {
       getSlides: () => slidesRef.current,
       getCurrent: () => currentRef.current,
       getSelectedIds: () => selectedRef.current,
       applySlide: (i, updated) => applySlideRef.current(i, updated),
       applyDeck: (all, goTo) => applyDeckRef.current(all, goTo),
-      generateFromHtml: async (
-        pagesHtml: string[],
-        mode?: 'replace' | 'append' | 'insert_at',
-        deckName?: string,
-        insertAt?: number,
-      ) => {
-        try {
-          const res = await window.slidesApi.htmlToPptx(
-            pagesHtml,
-            fitWidthPx,
-            mode,
-            insertAt,
-            deckName,
-          )
-          if (res && 'slides' in res && Array.isArray(res.slides)) {
-            const appendedFrom =
-              'appendedFrom' in res && typeof res.appendedFrom === 'number' ? res.appendedFrom : 0
-            const insertedIndex =
-              'insertedIndex' in res && typeof res.insertedIndex === 'number'
-                ? res.insertedIndex
-                : undefined
-            const fallbackReason =
-              'fallbackReason' in res && typeof res.fallbackReason === 'string'
-                ? res.fallbackReason
-                : undefined
-            const imageFailures =
-              'imageFailures' in res && Array.isArray(res.imageFailures)
-                ? res.imageFailures
-                : undefined
-            applyDeckRef.current(res.slides, insertedIndex ?? appendedFrom)
-            // When the draft lands successfully, path is the real path; notify App to update the title bar
-            if (res.path) onPathChangeRef.current?.(res.path)
-            qcPagesRef.current = mergeQcPages(qcPagesRef.current, mode ?? 'replace', {
-              pages: res.slides.length,
-              appendedFrom,
-              ...(insertedIndex !== undefined ? { insertedIndex } : {}),
-            })
-            return {
-              ok: true,
-              pages: res.slides.length,
-              appendedFrom,
-              insertedIndex,
-              fallbackReason,
-              imageFailures,
-            }
-          }
-          return {
-            ok: false,
-            error:
-              'error' in (res || {})
-                ? (res as { error: string }).error
-                : tGlobal('aiErrGenerateFailed'),
-          }
-        } catch (e) {
-          return { ok: false, error: e instanceof Error ? e.message : String(e) }
-        }
-      },
-      regenerateSlide: async (slideIndex: number, html: string) => {
-        try {
-          const res = await window.slidesApi.htmlToPptx(
-            [html],
-            fitWidthPx,
-            'replace_at',
-            slideIndex,
-          )
-          if (res && 'slides' in res && Array.isArray(res.slides)) {
-            applyDeckRef.current(res.slides, slideIndex)
-            if (res.path) onPathChangeRef.current?.(res.path)
-            qcPagesRef.current = mergeQcPages(qcPagesRef.current, 'replace_at', {
-              pages: res.slides.length,
-              insertedIndex: slideIndex,
-            })
-            return {
-              ok: true,
-              imageFailures:
-                'imageFailures' in res && Array.isArray(res.imageFailures)
-                  ? res.imageFailures
-                  : undefined,
-            }
-          }
-          return {
-            ok: false,
-            error:
-              'error' in (res || {})
-                ? (res as { error: string }).error
-                : tGlobal('aiErrRegenFailed'),
-          }
-        } catch (e) {
-          return { ok: false, error: e instanceof Error ? e.message : String(e) }
-        }
-      },
       askClarification: (questions: ClarifyQuestion[]) => {
         return new Promise<{ answers: string; cancelled?: boolean }>((resolve) => {
           clarifyResolverRef.current = resolve
           setActiveClarify(questions)
         })
       },
-      isCloudPageGenEnabled: async () => {
-        try {
-          return !!(await window.slidesApi.cloudGenStatus())?.enabled
-        } catch {
-          return false
-        }
-      },
-      // Cloud single-page generation (gsk slide_generate): the cloud service owns HTML writing +
-      // pptx conversion; the deck-level style/outline stay local.
-      generatePageCloud: async (args) => {
-        try {
-          const briefParts = [args.brief]
-          if (args.layout) briefParts.push(`Layout intent: ${args.layout}`)
-          if (args.context)
-            briefParts.push(
-              `Reference material (all real names/figures/facts come from here; do not invent):\n${args.context.slice(0, 4000)}`,
-            )
-          const res = await window.slidesApi.cloudGeneratePage({
-            brief: briefParts.join('\n\n'),
-            title: args.title,
-            styleSkill: args.style,
-            deckContext: {
-              ...(args.topic ? { topic: args.topic } : {}),
-              core_hook: args.coreHook,
-              page_index: args.pageIndex,
-              total_pages: args.totalPages,
-            },
-            images: args.images.map((u) => ({ url: u })),
-            width: args.canvasW,
-            height: args.canvasH,
-          })
-          return res ?? { ok: false, error: tGlobal('aiErrUnknown') }
-        } catch (e) {
-          return { ok: false, error: e instanceof Error ? e.message : String(e) }
-        }
-      },
-      // ── In-tool planning: given topic+page count, the LLM produces a structured outline (batched recursion scheduled by the skill).
-      // Fixes "missing pages at the input side" at the root: the main agent doesn't hand-write dozens of pages of pages JSON.
-      // In-tool independent Style Skill generation: one focused LLM call thinking only about the design system.
-      generateStyleSkill: async (a) => {
-        const sys =
-          'You are a professional deck visual designer. Given the presentation topic and style preferences, produce a complete Style Skill (visual style guide). Output strictly in the structure below, only the Style Skill content, no explanations/markdown/code fences.\n\n' +
-          'Color rules (must use concrete hex values)\n' +
-          '  Main background: #hex\n' +
-          '  Per-page-type backgrounds:\n    cover: #hex\n    content: #hex\n    data: #hex\n    closing: #hex\n' +
-          '  (Background selection principles, highest priority first):\n' +
-          '   1) Style preference first: when a tone is explicit (dark theme, a brand color family, a certain texture), the background must honor it — do not fall back to a safe light color.\n' +
-          "   2) Then topic mood: serve the content's emotion and tone (serious/playful/artistic/tech/traditional); different topics should have clearly different backgrounds. Dark colors, brand colors, and saturated light colors are all legitimate choices.\n" +
-          '   3) Light neutral backgrounds are only a fallback: use only when the topic is neutral and the style expresses no clear preference.\n' +
-          '   Constraints: content pages share one background within a deck; the main background and main text color must have sufficient contrast (light text on dark, dark text on light).\n' +
-          '  Main text color: #hex\n  Primary accent: #hex\n  Secondary accent: #hex\n' +
-          '  (Iron rule: one accent color system across the whole deck — even when comparing multiple companies/products/options, do not assign each entity a different color; distinguish entities by name and typography. Never exceed the primary + secondary accents)\n' +
-          '  Card background: #hex\n  Border color: #hex\n\n' +
-          'Fonts\n  CJK title font: [font name]\n  Latin title font: [font name]\n  Body font: [font name]\n  Title size: [range]px\n  Body size: [range]px\n\n' +
-          'Layout variants per page type (list at least 2 variants each, format: variant name: description)\n' +
-          '  cover variants:\n    cover_full_image_overlay: full-bleed photo background + dark overlay, centered white title, bottom metadata bar\n    cover_split_color: two color blocks side by side (60/40)\n    cover_typography_hero: pure typography, no photo, huge title (100px+)\n    cover_dark_minimal: dark background, centered large title + a little accent color\n    cover_magazine: magazine-style title taking 60% + partial imagery\n    cover_split_image: title on the left half + hero image on the right half\n' +
-          '  content variants:\n    left_text_right_image | three_column_cards | hero_big_number | two_column_comparison | timeline_horizontal | full_image_text_overlay (give each a one-line description)\n' +
-          '  data variants:\n    kpi_cards_row: horizontal KPI cards\n    chart_with_insight: chart left + insight right\n    two_by_two_grid: 2x2 quadrants\n' +
-          '  closing variants:\n    closing_cta: centered title + contact info\n    closing_thank_you: full-bleed thank-you page\n\n' +
-          'Overall style: [one sentence describing the overall design language]'
-        const q = a.questionnaire ? `\nUser questionnaire answers: ${a.questionnaire}` : ''
-        const hint = a.styleHint ? `\nStyle preference: ${a.styleHint}` : ''
-        const userMsg = `Topic and style preferences: ${a.topic}${hint}${q}\nOutput the Style Skill.`
-        const r = await runLlmOnce(sys, userMsg, 90000, true, a.signal)
-        return r.ok && r.text
-          ? { ok: true, styleSkill: r.text.trim() }
-          : { ok: false, error: r.error ?? tGlobal('aiErrEmptyOutput') }
-      },
-      planDeckOutline: async (a) => {
-        // style is already produced independently by generateStyleSkill; this function only outputs core_hook + per-page outlines (layout chosen per the Style Skill).
-        const sys =
-          'You are a professional deck planner. Given the confirmed design style, plan the content page by page. Output only one JSON object, no explanations/markdown/code fences.\n' +
-          'Format: {"core_hook":"...","pages":[{"title":"","type":"cover|content|data|closing","brief":"","layout":"","image_queries":[]}]}\n' +
-          '\n' +
-          '## core_hook\n' +
-          "The deck's narrative anchor: one sentence, with tension, containing a number or counter-intuitive contrast, at most 20 characters.\n" +
-          '\n' +
-          "## layout (choose from the Style Skill's per-page-type variant library; content pages within one deck must not repeat the same variant)\n" +
-          'cover: cover_typography_hero (huge pure typography) | cover_dark_minimal (dark background, centered large title) | cover_split_color (side-by-side color blocks) | cover_full_image_overlay (full-bleed photo + dark overlay) | cover_magazine (magazine-style large title + partial imagery) | cover_split_image (text left, image right)\n' +
-          'content: left_text_right_image | three_column_cards | hero_big_number | two_column_comparison | timeline_horizontal | full_image_text_overlay\n' +
-          'data: kpi_cards_row | chart_with_insight | two_by_two_grid\n' +
-          'closing: closing_cta | closing_thank_you\n' +
-          'Selection criteria: 3 parallel points → three_column_cards; a key number → hero_big_number; comparison/categories → two_column_comparison/two_by_two_grid; sequence → timeline_horizontal; image+text → left_text_right_image/full_image_text_overlay; metrics → kpi_cards_row.\n' +
-          '\n' +
-          '## brief\n' +
-          'Describe in detail what goes in each region of the layout; prefer real data/facts from the reference material, no "XX%" placeholders; cover gives main/sub titles and mood; data gives metric names + concrete values + changes.\n' +
-          '\n' +
-          '## image_queries\n' +
-          'Array: one entry per photo slot on the page. If the reference material contains ready image URLs (starting with http), use them directly; otherwise put English image-search keywords (describing a concrete scene, e.g. "summer palace kunming lake", not generic words like "park") — the system auto-searches and fills real URLs back. Travel/product/people/brand pages get images by default; give [] only when the page truly needs no photos (fill with typography/icons; never count on CSS-drawn fake images).'
-        const styleBlock = a.styleSkill
-          ? `\n[Confirmed design style Style Skill; choose layout accordingly while planning]:\n${a.styleSkill}`
-          : ''
-        const contHint = a.continueFrom
-          ? `\nThis continues the earlier plan starting at page ${a.startPage}, ${a.count} pages in total; stay narratively coherent with what came before. Core Hook: ${a.continueFrom.coreHook}. Return only these ${a.count} pages' pages (core_hook identical to before).`
-          : `\nPlan ${a.count} pages in total.`
-        const userMsg = `Topic: ${a.topic}${a.context ? `\nReference material/requirements: ${a.context}` : ''}${styleBlock}${contHint}\nOutput the JSON.`
-        // On parse failure, silently re-request once with the same args (prompt unchanged); local quote/trailing-comma fixes run first.
-        const parseOutline = (text: string) => {
-          const obj = parseOutlineJson(text)
-          if (obj) return { ok: true as const, outline: obj }
-          // Keep the native parse error for log correlation (e.g. position 671)
-          let detail = 'output is not valid JSON'
-          try {
-            JSON.parse(extractJsonObject(text))
-          } catch (e) {
-            detail = e instanceof Error ? e.message : String(e)
-          }
-          return { ok: false as const, error: 'outline JSON parse failed: ' + detail }
-        }
-        const maxAttempts = 2
-        let lastErr = tGlobal('aiErrEmptyOutput')
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          if (a.signal?.aborted) return { ok: false, error: tGlobal('aiErrStopped') }
-          const r = await runLlmOnce(sys, userMsg, 90000, true, a.signal)
-          if (!r.ok || !r.text) {
-            lastErr = r.error ?? tGlobal('aiErrEmptyOutput')
-            // Empty output/timeout doesn't burn another attempt; request-level errors may retry
-            if (r.errKind === 'timeout' || r.errKind === 'empty' || r.errKind === 'stopped') break
-            continue
-          }
-          const parsed = parseOutline(r.text)
-          if (parsed.ok) return parsed
-          lastErr = parsed.error
-        }
-        return { ok: false, error: lastErr }
-      },
       fitWidthPx,
-      onProgress: (event: DeckProgressEvent) => {
-        // Notify the App layer to update the canvas top progress bar
-        onDeckProgressRef.current?.(event)
-        // Update the progress card in the chat stream (replaced in place, no new message)
-        patchProgressInLastAssistant((prev) => {
-          if (event.stage === 'style') {
-            return {
-              ...prev,
-              style: { label: event.label, status: event.status, summary: event.summary },
-            }
-          }
-          if (event.stage === 'plan') {
-            return {
-              ...prev,
-              plan: {
-                label: event.label,
-                done: event.done,
-                total: event.total,
-                status: event.status,
-                summary: event.summary,
-              },
-            }
-          }
-          if (event.stage === 'images') {
-            return {
-              ...prev,
-              images: {
-                label: event.label,
-                done: event.done,
-                total: event.total,
-                status: event.status,
-                summary: event.summary,
-              },
-            }
-          }
-          if (event.stage === 'pages') {
-            return {
-              ...prev,
-              pages: {
-                label: event.label,
-                done: event.done,
-                total: event.total,
-                status: event.status,
-                summary: event.summary,
-                items: event.pages,
-              },
-            }
-          }
-          if (event.stage === 'done') {
-            return { ...prev, finalTotal: event.total, isDone: true }
-          }
-          return prev
-        })
-      },
-      searchImages: async (query: string, maxResults: number) => {
-        try {
-          const r = await window.slidesApi.imageSearch(query, maxResults)
-          return r.images.map((im) => im.imageUrl).filter(Boolean)
-        } catch {
-          return []
-        }
-      },
-      saveSidecar: async (data) => {
-        try {
-          await window.slidesApi.saveStyleSidecar(data)
-        } catch {
-          /* fail-open */
-        }
-      },
-      saveStyleTemplate: async (name, data) => {
-        try {
-          return await window.slidesApi.saveStyleTemplate(name, data)
-        } catch {
-          return { ok: false, error: String('') }
-        }
-      },
-      listStyleTemplates: async () => {
-        try {
-          return await window.slidesApi.listStyleTemplates()
-        } catch {
-          return []
-        }
-      },
-      loadStyleTemplate: async (name) => {
-        try {
-          return await window.slidesApi.loadStyleTemplate(name)
-        } catch {
-          return { ok: false, error: String('') }
-        }
-      },
-      unreadTextAttachments: () =>
-        attachmentsRef.current
-          .filter(
-            (a) => !ATTACHMENT_IMAGE_EXTS.has(a.ext) && !readAttachmentPathsRef.current.has(a.path),
-          )
-          .map((a) => a.name),
     }
     accessRef.current = access
     loopRef.current = new AgentLoop({
@@ -1020,9 +578,9 @@ export function AiPanel({
             return next
           })
           // Signed-out failures get an inline sign-in button; detected via
-          // gsk status rather than matching the localized error text
+          // codex status rather than matching the localized error text
           void window.slidesApi
-            .aiGskStatus()
+            .aiCodexStatus()
             .then((status) => {
               if (status.loggedIn) return
               setChat((prev) => {
@@ -1145,7 +703,7 @@ export function AiPanel({
     lastTurnToolsRef.current = []
     runToolsRef.current = []
     stickToBottomRef.current = true
-    // Internal orchestration prompts (like generate_deck step notes) skip the chat bubble and go only to the model
+    // Internal orchestration prompts skip the chat bubble and go only to the model.
     const shown = displayText ?? instruction
     setChat((prev) => [
       // Fallback: clear leftover streaming flags on history entries, avoiding orphan "thinking" placeholders
@@ -1384,7 +942,7 @@ export function AiPanel({
   if (!open) {
     return (
       <button className="ai-rail" title={t('appAiRailExpand')} onClick={onExpand}>
-        <GensparkMark size={22} />
+        <CodexMark size={22} />
       </button>
     )
   }
@@ -1411,11 +969,11 @@ export function AiPanel({
         onPointerDown={startResize}
         role="separator"
         aria-orientation="vertical"
-        aria-label="Genspark AI"
+        aria-label="Codex AI"
       />
       <div className="ai-panel-header">
         <span className="ai-panel-title">
-          <GensparkMark size={22} />
+          <CodexMark size={22} />
           {t('aiPanelTitle')}
         </span>
         <div className="ai-panel-header-actions">
@@ -1515,8 +1073,11 @@ export function AiPanel({
                 <div className="ai-msg-error">{t('aiMsgError', { error: entry.error })}</div>
               )}
               {entry.loginRequired && (
-                <button className="ai-login-btn" onClick={() => void window.slidesApi.aiGskLogin()}>
-                  {t('aiGskLoginBtn')}
+                <button
+                  className="ai-login-btn"
+                  onClick={() => void window.slidesApi.aiCodexLogin().catch(() => undefined)}
+                >
+                  {t('aiCodexLoginBtn')}
                 </button>
               )}
               {entry.deckProgress && <DeckProgressCard progress={entry.deckProgress} />}

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fetchWithSsrfGuard, isBlockedAddress, isSafeRemoteUrl } from '../src/safe-remote-url'
+import { fetchBoundedRemoteImage, isBlockedAddress, isSafeRemoteUrl } from '../src/safe-remote-url'
 
 describe('isBlockedAddress', () => {
   it.each([
@@ -44,6 +44,94 @@ describe('isBlockedAddress', () => {
   })
 })
 
+describe('fetchBoundedRemoteImage', () => {
+  const ok = (
+    overrides: Partial<{ status: number; headers: Record<string, string>; bytes: Uint8Array }> = {},
+  ) => ({
+    status: overrides.status ?? 200,
+    headers: overrides.headers ?? { 'content-type': 'image/png' },
+    bytes: overrides.bytes ?? new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  })
+
+  it('rejects private DNS answers before transport and pins a public answer', async () => {
+    const transport = vi.fn().mockResolvedValue(ok())
+    await expect(
+      fetchBoundedRemoteImage('https://example.test/a.png', {
+        lookupImpl: vi.fn().mockResolvedValue([{ address: '127.0.0.1', family: 4 }]) as never,
+        transport,
+      }),
+    ).resolves.toBeNull()
+    expect(transport).not.toHaveBeenCalled()
+
+    await fetchBoundedRemoteImage('https://example.test/a.png', {
+      lookupImpl: vi.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]) as never,
+      transport,
+    })
+    expect(transport.mock.calls[0]?.[1]).toBe('93.184.216.34')
+  })
+
+  it('revalidates redirects and rejects redirects to private addresses', async () => {
+    const transport = vi
+      .fn()
+      .mockResolvedValue(ok({ status: 302, headers: { location: 'http://127.0.0.1/x' } }))
+    await expect(
+      fetchBoundedRemoteImage('https://8.8.8.8/start', { transport }),
+    ).resolves.toBeNull()
+    expect(transport).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects oversized bodies and non-image MIME types', async () => {
+    await expect(
+      fetchBoundedRemoteImage('https://8.8.8.8/a', {
+        maxBytes: 2,
+        transport: vi.fn().mockResolvedValue(ok()),
+      }),
+    ).resolves.toBeNull()
+    await expect(
+      fetchBoundedRemoteImage('https://8.8.8.8/a', {
+        transport: vi.fn().mockResolvedValue(ok({ bytes: new TextEncoder().encode('not png') })),
+      }),
+    ).resolves.toBeNull()
+    await expect(
+      fetchBoundedRemoteImage('https://8.8.8.8/a', {
+        transport: vi.fn().mockResolvedValue(ok({ headers: { 'content-type': 'text/html' } })),
+      }),
+    ).resolves.toBeNull()
+  })
+
+  it('propagates cancellation to a slow transport', async () => {
+    const controller = new AbortController()
+    const transport = vi.fn(
+      (_url, _address, _family, options: { signal?: AbortSignal }): Promise<never> =>
+        new Promise<never>((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () => reject(new Error('cancelled')), {
+            once: true,
+          })
+        }),
+    )
+    const pending = fetchBoundedRemoteImage('https://8.8.8.8/a', {
+      signal: controller.signal,
+      transport,
+    })
+    controller.abort()
+    await expect(pending).rejects.toThrow('cancelled')
+  })
+
+  it('enforces an absolute deadline even when a transport never completes', async () => {
+    const transport = vi.fn(
+      (_url, _address, _family, options: { signal?: AbortSignal }): Promise<never> =>
+        new Promise<never>((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () => reject(new Error('deadline')), {
+            once: true,
+          })
+        }),
+    )
+    await expect(
+      fetchBoundedRemoteImage('https://8.8.8.8/a', { timeoutMs: 5, transport }),
+    ).rejects.toThrow('deadline')
+  })
+})
+
 describe('isSafeRemoteUrl', () => {
   it.each([
     'file:///etc/passwd',
@@ -81,80 +169,5 @@ describe('isSafeRemoteUrl', () => {
 
   it('allows a public literal address', async () => {
     await expect(isSafeRemoteUrl('https://8.8.8.8/x.png')).resolves.toBe(true)
-  })
-})
-
-describe('fetchWithSsrfGuard', () => {
-  const res = (status: number, location?: string) =>
-    new Response(null, {
-      status,
-      headers: location ? { location } : undefined,
-    })
-
-  it('rejects a redirect from a public host to an internal address', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(res(302, 'http://169.254.169.254/latest/meta-data/'))
-    const out = await fetchWithSsrfGuard('https://8.8.8.8/start.png', { fetchImpl })
-    expect(out).toBeNull()
-    // the internal hop is never requested
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
-    expect(fetchImpl.mock.calls[0][0]).toBe('https://8.8.8.8/start.png')
-  })
-
-  it('follows a redirect between public hosts and returns the final response', async () => {
-    const final = new Response('ok', { status: 200 })
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(res(301, 'https://1.1.1.1/final.png'))
-      .mockResolvedValueOnce(final)
-    const out = await fetchWithSsrfGuard('https://8.8.8.8/start.png', { fetchImpl })
-    expect(out).toBe(final)
-    expect(fetchImpl.mock.calls[1][0]).toBe('https://1.1.1.1/final.png')
-  })
-
-  it('resolves relative Location headers against the current URL', async () => {
-    const final = new Response('ok', { status: 200 })
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(res(302, '/moved.png'))
-      .mockResolvedValueOnce(final)
-    await fetchWithSsrfGuard('https://8.8.8.8/a/b.png', { fetchImpl })
-    expect(fetchImpl.mock.calls[1][0]).toBe('https://8.8.8.8/moved.png')
-  })
-
-  it('gives up on a redirect loop instead of following forever', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(res(302, 'https://8.8.8.8/loop.png'))
-    const out = await fetchWithSsrfGuard('https://8.8.8.8/loop.png', {
-      fetchImpl,
-      maxRedirects: 3,
-    })
-    expect(out).toBeNull()
-    expect(fetchImpl).toHaveBeenCalledTimes(4) // initial + 3 hops
-  })
-
-  it('returns null when a redirect has no Location header', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(res(302))
-    await expect(fetchWithSsrfGuard('https://8.8.8.8/x.png', { fetchImpl })).resolves.toBeNull()
-  })
-
-  it('passes headers through and disables automatic redirects', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(new Response('ok', { status: 200 }))
-    await fetchWithSsrfGuard('https://8.8.8.8/x.png', {
-      fetchImpl,
-      headers: { 'User-Agent': 'test-agent' },
-    })
-    expect(fetchImpl.mock.calls[0][1]).toMatchObject({
-      headers: { 'User-Agent': 'test-agent' },
-      redirect: 'manual',
-    })
-  })
-
-  it('never requests a target that fails the initial check', async () => {
-    const fetchImpl = vi.fn()
-    await expect(
-      fetchWithSsrfGuard('http://169.254.169.254/latest/meta-data/', { fetchImpl }),
-    ).resolves.toBeNull()
-    expect(fetchImpl).not.toHaveBeenCalled()
   })
 })

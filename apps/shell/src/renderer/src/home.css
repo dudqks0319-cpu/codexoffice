@@ -139,7 +139,7 @@ body.vib .home {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- bottom-left account entry (today = Genspark login, later = signup/account system) ---- */
+/* ---- bottom-left app-private Codex account entry ---- */
 /* language switching lives in the account popup menu (.lang-row / .lang-flyout) */
 
 .lang-menu-item {
@@ -256,45 +256,7 @@ body.vib .home {
   color: #b3261e;
 }
 
-/* rescue panel while waiting for the browser sign-in (auto-open may have failed) */
-.login-hint {
-  position: absolute;
-  left: -8px;
-  bottom: calc(100% + 4px);
-  width: calc(100% + 16px);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px;
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  z-index: 30;
-}
-
-.login-hint button {
-  border: none;
-  border-radius: 10px;
-  background: none;
-  font: inherit;
-  font-size: 13px;
-  line-height: 20px;
-  padding: 6px 8px;
-  color: #232425;
-  cursor: pointer;
-  text-align: left;
-}
-
-.login-hint button:hover {
-  background: #f5f5f5;
-}
-
-.login-hint .login-hint-open,
-.account-menu-item.login-rescue {
-  color: var(--accent);
-}
-
-/* popup panel metrics match the Genspark account dropdown;
+/* popup panel metrics match the account dropdown;
    stretched past the account entry (max width the sidebar can host un-clipped) */
 .account-menu {
   position: absolute;
@@ -316,7 +278,7 @@ body.vib .home {
   padding: 0 8px;
 }
 
-.account-menu-email {
+.account-menu-title {
   font-size: 14px;
   font-weight: 600;
   overflow: hidden;

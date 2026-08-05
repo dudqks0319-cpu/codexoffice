@@ -51,7 +51,7 @@ import { AnimPreviewOverlay } from './components/AnimatedSlide'
 import { EquationDialog, HeaderFooterDialog, LinkDialog } from './components/InsertDialogs'
 import { CutoutDialog } from './components/CutoutDialog'
 import type { ChartPresetDef, IconDef, SmartArtDef, WordArtPreset } from './insert-presets'
-import { GensparkMark, IconAiBeautify, IconAiFactCheck, IconAiImage } from './components/icons'
+import { CodexMark, IconAiBeautify, IconAiFactCheck } from './components/icons'
 import { t, useI18n } from './i18n/locale'
 import { AiPanel } from './ai/AiPanel'
 import { ChartDataDialog } from './components/ChartDataDialog'
@@ -2371,7 +2371,7 @@ export function App() {
                 />
               ) : (
                 <button className="ai-rail" onClick={toggleAi} title={t('appAiRailExpand')}>
-                  <GensparkMark size={22} />
+                  <CodexMark size={22} />
                 </button>
               )}
             </div>
@@ -2530,8 +2530,8 @@ export function App() {
                       title={t('aiOpenAssistant')}
                       onClick={toggleAi}
                     >
-                      <GensparkMark size={14} />
-                      <span>Genspark AI</span>
+                      <CodexMark size={14} />
+                      <span>Codex AI</span>
                     </button>
                     {/* Same one-click presets as the Home tab; hidden instead of
                         disabled while the deck has no real content */}
@@ -2555,14 +2555,6 @@ export function App() {
                         >
                           <IconAiFactCheck size={14} />
                           <span>{t('aiFactCheckBtn')}</span>
-                        </button>
-                        <button
-                          className="stage-ai-btn"
-                          title={t('aiImagePrompt')}
-                          onClick={() => pushAiPreset(t('aiImagePrompt'))}
-                        >
-                          <IconAiImage size={14} />
-                          <span>{t('aiImageBtn')}</span>
                         </button>
                       </>
                     )}

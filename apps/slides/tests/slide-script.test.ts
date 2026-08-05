@@ -276,10 +276,10 @@ describe('runLayoutScript editing primitives', () => {
     expect(runLayoutScript(`setText('nope', 'x')`, els, canvas).error).toContain('nope')
   })
 
-  it('allows legitimate layout computation: filtering, regex, callbacks, loops, Math, computed properties', () => {
+  it('allows legitimate layout computation: filtering, callbacks, loops, Math, computed properties', () => {
     const r = runLayoutScript(
       `
-        const cards = els.filter(e => /^(a|b)$/.test(e.id));
+        const cards = els.filter(e => ['a', 'b'].includes(e.id));
         const key = 'x';
         const left = Math.min(...cards.map(e => e[key]));
         for (let i = 0; i < cards.length; i++) {
@@ -302,6 +302,10 @@ describe('runLayoutScript editing primitives', () => {
 })
 
 describe('runLayoutScript security boundary', () => {
+  it('rejects model-authored regular expressions before catastrophic backtracking can run', () => {
+    const r = runLayoutScript(`/(a+)+$/.test('${'a'.repeat(1000)}!')`, els, canvas)
+    expect(r.error).toContain('Regular expressions are not available')
+  })
   const els: LayoutScriptElement[] = [
     { id: 'a', type: 'shape', text: 'title', x: 100, y: 200, w: 300, h: 100, rotation: 0 },
   ]

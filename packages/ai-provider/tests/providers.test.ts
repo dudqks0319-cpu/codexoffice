@@ -4,7 +4,15 @@ import { AI_PROVIDERS, defaultAiSettings, resolveAiSettings } from '../src/provi
 describe('defaultAiSettings', () => {
   it('gives every provider its default model and an empty key by default', () => {
     const settings = defaultAiSettings()
-    expect(settings.provider).toBe('genspark')
+    expect(settings.provider).toBe('codex')
+    expect(AI_PROVIDERS.map((provider) => provider.id)).toEqual([
+      'codex',
+      'anthropic',
+      'gemini',
+      'deepseek',
+      'openai',
+      'custom',
+    ])
     for (const meta of AI_PROVIDERS) {
       expect(settings.providers[meta.id].apiKey).toBe('')
       expect(settings.providers[meta.id].model).toBe(meta.defaultModel)
@@ -58,7 +66,10 @@ describe('resolveAiSettings', () => {
       defaults,
     )
     expect(resolved.provider).toBe('gemini')
-    expect(resolved.providers.gemini).toEqual({ apiKey: 'stored-gemini-key', model: 'gemini-2.5-pro' })
+    expect(resolved.providers.gemini).toEqual({
+      apiKey: 'stored-gemini-key',
+      model: 'gemini-2.5-pro',
+    })
     // provider not mentioned in stored.providers keeps the computed default
     expect(resolved.providers.anthropic.apiKey).toBe('preset-key')
   })

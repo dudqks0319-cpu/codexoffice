@@ -6,7 +6,9 @@
   "type": "module",
   "description": "Multi-provider LLM streaming + one-shot chat client (Claude/Gemini/DeepSeek/OpenAI/custom), shared by AI Docs and future apps (Excel / PPT)",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./browser": "./src/index.ts",
+    "./node": "./src/node.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -14,7 +16,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@genoffice/agent-core": "*"
+    "@genoffice/agent-core": "*",
+    "@openai/codex-sdk": "0.146.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

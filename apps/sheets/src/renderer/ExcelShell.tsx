@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import {
   CaretIcon,
-  GensparkMark,
+  CodexMark,
   RIBBON_GLYPH_ICONS,
   RedoIcon,
   SaveIcon,
@@ -2059,10 +2059,10 @@ function Ribbon({
           onClick={onAiToggle}
         >
           <span className="tool-icon-row">
-            <GensparkMark size={26} />
+            <CodexMark size={26} />
           </span>
           <span>
-            <strong>Genspark AI</strong>
+            <strong>Codex AI</strong>
           </span>
         </button>
         <button
@@ -2520,14 +2520,14 @@ function Ribbon({
           </div>
         </div>
       </RibbonGroup>
-      <div className="ribbon-genspark-sep" aria-hidden />
+      <div className="ribbon-codex-sep" aria-hidden />
       <button
-        className="ribbon-genspark-btn"
+        className="ribbon-codex-btn"
         title={t('aiOpenAssistant')}
         onClick={() => onCommand('ai-toggle-panel')}
       >
-        <GensparkMark size={28} />
-        <span>Genspark</span>
+        <CodexMark size={28} />
+        <span>Codex</span>
       </button>
     </div>
   )

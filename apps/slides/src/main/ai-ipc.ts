@@ -1,43 +1,35 @@
 /**
  * AI IPC for the slides main process, extracted from slides-main.ts:
  * settings persistence, the streaming proxy (main process does the networking
- * to avoid renderer CORS), search tools, and the slides-only ai:* channels
- * (image generation, media analysis, style templates).
+ * to avoid renderer CORS), search tools, and slides-only provider-independent tools.
  */
 import { app, ipcMain } from 'electron'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  acquireAiRequest,
   AiCreditsError,
   AiTimeoutError,
   defaultAiSettings,
-  resolveAiSettings,
+  createAiTurnController,
+  getCodexAccountStatus,
+  loginCodex,
+  parseAiRequestId,
+  parseAiStreamRequest,
+  runIfAiTurnActive,
   streamForProvider,
   type AiSettings,
   type AiStreamChunk,
-  type AiStreamRequest,
-  type GenSparkAccountStatus,
-  type LegacyAiSettings,
-} from '@genoffice/ai-provider'
-import { fetchWithSsrfGuard } from '@genoffice/electron-utils'
-import {
-  webSearch,
-  imageSearch,
-  gskApiKey,
-  gskGenerateImage,
-  gskAnalyzeMedia,
-  gskLogin,
-  gskLoginInfo,
-  hasGskAuth,
-} from '@genoffice/ai-search'
+  type CodexAccountStatus,
+} from '@genoffice/ai-provider/node'
+import { fetchBoundedRemoteImage } from '@genoffice/electron-utils'
+import { webSearch, imageSearch } from '@genoffice/ai-search'
 import { addPicture } from '@genoffice/pptx-engine'
 import { EMU_PER_PX_96 } from '@genoffice/pptx-render'
 import { tm } from './i18n-main'
 import { pushHistory, rebuildSlide, sessions } from './session-state'
 
 // ---- AI settings + streaming proxy (the main process does the networking to avoid renderer CORS; implementation shared via @genoffice/ai-provider) ----
-
-const AI_SETTINGS_PATH = () => join(app.getPath('userData'), 'ai-settings.json')
 
 function readJson<T>(path: string, fallback: T): T {
   try {
@@ -54,62 +46,61 @@ function writeJson(path: string, value: unknown): void {
 }
 
 const activeAiStreams = new Map<string, AbortController>()
+const CODEX_ACCOUNT_CHECK_ERROR = "Unable to verify this app's Codex account. Try again."
+
+async function checkCodexAccount(): Promise<{ loggedIn: boolean; error?: string }> {
+  try {
+    return await getCodexAccountStatus()
+  } catch {
+    return { loggedIn: false, error: CODEX_ACCOUNT_CHECK_ERROR }
+  }
+}
+
+async function loginCodexAccount(signal?: AbortSignal): Promise<CodexAccountStatus> {
+  try {
+    return await loginCodex(signal)
+  } catch {
+    return { loggedIn: false }
+  }
+}
 
 export function registerAiIpc(): void {
   ipcMain.handle('ai:get-settings', (): AiSettings => {
-    const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(AI_SETTINGS_PATH(), {})
-    const settings = resolveAiSettings(stored, defaultAiSettings())
-    // AI features all go through Genspark (gsk login); stored settings that chose another provider are normalized back
-    settings.provider = 'genspark'
-    return settings
+    return defaultAiSettings()
   })
 
-  // Genspark account (gsk login state): the auth source for AI features; when logged out the frontend uses this to guide login
-  ipcMain.handle(
-    'ai:gsk-status',
-    async (_event, withEmail?: boolean): Promise<GenSparkAccountStatus> => {
-      if (!hasGskAuth()) return { loggedIn: false }
-      if (!withEmail) return { loggedIn: true }
-      const info = await gskLoginInfo()
-      return info?.email ? { loggedIn: true, email: info.email } : { loggedIn: true }
-    },
-  )
+  ipcMain.handle('ai:codex-status', (): Promise<CodexAccountStatus> => checkCodexAccount())
 
-  ipcMain.handle('ai:gsk-login', () => {
-    gskLogin()
+  ipcMain.handle('ai:codex-login', async (event): Promise<CodexAccountStatus> => {
+    const controller = new AbortController()
+    const abortOnDestroyed = () => controller.abort()
+    event.sender.once('destroyed', abortOnDestroyed)
+    try {
+      return await loginCodexAccount(controller.signal)
+    } finally {
+      event.sender.removeListener('destroyed', abortOnDestroyed)
+    }
   })
 
-  ipcMain.handle('ai:set-settings', (_event, settings: AiSettings) => {
-    writeJson(AI_SETTINGS_PATH(), settings)
-  })
+  ipcMain.handle('ai:set-settings', () => undefined)
 
-  ipcMain.handle('ai:stream', async (event, request: AiStreamRequest) => {
-    const { requestId, settings, system, messages } = request
+  ipcMain.handle('ai:stream', async (event, input: unknown) => {
+    const request = parseAiStreamRequest(input)
+    const { requestId, system, messages } = request
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
-    const provider = settings.provider
-    let config = settings.providers?.[provider]
-    // The genspark key never enters the settings file; it is fetched from the gsk login state per request
-    if (provider === 'genspark' && config && !config.apiKey) {
-      config = { ...config, apiKey: gskApiKey() }
-    }
+    const provider = 'codex' as const
+    const config = defaultAiSettings().providers.codex
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send('ai:stream-chunk', chunk)
     }
-    if (!config?.apiKey) {
-      send({
-        requestId,
-        type: 'error',
-        error: provider === 'genspark' ? tm('errGskNotLoggedIn') : tm('errNoApiKey', { provider }),
-      })
-      return
-    }
-    if (!config.model) {
-      send({ requestId, type: 'error', error: tm('errNoModel') })
-      return
-    }
-    const controller = new AbortController()
-    activeAiStreams.set(requestId, controller)
+    const lease = acquireAiRequest(requestId, maxTokens)
+    const deadline = createAiTurnController()
+    const controller = deadline.controller
+    const streamKey = `${event.sender.id}:${requestId}`
+    const abortOnDestroyed = () => controller.abort()
+    event.sender.once('destroyed', abortOnDestroyed)
+    activeAiStreams.set(streamKey, controller)
     // wire-activity keepalive: lets the renderer's silence watchdog tell a slow turn from a dead one
     let lastPing = 0
     const ping = () => {
@@ -119,23 +110,41 @@ export function registerAiIpc(): void {
       send({ requestId, type: 'ping' })
     }
     try {
-      await streamForProvider(provider, config, system, messages, tools, maxTokens, {
-        signal: controller.signal,
-        onDelta: (text) => send({ requestId, type: 'delta', text }),
-        onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
-        onActivity: ping,
-      })
+      const account = await checkCodexAccount()
+      if (!account.loggedIn) {
+        send({ requestId, type: 'error', error: account.error ?? tm('errCodexNotLoggedIn') })
+        return
+      }
+      const started = await runIfAiTurnActive(
+        controller.signal,
+        () => event.sender.isDestroyed(),
+        () =>
+          streamForProvider(provider, config, system, messages, tools, maxTokens, {
+            signal: controller.signal,
+            onDelta: (text) => send({ requestId, type: 'delta', text }),
+            onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
+            onActivity: ping,
+          }),
+      )
+      if (!started) return
       send({ requestId, type: 'done' })
     } catch (err) {
       if (controller.signal.aborted) {
-        send({ requestId, type: 'done' })
+        send(
+          deadline.timedOut
+            ? {
+                requestId,
+                type: 'error',
+                error: 'AI request unavailable. Try again.',
+                errorCode: 'timeout',
+              }
+            : { requestId, type: 'done' },
+        )
       } else {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error(`[ai-stream] ${requestId} (${provider}/${config.model}) failed:`, msg)
         send({
           requestId,
           type: 'error',
-          error: msg,
+          error: 'AI request unavailable. Try again.',
           ...(err instanceof AiTimeoutError
             ? { errorCode: 'timeout' as const }
             : err instanceof AiCreditsError
@@ -144,28 +153,31 @@ export function registerAiIpc(): void {
         })
       }
     } finally {
-      activeAiStreams.delete(requestId)
+      activeAiStreams.delete(streamKey)
+      event.sender.removeListener('destroyed', abortOnDestroyed)
+      deadline.release()
+      lease.release()
     }
   })
 
-  ipcMain.handle('ai:stream-cancel', (_event, requestId: string) => {
-    activeAiStreams.get(requestId)?.abort()
+  ipcMain.handle('ai:stream-cancel', (event, input: unknown) => {
+    activeAiStreams.get(`${event.sender.id}:${parseAiRequestId(input)}`)?.abort()
   })
 
   // Search tools (content + images), Serper with DuckDuckGo fallback
   ipcMain.handle('ai:web-search', async (_event, query: string, maxResults?: number) => {
     try {
       return await webSearch(String(query), typeof maxResults === 'number' ? maxResults : 6)
-    } catch (err) {
-      return { results: [], method: 'error', error: String(err) }
+    } catch {
+      return { results: [], method: 'error', error: 'Search unavailable. Try again.' }
     }
   })
 
   ipcMain.handle('ai:image-search', async (_event, query: string, maxResults?: number) => {
     try {
       return await imageSearch(String(query), typeof maxResults === 'number' ? maxResults : 8)
-    } catch (err) {
-      return { images: [], method: 'error', error: String(err) }
+    } catch {
+      return { images: [], method: 'error', error: 'Search unavailable. Try again.' }
     }
   })
 }
@@ -176,53 +188,6 @@ export function registerAiIpc(): void {
 // never called; docs does not have these channels, so putting them in the wrong place raises
 // "No handler registered".
 export function registerSlidesOnlyAiIpc(): void {
-  // gsk (Genspark CLI) capabilities: AI image generation / media analysis. Returns an error prompt when not logged in.
-  ipcMain.handle(
-    'ai:generate-image',
-    async (
-      _event,
-      op: {
-        prompt: string
-        model?: string
-        referenceImageUrls?: string[]
-        aspectRatio?: string
-        imageSize?: string
-      },
-    ) => {
-      if (!hasGskAuth()) return { error: tm('errGskCli') }
-      try {
-        const r = await gskGenerateImage({
-          prompt: String(op.prompt),
-          model: op.model ? String(op.model) : undefined,
-          referenceImageUrls: Array.isArray(op.referenceImageUrls)
-            ? op.referenceImageUrls.map(String)
-            : undefined,
-          aspectRatio: op.aspectRatio ? String(op.aspectRatio) : undefined,
-          imageSize: op.imageSize ? String(op.imageSize) : undefined,
-        })
-        return { url: r.url }
-      } catch (err) {
-        return { error: err instanceof Error ? err.message : String(err) }
-      }
-    },
-  )
-
-  ipcMain.handle(
-    'ai:analyze-media',
-    async (_event, op: { mediaUrls: string[]; requirements: string }) => {
-      if (!hasGskAuth()) return { error: tm('errGskCli') }
-      try {
-        const text = await gskAnalyzeMedia({
-          mediaUrls: (op.mediaUrls ?? []).map(String),
-          requirements: String(op.requirements ?? ''),
-        })
-        return { text }
-      } catch (err) {
-        return { error: err instanceof Error ? err.message : String(err) }
-      }
-    },
-  )
-
   // Download an image from a URL and insert it into the given page (image search -> insert in one step; download in the main process avoids CORS)
   ipcMain.handle(
     'ai:insert-image-url',
@@ -238,6 +203,20 @@ export function registerSlidesOnlyAiIpc(): void {
         fitWidthPx: number
       },
     ) => {
+      if (
+        !op ||
+        !Number.isInteger(op.slideIndex) ||
+        op.slideIndex < 0 ||
+        typeof op.url !== 'string' ||
+        op.url.length > 2_048 ||
+        ![op.xPx, op.yPx, op.wPx, op.hPx, op.fitWidthPx].every(Number.isFinite) ||
+        op.wPx <= 0 ||
+        op.hPx <= 0 ||
+        op.fitWidthPx <= 0 ||
+        op.fitWidthPx > 10_000 ||
+        [op.xPx, op.yPx, op.wPx, op.hPx].some((value) => Math.abs(value) > 100_000)
+      )
+        return null
       const session = sessions.get(e.sender.id)
       if (!session) return null
       const slide = session.opened.deck.slides[op.slideIndex]
@@ -246,19 +225,26 @@ export function registerSlidesOnlyAiIpc(): void {
         // the URL originates from AI tool calls (prompt-injectable via image
         // search results), so refuse non-http schemes and private/link-local
         // targets; redirects are followed manually so every hop is validated
-        const resp = await fetchWithSsrfGuard(String(op.url), {
+        const image = await fetchBoundedRemoteImage(op.url, {
+          maxBytes: 10 * 1024 * 1024,
+          timeoutMs: 15_000,
           headers: { 'User-Agent': 'Mozilla/5.0' },
         })
-        if (!resp || !resp.ok) return null
-        const buf = Buffer.from(await resp.arrayBuffer())
-        const ct = resp.headers.get('content-type') ?? ''
-        const ext = ct.includes('png') ? 'png' : ct.includes('gif') ? 'gif' : 'jpg'
+        if (!image) return null
+        const ext =
+          image.mime === 'image/png'
+            ? 'png'
+            : image.mime === 'image/gif'
+              ? 'gif'
+              : image.mime === 'image/webp'
+                ? 'webp'
+                : 'jpg'
         const baseWidthPx = session.opened.deck.size.cx / EMU_PER_PX_96
         const scale = op.fitWidthPx / baseWidthPx
         const toEmu = (px: number) => Math.round((px / scale) * EMU_PER_PX_96)
         pushHistory(session)
         const el = addPicture(session.opened, slide, {
-          bytes: new Uint8Array(buf),
+          bytes: image.bytes,
           ext,
           offset: {
             x: toEmu(op.xPx),

@@ -1,4 +1,4 @@
-# GenOffice
+# Codex SDK fork of GenOffice
 
 An AI-native office suite for macOS and Windows: word processor, spreadsheet,
 presentations, and PDF — five Electron apps sharing one engine layer, built
@@ -8,19 +8,9 @@ around AI editing as a first-class workflow rather than a bolted-on chat box.
 
 [Watch the demo video on YouTube](https://www.youtube.com/watch?v=B2pLdMX95v4)
 
-## Download
-
-Signed installers built from `main`:
-
-- **macOS** (Apple Silicon): [GenOffice-0.5.1-arm64.dmg](https://github.com/genspark-ai/genoffice/releases/download/v0.5.1/GenOffice-0.5.1-arm64.dmg)
-- **Windows** (x64): [GenOfficeSetup-v0.5.1.exe](https://github.com/genspark-ai/genoffice/releases/download/v0.5.1/GenOfficeSetup-v0.5.1.exe)
-
-Previous version:
-
-- **macOS** (Apple Silicon): [GenOffice-0.4.110-arm64.dmg](https://github.com/genspark-ai/genoffice/releases/download/v0.4.110/GenOffice-0.4.110-arm64.dmg)
-- **Windows** (x64): [GenOfficeSetup-v0.4.110.exe](https://github.com/genspark-ai/genoffice/releases/download/v0.4.110/GenOfficeSetup-v0.4.110.exe)
-
-Other versions are on the [Releases](https://github.com/genspark-ai/genoffice/releases) page.
+This fork replaces the upstream hosted AI backend with the official OpenAI
+Codex SDK. It is a development fork: there are no signed installers yet, and
+the inherited product name and artwork must be replaced before redistribution.
 
 ## Apps
 
@@ -36,8 +26,11 @@ Every app embeds the same AI panel: block-granular AI editing with version
 snapshots and diffs in docs, a tool-calling agent over workbook/slide/PDF
 state in the others.
 
-**AI providers.** The apps sign in to a Genspark account and route model
-calls through the Genspark service side; no model API key is stored locally.
+**AI provider.** The desktop main process uses `@openai/codex-sdk` with an
+app-private Codex authentication directory. Authentication data and child
+processes are never exposed to renderer code, and signing out of the app does
+not sign out the user's standalone Codex CLI. The existing app tool loop remains
+the only component allowed to edit documents.
 
 ## Engine packages
 
@@ -53,7 +46,7 @@ All pure TypeScript, no Electron dependency, unit-tested (except the UI kit):
   every app.
 - `packages/ai-provider` — provider abstraction and streaming for the model
   backends.
-- `packages/ai-search` — Genspark auth + web/image search tools.
+- `packages/ai-search` — Serper web/image search with a DuckDuckGo fallback.
 - `packages/i18n`, `packages/ui`, `packages/project-store`,
   `packages/electron-utils` — shared i18n core, React UI kit, recent-files
   store, and Electron main-process helpers.
@@ -61,7 +54,7 @@ All pure TypeScript, no Electron dependency, unit-tested (except the UI kit):
 ## Development
 
 ```bash
-npm install
+npm ci
 npm run fixtures     # generate test .docx fixtures
 npm test             # engine + app unit tests (docs/sheets/slides need no display)
 npm run typecheck    # tsc --noEmit across every workspace
@@ -71,9 +64,53 @@ npm run dist:mac     # package macOS dmg (regenerates third-party notices)
 npm run dist:win     # package Windows nsis installer
 ```
 
+Because npm installs a host-specific Codex runtime, create each installer on
+the matching OS and CPU architecture; cross-platform and universal packaging
+fail closed instead of embedding the wrong executable.
+The aggregate Shell and the supported standalone Docs/Slides installers all
+copy the exact-version native Codex vendor directory outside ASAR and configure
+the same trusted runtime path.
+
 The sheets app additionally needs a Rust toolchain for its xlsx sidecar
 (`cargo` on PATH); `npm run build -w @genoffice/sheets` compiles it
 automatically.
+
+### Codex integration and safety boundary
+
+- The Codex SDK and native CLI are pinned to `0.146.0` in the lockfile.
+- Sign in from the app's account menu. The bundled native CLI stores its auth
+  under the app's user-data directory, isolated from standalone Codex settings,
+  hooks, plugins, rules, memories, and sessions.
+- Model turns run in a temporary empty working directory with a read-only
+  sandbox, approvals disabled, network/web access disabled, and no configured
+  MCP servers. Codex returns a strict text/tool-call envelope; GenOffice's
+  existing allowlisted tools perform the requested office edits.
+- Renderer requests and model tool inputs are runtime-validated. The main
+  process rejects duplicate IDs, bounds request and response sizes, limits
+  concurrent/burst/hourly/daily use, caps the daily requested-token budget,
+  and aborts every turn at an absolute 180-second deadline. These limits are
+  intentionally in-process; restarting the app resets them.
+- Base64 image inputs are type/size/count bounded, staged as mode `0600`
+  temporary files, and deleted after each turn.
+- Search has independent query/result/body/concurrency/rate limits. Remote
+  images are fetched with per-hop public-address validation, DNS pinning,
+  redirect revalidation, byte/time/concurrency limits, and MIME/signature
+  checks.
+- Emergency kill switches are available to a trusted launch environment:
+  `GENOFFICE_AI_DISABLED=1`, `GENOFFICE_SEARCH_DISABLED=1`, and
+  `GENOFFICE_REMOTE_IMAGE_DISABLED=1`.
+- The packaged Electron app copies the platform Codex runtime outside ASAR.
+  A release smoke test must still prove the packaged executable can authenticate
+  and complete a turn on each target OS/architecture.
+- Optional search uses `SERPER_API_KEY` in the main process. Without it, search
+  falls back to DuckDuckGo. Codex itself is not granted network access.
+- Before a public release, configure and observe provider/account-side budget
+  caps and alerts. Local in-process guards cannot enforce an account-wide
+  ceiling or survive a deliberate app restart.
+
+Capabilities that depended on the removed hosted service and do not have a
+safe local replacement are intentionally unavailable: generated images, media
+analysis/transcription, cloud-generated decks, and PDF-to-Word cloud conversion.
 
 Local UI/e2e driver scripts (Playwright + Electron, for local acceptance, not
 committed by default) live in [`scripts/drivers/`](scripts/drivers/README.md).
@@ -113,6 +150,7 @@ GenOffice is licensed under the [Apache License 2.0](LICENSE), with one
 exception: the `ee/` directory is reserved for future enterprise modules and
 is covered by the [GenOffice Enterprise License](ee/LICENSE).
 
-The GenOffice and Genspark names and logos are trademarks of Mainfunc, Inc.
-The Apache-2.0 license does not grant permission to use them (see section 6);
-forks should use their own branding.
+The inherited GenOffice name and artwork are trademarks of Mainfunc, Inc. The
+Apache-2.0 license does not grant trademark rights (see section 6). They remain
+only as source-compatibility identifiers in this development branch; choose a
+new product name and replace the artwork before distributing binaries.
