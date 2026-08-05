@@ -125,7 +125,7 @@ import { TabManager } from './tab-manager'
 import { initAutoUpdater } from './updater'
 
 /**
- * GenOffice unified shell: ONE Electron app, ONE BrowserWindow, hosting the
+ * Codexoffice unified shell: ONE Electron app, ONE BrowserWindow, hosting the
  * docs and sheets modules as WebContentsView tabs behind a WPS-style tab
  * strip. The shell owns the lifecycle — single-instance lock, file-
  * association routing by extension, and per-active-tab menu switching.
@@ -135,7 +135,7 @@ import { initAutoUpdater } from './updater'
 
 // ANY unpacked run (`npm run shell`, `npm run dev`, `npx electron .`) must not
 // share the installed app's userData or single-instance lock — otherwise a dev
-// run silently quits and forwards its argv to the running installed GenOffice.
+// run silently quits and forwards its argv to the running installed Codexoffice.
 // GENOFFICE_USER_DATA: test drivers point this at a scratch dir so an
 // automated instance can run alongside the dev instance (separate lock).
 if (!app.isPackaged)
@@ -144,12 +144,15 @@ if (!app.isPackaged)
     process.env.GENOFFICE_USER_DATA ?? join(app.getPath('appData'), 'GenOffice Dev'),
   )
 
-// The product rename from "AI Office" to GenOffice changed the userData path; migrate old user data once
+// Keep the established packaged path even though the display name is now Codexoffice.
+// Older AI Office installs are copied only when that established target is absent or empty.
 if (app.isPackaged) {
-  const oldDir = join(app.getPath('appData'), 'AI Office')
-  const newDir = app.getPath('userData')
-  const newEmpty = !existsSync(newDir) || readdirSync(newDir).length === 0
-  if (newEmpty && existsSync(oldDir)) cpSync(oldDir, newDir, { recursive: true })
+  const appData = app.getPath('appData')
+  const userData = join(appData, 'GenOffice')
+  const olderUserData = join(appData, 'AI Office')
+  app.setPath('userData', userData)
+  const targetEmpty = !existsSync(userData) || readdirSync(userData).length === 0
+  if (targetEmpty && existsSync(olderUserData)) cpSync(olderUserData, userData, { recursive: true })
 }
 
 // module build outputs: packaged builds carry them as extraResources
@@ -232,12 +235,12 @@ const tMain = createI18n({
   zh: {
     menuFile: '文件',
     menuSectionNew: '新建',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: '未命名表格',
     untitledDoc: '未命名文档',
     untitledDeck: '未命名演示文稿',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: '打开…',
     menuSave: '保存',
     menuSaveAs: '另存为…',
@@ -266,12 +269,12 @@ const tMain = createI18n({
   en: {
     menuFile: 'File',
     menuSectionNew: 'New',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Untitled Spreadsheet',
     untitledDoc: 'Untitled Document',
     untitledDeck: 'Untitled Presentation',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Open…',
     menuSave: 'Save',
     menuSaveAs: 'Save As…',
@@ -300,12 +303,12 @@ const tMain = createI18n({
   ja: {
     menuFile: 'ファイル',
     menuSectionNew: '新規作成',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: '無題のスプレッドシート',
     untitledDoc: '無題のドキュメント',
     untitledDeck: '無題のプレゼンテーション',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: '開く…',
     menuSave: '保存',
     menuSaveAs: '名前を付けて保存…',
@@ -334,12 +337,12 @@ const tMain = createI18n({
   ko: {
     menuFile: '파일',
     menuSectionNew: '새로 만들기',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: '제목 없는 스프레드시트',
     untitledDoc: '제목 없는 문서',
     untitledDeck: '제목 없는 프레젠테이션',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: '열기…',
     menuSave: '저장',
     menuSaveAs: '다른 이름으로 저장…',
@@ -368,12 +371,12 @@ const tMain = createI18n({
   fr: {
     menuFile: 'Fichier',
     menuSectionNew: 'Nouveau',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Feuille de calcul sans titre',
     untitledDoc: 'Document sans titre',
     untitledDeck: 'Présentation sans titre',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Ouvrir…',
     menuSave: 'Enregistrer',
     menuSaveAs: 'Enregistrer sous…',
@@ -402,12 +405,12 @@ const tMain = createI18n({
   de: {
     menuFile: 'Datei',
     menuSectionNew: 'Neu',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Unbenannte Tabelle',
     untitledDoc: 'Unbenanntes Dokument',
     untitledDeck: 'Unbenannte Präsentation',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Öffnen…',
     menuSave: 'Speichern',
     menuSaveAs: 'Speichern unter…',
@@ -436,12 +439,12 @@ const tMain = createI18n({
   es: {
     menuFile: 'Archivo',
     menuSectionNew: 'Nuevo',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Hoja de cálculo sin título',
     untitledDoc: 'Documento sin título',
     untitledDeck: 'Presentación sin título',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Abrir…',
     menuSave: 'Guardar',
     menuSaveAs: 'Guardar como…',
@@ -470,12 +473,12 @@ const tMain = createI18n({
   th: {
     menuFile: 'ไฟล์',
     menuSectionNew: 'สร้างใหม่',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'สเปรดชีตไม่มีชื่อ',
     untitledDoc: 'เอกสารไม่มีชื่อ',
     untitledDeck: 'งานนำเสนอไม่มีชื่อ',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'เปิด…',
     menuSave: 'บันทึก',
     menuSaveAs: 'บันทึกเป็น…',
@@ -504,12 +507,12 @@ const tMain = createI18n({
   id: {
     menuFile: 'File',
     menuSectionNew: 'Baru',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Spreadsheet tanpa judul',
     untitledDoc: 'Dokumen tanpa judul',
     untitledDeck: 'Presentasi tanpa judul',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Buka…',
     menuSave: 'Simpan',
     menuSaveAs: 'Simpan Sebagai…',
@@ -538,12 +541,12 @@ const tMain = createI18n({
   ru: {
     menuFile: 'Файл',
     menuSectionNew: 'Создать',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Таблица без названия',
     untitledDoc: 'Документ без названия',
     untitledDeck: 'Презентация без названия',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Открыть…',
     menuSave: 'Сохранить',
     menuSaveAs: 'Сохранить как…',
@@ -572,12 +575,12 @@ const tMain = createI18n({
   ar: {
     menuFile: 'ملف',
     menuSectionNew: 'جديد',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'جدول بيانات بلا عنوان',
     untitledDoc: 'مستند بدون عنوان',
     untitledDeck: 'عرض تقديمي بدون عنوان',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'فتح…',
     menuSave: 'حفظ',
     menuSaveAs: 'حفظ باسم…',
@@ -606,12 +609,12 @@ const tMain = createI18n({
   pt: {
     menuFile: 'Arquivo',
     menuSectionNew: 'Novo',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Planilha sem título',
     untitledDoc: 'Documento sem título',
     untitledDeck: 'Apresentação sem título',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Abrir…',
     menuSave: 'Salvar',
     menuSaveAs: 'Salvar Como…',
@@ -640,12 +643,12 @@ const tMain = createI18n({
   it: {
     menuFile: 'File',
     menuSectionNew: 'Nuovo',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Foglio di calcolo senza titolo',
     untitledDoc: 'Documento senza titolo',
     untitledDeck: 'Presentazione senza titolo',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Apri…',
     menuSave: 'Salva',
     menuSaveAs: 'Salva con nome…',
@@ -674,12 +677,12 @@ const tMain = createI18n({
   pl: {
     menuFile: 'Plik',
     menuSectionNew: 'Nowy',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Arkusz bez tytułu',
     untitledDoc: 'Dokument bez tytułu',
     untitledDeck: 'Prezentacja bez tytułu',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Otwórz…',
     menuSave: 'Zapisz',
     menuSaveAs: 'Zapisz jako…',
@@ -708,12 +711,12 @@ const tMain = createI18n({
   nl: {
     menuFile: 'Bestand',
     menuSectionNew: 'Nieuw',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Naamloze spreadsheet',
     untitledDoc: 'Naamloos document',
     untitledDeck: 'Naamloze presentatie',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Openen…',
     menuSave: 'Opslaan',
     menuSaveAs: 'Opslaan als…',
@@ -742,12 +745,12 @@ const tMain = createI18n({
   ms: {
     menuFile: 'Fail',
     menuSectionNew: 'Baharu',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Hamparan tanpa tajuk',
     untitledDoc: 'Dokumen tanpa tajuk',
     untitledDeck: 'Persembahan tanpa tajuk',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Buka…',
     menuSave: 'Simpan',
     menuSaveAs: 'Simpan Sebagai…',
@@ -776,12 +779,12 @@ const tMain = createI18n({
   he: {
     menuFile: 'קובץ',
     menuSectionNew: 'חדש',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'גיליון אלקטרוני ללא שם',
     untitledDoc: 'מסמך ללא שם',
     untitledDeck: 'מצגת ללא שם',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'פתיחה…',
     menuSave: 'שמירה',
     menuSaveAs: 'שמירה בשם…',
@@ -810,12 +813,12 @@ const tMain = createI18n({
   hi: {
     menuFile: 'फ़ाइल',
     menuSectionNew: 'नया',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'शीर्षकहीन स्प्रेडशीट',
     untitledDoc: 'बिना शीर्षक दस्तावेज़',
     untitledDeck: 'बिना शीर्षक प्रस्तुति',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'खोलें…',
     menuSave: 'सहेजें',
     menuSaveAs: 'इस रूप में सहेजें…',
@@ -844,12 +847,12 @@ const tMain = createI18n({
   'zh-TW': {
     menuFile: '檔案',
     menuSectionNew: '新增',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: '未命名試算表',
     untitledDoc: '未命名文件',
     untitledDeck: '未命名簡報',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: '開啟…',
     menuSave: '儲存',
     menuSaveAs: '另存新檔…',
@@ -942,7 +945,7 @@ function createShellWindow(): void {
     height: 900,
     minWidth: 980,
     minHeight: 600,
-    title: 'GenOffice',
+    title: 'Codexoffice',
     // vibrancy: editor modules punch translucent regions (e.g. the slides
     // thumbnail pane) through to the desktop
     ...(process.platform === 'darwin'

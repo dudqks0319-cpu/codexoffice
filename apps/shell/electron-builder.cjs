@@ -27,7 +27,8 @@ const codexResource = codexExtraResource()
 /** @type {import('electron-builder').Configuration} */
 const config = {
   appId: 'com.genoffice.app',
-  productName: 'GenOffice',
+  productName: 'Codexoffice',
+  artifactName: 'Codexoffice-${version}-${arch}.${ext}',
   electronVersion: '41.7.1',
   directories: {
     output: 'release',

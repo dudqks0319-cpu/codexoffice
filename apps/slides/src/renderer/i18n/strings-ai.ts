@@ -22,7 +22,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: '未送达,本条不会生效',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: '打开 AI 助手',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'AI 事实核查',
     aiFactCheckPrompt: '核查这份幻灯片的内容:检查数据、日期、名称和论断是否属实,指出并纠正错误',
     aiImageBtn: 'AI 配图',
@@ -211,7 +211,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Not delivered — this message had no effect',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'Open AI assistant',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'AI Fact Check',
     aiFactCheckPrompt:
       'Fact-check this deck: verify the figures, dates, names, and claims, then point out and correct any errors',
@@ -405,7 +405,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: '未送信 — このメッセージは反映されていません',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'AI アシスタントを開く',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'AI ファクトチェック',
     aiFactCheckPrompt:
       'このスライドの内容をファクトチェックしてください:数値・日付・名称・主張を確認し、誤りを指摘して修正してください',
@@ -598,7 +598,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: '전송되지 않음 — 이 메시지는 적용되지 않았습니다',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'AI 도우미 열기',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'AI 팩트체크',
     aiFactCheckPrompt:
       '이 슬라이드의 내용을 팩트체크해 주세요: 수치, 날짜, 이름, 주장을 확인하고 오류를 지적하여 수정해 주세요',
@@ -792,7 +792,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Non envoyé — ce message n’a pas été pris en compte',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: "Ouvrir l'assistant IA",
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'Vérification IA',
     aiFactCheckPrompt:
       'Vérifiez les faits de cette présentation : contrôlez les chiffres, dates, noms et affirmations, puis signalez et corrigez les erreurs',
@@ -989,7 +989,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Nicht zugestellt — diese Nachricht wurde nicht verarbeitet',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'KI-Assistenten öffnen',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'KI-Faktencheck',
     aiFactCheckPrompt:
       'Überprüfe die Fakten in dieser Präsentation: Kontrolliere Zahlen, Daten, Namen und Aussagen, weise auf Fehler hin und korrigiere sie',
@@ -1184,7 +1184,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'No entregado: este mensaje no tuvo efecto',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'Abrir el asistente de IA',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'Verificación IA',
     aiFactCheckPrompt:
       'Verifica los datos de esta presentación: comprueba cifras, fechas, nombres y afirmaciones, y señala y corrige los errores',
@@ -1380,7 +1380,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'ส่งไม่สำเร็จ — ข้อความนี้ไม่มีผล',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'เปิดผู้ช่วย AI',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'ตรวจสอบข้อเท็จจริง AI',
     aiFactCheckPrompt:
       'ตรวจสอบข้อเท็จจริงของสไลด์ชุดนี้: ตรวจตัวเลข วันที่ ชื่อ และข้อกล่าวอ้าง แล้วชี้และแก้ไขข้อผิดพลาด',
@@ -1572,7 +1572,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Tidak terkirim — pesan ini tidak diproses',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'Buka asisten AI',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'Cek Fakta AI',
     aiFactCheckPrompt:
       'Periksa fakta dek ini: verifikasi angka, tanggal, nama, dan klaim, lalu tunjukkan dan perbaiki kesalahannya',
@@ -1767,7 +1767,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Не доставлено — это сообщение не было обработано',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'Открыть ИИ-помощника',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'ИИ-фактчекинг',
     aiFactCheckPrompt:
       'Проверьте факты в этой презентации: сверьте цифры, даты, имена и утверждения, укажите на ошибки и исправьте их',
@@ -1962,7 +1962,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'لم يتم الإرسال — لم يُعالَج هذا الطلب',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'فتح مساعد الذكاء الاصطناعي',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'تدقيق حقائق AI',
     aiFactCheckPrompt:
       'تحقق من حقائق هذا العرض: راجع الأرقام والتواريخ والأسماء والادعاءات، ثم أشر إلى الأخطاء وصححها',
@@ -2154,7 +2154,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Não entregue — esta mensagem não teve efeito',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'Abrir assistente de IA',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'Checagem IA',
     aiFactCheckPrompt:
       'Cheque os fatos desta apresentação: verifique números, datas, nomes e afirmações, aponte e corrija os erros',
@@ -2349,7 +2349,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Non recapitato — questo messaggio non ha avuto effetto',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: "Apri l'assistente IA",
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'Fact-check IA',
     aiFactCheckPrompt:
       'Verifica i fatti di questa presentazione: controlla numeri, date, nomi e affermazioni, poi segnala e correggi gli errori',
@@ -2544,7 +2544,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Niedostarczone — ta wiadomość nie została przetworzona',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'Otwórz asystenta AI',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'Weryfikacja AI',
     aiFactCheckPrompt:
       'Zweryfikuj fakty w tej prezentacji: sprawdź liczby, daty, nazwy i twierdzenia, wskaż i popraw błędy',
@@ -2739,7 +2739,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Niet afgeleverd — dit bericht is niet verwerkt',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'AI-assistent openen',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'AI-factcheck',
     aiFactCheckPrompt:
       'Factcheck deze presentatie: controleer cijfers, datums, namen en beweringen, en wijs fouten aan en corrigeer ze',
@@ -2935,7 +2935,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Tidak dihantar — mesej ini tidak diproses',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'Buka pembantu AI',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'Semak Fakta AI',
     aiFactCheckPrompt:
       'Semak fakta dek ini: sahkan angka, tarikh, nama dan dakwaan, kemudian nyatakan dan betulkan kesilapan',
@@ -3130,7 +3130,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'לא נמסר — הודעה זו לא עובדה',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'פתיחת עוזר ה-AI',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'בדיקת עובדות AI',
     aiFactCheckPrompt:
       'בדוק את העובדות במצגת זו: אמת מספרים, תאריכים, שמות וטענות, ואז הצבע על שגיאות ותקן אותן',
@@ -3323,7 +3323,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'नहीं भेजा गया — इस संदेश का कोई प्रभाव नहीं पड़ा',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: 'AI सहायक खोलें',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'AI तथ्य जाँच',
     aiFactCheckPrompt:
       'इस प्रेज़ेंटेशन की तथ्य जाँच करें: आँकड़े, तिथियाँ, नाम और दावे सत्यापित करें, फिर त्रुटियाँ बताएं और सुधारें',
@@ -3517,7 +3517,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: '未送達,本則不會生效',
     aiPanelTitle: 'Codex',
-    aiOpenAssistant: '開啟 AI 助手',
+    aiOpenAssistant: 'Codex',
     aiFactCheckBtn: 'AI 事實核查',
     aiFactCheckPrompt: '核查這份簡報的內容:檢查數據、日期、名稱和論斷是否屬實,指出並糾正錯誤',
     aiImageBtn: 'AI 配圖',

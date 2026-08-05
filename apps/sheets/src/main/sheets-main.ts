@@ -1288,7 +1288,7 @@ export async function createSheetsWindow(
     minWidth: 1024,
     minHeight: 680,
     show: false,
-    title: 'GenOffice Sheets',
+    title: 'Codexoffice Sheets',
     // Traffic lights sit inside the toolbar row.
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
     webPreferences: {
@@ -2763,6 +2763,8 @@ export function startSheetsStandalone(): void {
   // Same dev-only hook as apps/slides/src/main/slides-main.ts.
   if (!app.isPackaged && process.env.GENOFFICE_USER_DATA) {
     app.setPath('userData', process.env.GENOFFICE_USER_DATA)
+  } else {
+    app.setPath('userData', join(app.getPath('appData'), 'GenOffice Sheets'))
   }
   configureCodexHome(join(app.getPath('userData'), 'codex'))
   void applyMainProcessProxy()

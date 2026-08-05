@@ -1,5 +1,5 @@
 /**
- * GenOffice Slides main process — pptx parsing/render-tree building/edit application/saving all live
+ * Codexoffice Slides main process — pptx parsing/render-tree building/edit application/saving all live
  * here (Node side). The renderer only gets plain-data RenderSlide; edit intents are sent back
  * here to apply. Structure mirrors apps/docs: exports embeddable configure/register/start for
  * future shell reuse.
@@ -454,7 +454,7 @@ const AUTOSAVE_BACKOFF_TICKS = 10
 let autosaveRunning = false
 
 /**
- * Recovery drafts for never-saved decks (wcId → visible path in <Documents>/GenOffice):
+ * Recovery drafts for never-saved decks (wcId → visible path in <Documents>/Codexoffice):
  * the sha1-keyed recovery copy needs session.path, so before the first save a freeze or
  * crash used to lose everything. Removed on save, explicit discard, or clean close.
  */
@@ -680,9 +680,9 @@ async function openAndBuild(
   }
 }
 
-/** Directory where AI-generated drafts are saved: <Documents>/GenOffice/ */
+/** Directory where Codex-generated drafts are saved: <Documents>/Codexoffice/ */
 function getDraftsDir(): string {
-  return join(app.getPath('documents'), 'GenOffice')
+  return join(app.getPath('documents'), 'Codexoffice')
 }
 
 /** Fallback draft filename: <untitled label>-YYYYMMDD-HHmmss.pptx */
@@ -3377,7 +3377,7 @@ export function createSlidesWindow(openPath?: string | null): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 840,
-    title: 'GenOffice Slides',
+    title: 'Codexoffice Slides',
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const }
       : {
@@ -3604,6 +3604,8 @@ export function startSlidesStandalone(): void {
   // to userData), allowing parallel instances alongside a normal dev run.
   if (!app.isPackaged && process.env.GENOFFICE_USER_DATA) {
     app.setPath('userData', process.env.GENOFFICE_USER_DATA)
+  } else {
+    app.setPath('userData', join(app.getPath('appData'), 'GenOffice Slides'))
   }
   configureCodexHome(join(app.getPath('userData'), 'codex'))
   configureCodexExecutable(

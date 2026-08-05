@@ -3,7 +3,8 @@ const { codexExtraResource } = require('../../tools/codex-electron-runtime.cjs')
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
   appId: 'com.genoffice.slides',
-  productName: 'GenOffice Slides',
+  productName: 'Codexoffice Slides',
+  artifactName: 'Codexoffice-Slides-${version}-${arch}.${ext}',
   electronVersion: '41.7.1',
   directories: { output: 'release' },
   files: ['out/**'],

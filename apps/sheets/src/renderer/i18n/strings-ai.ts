@@ -9,7 +9,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: '未送达,本条不会生效',
     aiRetry: '重试',
-    aiOpenAssistant: '打开 AI 助手',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'AI 校验',
     aiCheckPrompt:
       '检查这个表格的问题:1) 公式错误(#REF!、#DIV/0! 等)、引用范围没覆盖全部数据、合计行漏加列;2) 同一列数字和文本混用、日期格式不统一、明显的异常值和重复行;3) 合计与明细对不上、百分比加总不是 100% 等结构问题。列出发现的问题并给出修复建议',
@@ -92,7 +92,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Not delivered — this message had no effect',
     aiRetry: 'Retry',
-    aiOpenAssistant: 'Open AI assistant',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'AI Check',
     aiCheckPrompt:
       'Check this sheet for problems: 1) formula errors (#REF!, #DIV/0!, etc.), ranges that do not cover all the data, totals rows missing columns; 2) numbers and text mixed in one column, inconsistent date formats, obvious outliers and duplicate rows; 3) totals that do not match the detail rows, percentage columns that do not add up to 100%. List the issues found and suggest fixes',
@@ -180,7 +180,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: '未送信 — このメッセージは反映されていません',
     aiRetry: '再試行',
-    aiOpenAssistant: 'AI アシスタントを開く',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'AI チェック',
     aiCheckPrompt:
       'このシートの問題をチェックしてください:1) 数式エラー(#REF!、#DIV/0! など)、データ全体をカバーしていない参照範囲、合計行の列漏れ;2) 同じ列での数値と文字列の混在、日付形式の不統一、明らかな外れ値や重複行;3) 合計と明細の不一致、パーセント列の合計が100%にならないなどの構造的な問題。見つかった問題を挙げて修正案を提示してください',
@@ -267,7 +267,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: '전송되지 않음 — 이 메시지는 적용되지 않았습니다',
     aiRetry: '다시 시도',
-    aiOpenAssistant: 'AI 도우미 열기',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'AI 검사',
     aiCheckPrompt:
       '이 시트의 문제를 검사해 주세요: 1) 수식 오류(#REF!, #DIV/0! 등), 데이터 전체를 포함하지 않는 참조 범위, 합계 행에서 누락된 열 2) 같은 열에 숫자와 텍스트 혼용, 일관되지 않은 날짜 형식, 명백한 이상값과 중복 행 3) 합계와 세부 내역 불일치, 100%가 되지 않는 백분율 열 등 구조 문제. 발견한 문제를 나열하고 수정 방안을 제안해 주세요',
@@ -354,7 +354,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Non envoyé — ce message n’a pas été pris en compte',
     aiRetry: 'Réessayer',
-    aiOpenAssistant: "Ouvrir l'assistant IA",
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'Vérification IA',
     aiCheckPrompt:
       'Vérifiez cette feuille : 1) erreurs de formule (#REF!, #DIV/0!, etc.), plages ne couvrant pas toutes les données, colonnes manquantes dans les lignes de total ; 2) nombres et texte mélangés dans une même colonne, formats de date incohérents, valeurs aberrantes et doublons ; 3) totaux ne correspondant pas au détail, colonnes de pourcentages ne totalisant pas 100 %. Listez les problèmes trouvés et proposez des corrections',
@@ -444,7 +444,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Nicht zugestellt — diese Nachricht wurde nicht verarbeitet',
     aiRetry: 'Erneut versuchen',
-    aiOpenAssistant: 'KI-Assistenten öffnen',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'KI-Prüfung',
     aiCheckPrompt:
       'Prüfe dieses Blatt auf Probleme: 1) Formelfehler (#REF!, #DIV/0! usw.), Bezüge, die nicht alle Daten abdecken, fehlende Spalten in Summenzeilen; 2) Zahlen und Text in derselben Spalte gemischt, uneinheitliche Datumsformate, offensichtliche Ausreißer und doppelte Zeilen; 3) Summen, die nicht zu den Detailzeilen passen, Prozentspalten, die nicht 100 % ergeben. Liste die gefundenen Probleme auf und schlage Korrekturen vor',
@@ -534,7 +534,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'No entregado: este mensaje no tuvo efecto',
     aiRetry: 'Reintentar',
-    aiOpenAssistant: 'Abrir el asistente de IA',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'Revisión IA',
     aiCheckPrompt:
       'Revisa esta hoja en busca de problemas: 1) errores de fórmula (#REF!, #DIV/0!, etc.), rangos que no cubren todos los datos, columnas omitidas en filas de totales; 2) números y texto mezclados en una misma columna, formatos de fecha inconsistentes, valores atípicos evidentes y filas duplicadas; 3) totales que no cuadran con el detalle, columnas de porcentajes que no suman 100%. Enumera los problemas encontrados y sugiere correcciones',
@@ -622,7 +622,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'ส่งไม่สำเร็จ — ข้อความนี้ไม่มีผล',
     aiRetry: 'ลองอีกครั้ง',
-    aiOpenAssistant: 'เปิดผู้ช่วย AI',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'ตรวจสอบ AI',
     aiCheckPrompt:
       'ตรวจสอบปัญหาในชีตนี้: 1) ข้อผิดพลาดของสูตร (#REF!, #DIV/0! ฯลฯ) ช่วงอ้างอิงที่ไม่ครอบคลุมข้อมูลทั้งหมด แถวผลรวมที่ขาดบางคอลัมน์ 2) ตัวเลขปนข้อความในคอลัมน์เดียวกัน รูปแบบวันที่ไม่สอดคล้อง ค่าผิดปกติและแถวซ้ำ 3) ผลรวมไม่ตรงกับรายละเอียด คอลัมน์เปอร์เซ็นต์รวมกันไม่เท่ากับ 100% แสดงรายการปัญหาที่พบพร้อมข้อเสนอแนะในการแก้ไข',
@@ -709,7 +709,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Tidak terkirim — pesan ini tidak diproses',
     aiRetry: 'Coba lagi',
-    aiOpenAssistant: 'Buka asisten AI',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'Pemeriksaan AI',
     aiCheckPrompt:
       'Periksa masalah di sheet ini: 1) kesalahan rumus (#REF!, #DIV/0!, dll.), rentang yang tidak mencakup seluruh data, kolom yang terlewat di baris total; 2) angka dan teks tercampur dalam satu kolom, format tanggal tidak konsisten, pencilan yang jelas dan baris duplikat; 3) total yang tidak cocok dengan rincian, kolom persentase yang jumlahnya tidak 100%. Daftarkan masalah yang ditemukan dan sarankan perbaikannya',
@@ -796,7 +796,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Не доставлено — это сообщение не было обработано',
     aiRetry: 'Повторить',
-    aiOpenAssistant: 'Открыть ИИ-помощника',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'ИИ-проверка',
     aiCheckPrompt:
       'Проверьте этот лист на проблемы: 1) ошибки формул (#REF!, #DIV/0! и т. д.), диапазоны, не охватывающие все данные, пропущенные столбцы в итоговых строках; 2) числа и текст в одном столбце, разнобой в форматах дат, явные выбросы и повторяющиеся строки; 3) итоги, не совпадающие с детализацией, столбцы процентов, не дающие в сумме 100%. Перечислите найденные проблемы и предложите исправления',
@@ -884,7 +884,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'لم يتم الإرسال — لم يُعالَج هذا الطلب',
     aiRetry: 'إعادة المحاولة',
-    aiOpenAssistant: 'فتح مساعد الذكاء الاصطناعي',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'فحص AI',
     aiCheckPrompt:
       'افحص هذا الجدول بحثًا عن المشكلات: 1) أخطاء الصيغ (#REF! و#DIV/0! وغيرها)، ونطاقات لا تغطي كل البيانات، وأعمدة ناقصة في صفوف الإجمالي؛ 2) خلط الأرقام والنصوص في العمود نفسه، وتنسيقات تواريخ غير موحدة، وقيم شاذة وصفوف مكررة؛ 3) إجماليات لا تطابق التفاصيل، وأعمدة نسب مئوية لا يبلغ مجموعها 100%. اذكر المشكلات التي وجدتها واقترح الإصلاحات',
@@ -969,7 +969,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Não entregue — esta mensagem não teve efeito',
     aiRetry: 'Tentar novamente',
-    aiOpenAssistant: 'Abrir assistente de IA',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'Verificação IA',
     aiCheckPrompt:
       'Verifique esta planilha em busca de problemas: 1) erros de fórmula (#REF!, #DIV/0!, etc.), intervalos que não cobrem todos os dados, colunas faltando nas linhas de total; 2) números e texto misturados na mesma coluna, formatos de data inconsistentes, valores discrepantes evidentes e linhas duplicadas; 3) totais que não batem com o detalhamento, colunas de percentuais que não somam 100%. Liste os problemas encontrados e sugira correções',
@@ -1058,7 +1058,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Non recapitato — questo messaggio non ha avuto effetto',
     aiRetry: 'Riprova',
-    aiOpenAssistant: "Apri l'assistente IA",
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'Verifica IA',
     aiCheckPrompt:
       'Controlla questo foglio alla ricerca di problemi: 1) errori nelle formule (#REF!, #DIV/0!, ecc.), intervalli che non coprono tutti i dati, colonne mancanti nelle righe dei totali; 2) numeri e testo mescolati nella stessa colonna, formati data incoerenti, valori anomali evidenti e righe duplicate; 3) totali che non corrispondono al dettaglio, colonne di percentuali che non sommano al 100%. Elenca i problemi trovati e suggerisci le correzioni',
@@ -1146,7 +1146,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Niedostarczone — ta wiadomość nie została przetworzona',
     aiRetry: 'Ponów',
-    aiOpenAssistant: 'Otwórz asystenta AI',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'Kontrola AI',
     aiCheckPrompt:
       'Sprawdź ten arkusz pod kątem problemów: 1) błędy formuł (#REF!, #DIV/0! itd.), zakresy nieobejmujące wszystkich danych, brakujące kolumny w wierszach sum; 2) liczby i tekst wymieszane w jednej kolumnie, niespójne formaty dat, wyraźne wartości odstające i zduplikowane wiersze; 3) sumy niezgodne ze szczegółami, kolumny procentowe niesumujące się do 100%. Wypisz znalezione problemy i zaproponuj poprawki',
@@ -1235,7 +1235,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Niet afgeleverd — dit bericht is niet verwerkt',
     aiRetry: 'Opnieuw proberen',
-    aiOpenAssistant: 'AI-assistent openen',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'AI-controle',
     aiCheckPrompt:
       'Controleer dit blad op problemen: 1) formulefouten (#REF!, #DIV/0!, enz.), bereiken die niet alle gegevens dekken, ontbrekende kolommen in totaalrijen; 2) cijfers en tekst gemengd in één kolom, inconsistente datumnotaties, duidelijke uitschieters en dubbele rijen; 3) totalen die niet kloppen met de detailregels, percentagekolommen die niet optellen tot 100%. Som de gevonden problemen op en stel correcties voor',
@@ -1324,7 +1324,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'Tidak dihantar — mesej ini tidak diproses',
     aiRetry: 'Cuba lagi',
-    aiOpenAssistant: 'Buka pembantu AI',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'Semakan AI',
     aiCheckPrompt:
       'Semak helaian ini untuk masalah: 1) ralat formula (#REF!, #DIV/0!, dll.), julat yang tidak meliputi semua data, lajur yang tertinggal dalam baris jumlah; 2) nombor dan teks bercampur dalam satu lajur, format tarikh tidak konsisten, nilai luar biasa yang ketara dan baris pendua; 3) jumlah yang tidak sepadan dengan perincian, lajur peratusan yang tidak berjumlah 100%. Senaraikan masalah yang ditemui dan cadangkan pembetulan',
@@ -1412,7 +1412,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'לא נמסר — הודעה זו לא עובדה',
     aiRetry: 'נסה שוב',
-    aiOpenAssistant: 'פתיחת עוזר ה-AI',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'בדיקת AI',
     aiCheckPrompt:
       'בדוק את הגיליון הזה לאיתור בעיות: 1) שגיאות נוסחה (#REF!,‏ #DIV/0! וכו׳), טווחים שאינם מכסים את כל הנתונים, עמודות חסרות בשורות סיכום; 2) מספרים וטקסט מעורבבים באותה עמודה, פורמטים לא אחידים של תאריכים, חריגים בולטים ושורות כפולות; 3) סיכומים שאינם תואמים את הפירוט, עמודות אחוזים שאינן מסתכמות ל-100%. פרט את הבעיות שנמצאו והצע תיקונים',
@@ -1496,7 +1496,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: 'नहीं भेजा गया — इस संदेश का कोई प्रभाव नहीं पड़ा',
     aiRetry: 'फिर से कोशिश करें',
-    aiOpenAssistant: 'AI सहायक खोलें',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'AI जाँच',
     aiCheckPrompt:
       'इस शीट में समस्याएँ जाँचें: 1) सूत्र त्रुटियाँ (#REF!, #DIV/0! आदि), ऐसी रेंज जो पूरा डेटा कवर नहीं करतीं, योग पंक्तियों में छूटे कॉलम; 2) एक ही कॉलम में संख्या और टेक्स्ट का मिश्रण, असंगत दिनांक प्रारूप, स्पष्ट विषम मान और डुप्लिकेट पंक्तियाँ; 3) योग का विवरण से मेल न खाना, प्रतिशत कॉलम का जोड़ 100% न होना। मिली समस्याएँ सूचीबद्ध करें और सुधार सुझाएँ',
@@ -1583,7 +1583,7 @@ export const aiStrings = defineStrings({
     aiCodexLoginBtn: 'Sign in with your Codex account',
     aiUndelivered: '未送達,本則不會生效',
     aiRetry: '重試',
-    aiOpenAssistant: '開啟 AI 助手',
+    aiOpenAssistant: 'Codex',
     aiCheckBtn: 'AI 校驗',
     aiCheckPrompt:
       '檢查這個表格的問題:1) 公式錯誤(#REF!、#DIV/0! 等)、參照範圍沒涵蓋全部資料、合計列漏加欄位;2) 同一欄數字和文字混用、日期格式不一致、明顯的異常值和重複列;3) 合計與明細對不上、百分比加總不是 100% 等結構問題。列出發現的問題並提出修復建議',

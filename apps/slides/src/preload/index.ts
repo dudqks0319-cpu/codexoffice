@@ -71,6 +71,7 @@ import type {
   MasterDeleteElementOp,
   ExportImagesOp,
   ExportPdfOp,
+  GenerateSlideImageOp,
   PrintSlidesOp,
   MenuCommand,
   OpenResult,
@@ -265,6 +266,9 @@ const api: SlidesApi = {
     hPx: number
     fitWidthPx: number
   }) => ipcRenderer.invoke('ai:insert-image-url', op),
+  generateSlideImage: (op: GenerateSlideImageOp) =>
+    ipcRenderer.invoke('ai:generate-slide-image', op),
+  cancelSlideImage: (requestId: string) => ipcRenderer.invoke('ai:cancel-slide-image', requestId),
   onAiStream: (handler: (chunk: AiStreamChunk) => void) => {
     const listener = (_e: IpcRendererEvent, chunk: AiStreamChunk) => handler(chunk)
     ipcRenderer.on('ai:stream-chunk', listener)

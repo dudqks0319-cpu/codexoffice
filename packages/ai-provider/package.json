@@ -4,7 +4,7 @@
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
-  "description": "Multi-provider LLM streaming + one-shot chat client (Claude/Gemini/DeepSeek/OpenAI/custom), shared by AI Docs and future apps (Excel / PPT)",
+  "description": "Codex streaming and guarded image generation provider shared by Codexoffice apps",
   "exports": {
     ".": "./src/index.ts",
     "./browser": "./src/index.ts",

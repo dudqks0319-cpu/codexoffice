@@ -17,6 +17,30 @@ export {
 export type { CodexDependencies } from './codex'
 export { getCodexAccountStatus, loginCodex, logoutCodex } from './codex-auth'
 export type { CodexAuthDependencies } from './codex-auth'
+export { CodexAppServerClient } from './codex-app-server'
+export type {
+  CodexAppServerClientLike,
+  CodexAppServerClientOptions,
+  CodexAppServerNotification,
+} from './codex-app-server'
+export {
+  CODEX_IMAGE_DEFAULT_TIMEOUT_MS,
+  CODEX_IMAGE_MAX_BYTES,
+  CODEX_IMAGE_MAX_DIMENSION,
+  CODEX_IMAGE_MAX_PROMPT_BYTES,
+  CodexImageError,
+  CodexImageGenerator,
+  codexImageAppServerArgs,
+} from './codex-image'
+export type {
+  CodexImageClock,
+  CodexImageErrorCode,
+  CodexImageFileSystem,
+  CodexImageGeneratorOptions,
+  CodexImageQuotaOptions,
+  CodexImageRequest,
+  CodexImageResult,
+} from './codex-image'
 export {
   configureCodexExecutable,
   configureCodexHome,

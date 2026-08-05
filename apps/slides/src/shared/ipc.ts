@@ -80,6 +80,43 @@ export interface AttachmentImageResult {
   error?: string
 }
 
+/** Provider-neutral request. Authentication and the raw generation response stay in main. */
+export interface GenerateSlideImageOp {
+  requestId: string
+  slideIndex: number
+  prompt: string
+  xPx: number
+  yPx: number
+  wPx: number
+  hPx: number
+  fitWidthPx: number
+}
+
+export type GenerateSlideImageErrorCode =
+  | 'IMAGE_CANCELLED'
+  | 'IMAGE_CONFIRMATION_REQUIRED'
+  | 'IMAGE_DISABLED'
+  | 'IMAGE_DUPLICATE'
+  | 'IMAGE_INPUT_INVALID'
+  | 'IMAGE_QUOTA_EXCEEDED'
+  | 'IMAGE_BUSY'
+  | 'IMAGE_SIGN_IN_REQUIRED'
+  | 'IMAGE_UNAVAILABLE'
+  | 'IMAGE_PROTOCOL_INVALID'
+  | 'IMAGE_OUTPUT_INVALID'
+  | 'IMAGE_TIMEOUT'
+  | 'IMAGE_PROVIDER_FAILED'
+  | 'IMAGE_INSERT_FAILED'
+
+export type GenerateSlideImageResult =
+  | {
+      ok: true
+      slide: RenderSlide
+      sourceId: string
+      image: { mime: 'image/png' | 'image/jpeg' | 'image/webp'; width: number; height: number }
+    }
+  | { ok: false; code: GenerateSlideImageErrorCode; error: string }
+
 /** Attachment bridge (window.desktop): same names/signatures as docs' DesktopApi attachment subset, so files-skill can be copied wholesale */
 export interface DesktopFilesApi {
   /** Multi-select attachment file dialog */
@@ -1287,6 +1324,10 @@ export interface SlidesApi {
     hPx: number
     fitWidthPx: number
   }) => Promise<{ slide: RenderSlide; sourceId: string } | null>
+  /** Confirm, generate, validate, and insert in main; returns the normal bounded RenderSlide. */
+  generateSlideImage: (op: GenerateSlideImageOp) => Promise<GenerateSlideImageResult>
+  /** Cancel an image turn owned by this renderer and request id. */
+  cancelSlideImage: (requestId: string) => Promise<boolean>
   onAiStream: (handler: (chunk: AiStreamChunk) => void) => () => void
   /** Style Skill sidecar: write styleSkill to a same-named .styleskill.json next to the draft */
   saveStyleSidecar: (data: {

@@ -3,7 +3,7 @@
 ## Reporting a Vulnerability
 
 Please report suspected vulnerabilities privately via GitHub's
-[private vulnerability reporting](https://github.com/dudqks0319-cpu/genoffice/security/advisories/new)
+[private vulnerability reporting](https://github.com/dudqks0319-cpu/codexoffice/security/advisories/new)
 on this repository. Do not open public issues for security reports. We aim to
 acknowledge reports within 72 hours.
 
@@ -61,6 +61,29 @@ limits. `GENOFFICE_SEARCH_DISABLED=1` and
 Production builds that enable a billable Serper key must still configure a
 provider-side budget cap and alert; this local desktop fork cannot enforce a
 global account-wide spend ceiling by itself.
+
+## Threat Model: Codex Image Generation
+
+Slides image generation runs through a separate, one-shot Codex App Server
+process; the normal structured office provider continues to disable image
+generation. The main process requires a per-call usage/cost confirmation,
+ChatGPT account and capability checks, an explicit trusted-environment enable
+switch (`GENOFFICE_CODEX_IMAGE_GENERATION=1`), replay-resistant request IDs,
+single-flight and burst/hour/day quotas, cancellation, and an absolute timeout.
+The one-shot thread is ephemeral, read-only, and approval-free. Model-controlled
+arbitrary network tools are disabled; provider egress required by Codex remains
+available and must be observed in signed-build release testing. Shell, web, MCP,
+apps, plugins, skills, hooks, memories, and multi-agent features are disabled.
+
+Only one PNG, JPEG, or WebP result up to 8 MiB and 4096 pixels per dimension is
+accepted. File signatures, dimensions, base64 equivalence, and any saved path's
+containment inside a mode-`0700` temporary directory are checked, then Electron
+fully decodes and re-encodes the bitmap as bounded PNG before insertion. Codex
+credentials, process handles, and the raw generation
+response stay in main. The renderer receives the same bounded `RenderSlide`
+representation used for existing pictures, while the model tool result receives
+insertion metadata only. These desktop quotas reset when the app restarts and
+therefore do not replace account/provider limits.
 
 ## Threat Model: AI-Generated Layout Scripts (slides)
 
@@ -131,11 +154,16 @@ through `executeJavaScript` and destroys it under a watchdog timeout.
   before the first public release candidate. Configure and observe Codex/OpenAI
   and Serper account-level ceilings; local tests or in-memory limits are not
   operational proof.
+- **Image generation enablement smoke** — owner: release maintainer; due: before
+  setting `GENOFFICE_CODEX_IMAGE_GENERATION=1` in a distributed build. With the
+  target signed-in account, observe image capability, confirmation/cancel,
+  successful insertion, quota exhaustion, timeout/cancel cleanup, and the
+  provider-side usage/budget controls.
 - **Signed package provenance and runtime smoke** — owner: release maintainer;
   due: before the first public release candidate. On every supported OS/CPU,
   verify the signed/notarized installer contains Codex `0.146.0`, uses the
   app-private auth directory, completes one bounded turn, and signs out without
   changing standalone Codex state.
-- **Trademark replacement** — owner: product maintainer; due: before any binary
-  redistribution. Replace the inherited GenOffice name and artwork; the
-  software license does not grant trademark rights.
+- **Brand asset review** — owner: product maintainer; due: before the first
+  public release candidate. Confirm every packaged surface uses the
+  Codexoffice name and only the neutral application icon.

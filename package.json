@@ -1,8 +1,8 @@
 {
-  "name": "genoffice",
+  "name": "codexoffice",
   "version": "0.1.0",
   "private": true,
-  "description": "AI-native office suite (docs, sheets, slides, pdf)",
+  "description": "Codexoffice: an AI-native office suite powered by Codex",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=20",
@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dudqks0319-cpu/genoffice.git"
+    "url": "git+https://github.com/dudqks0319-cpu/codexoffice.git"
   },
   "workspaces": [
     "apps/*",

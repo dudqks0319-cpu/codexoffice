@@ -66,4 +66,12 @@ describe('home-screen locale tables', () => {
     expect(text).toContain('Codex')
     expect(text).toContain('OpenAI')
   })
+
+  it.each(locales)('locale %s uses the Codexoffice product identity', (locale) => {
+    const table = strings[locale] as Record<string, string>
+    expect(table.onbTitle1).toContain('Codexoffice')
+    expect(table.newDoc).toBe('Codexoffice Docs')
+    expect(table.newSheet).toBe('Codexoffice Sheets')
+    expect(table.newSlide).toBe('Codexoffice Slides')
+  })
 })

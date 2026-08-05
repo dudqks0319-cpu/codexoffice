@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Lang } from '@genoffice/i18n'
 import appIcon from './assets/app-icon.png'
 import { useI18n } from './locale'
 import type { StringKey } from './locale'
@@ -33,6 +34,29 @@ const SLIDES: readonly Slide[] = [
     art: 'check',
   },
 ]
+
+/** Publisher disclosure shown before this independent app asks the user to sign in. */
+const INDEPENDENT_PROJECT_NOTICE: Record<Lang, string> = {
+  zh: '**独立开源项目，并非 OpenAI 产品。**',
+  en: '**Independent open-source project; not an OpenAI product.**',
+  ja: '**独立したオープンソースプロジェクトであり、OpenAI の製品ではありません。**',
+  ko: '**독립 오픈소스 프로젝트이며 OpenAI 제품이 아닙니다.**',
+  fr: '**Projet open source indépendant, non affilié à un produit OpenAI.**',
+  de: '**Unabhängiges Open-Source-Projekt; kein OpenAI-Produkt.**',
+  es: '**Proyecto independiente de código abierto; no es un producto de OpenAI.**',
+  th: '**โครงการโอเพนซอร์สอิสระ ไม่ใช่ผลิตภัณฑ์ของ OpenAI**',
+  id: '**Proyek sumber terbuka independen; bukan produk OpenAI.**',
+  ru: '**Независимый проект с открытым исходным кодом; не продукт OpenAI.**',
+  ar: '**مشروع مستقل مفتوح المصدر، وليس منتجًا من OpenAI.**',
+  pt: '**Projeto independente de código aberto; não é um produto da OpenAI.**',
+  it: '**Progetto open source indipendente; non è un prodotto OpenAI.**',
+  pl: '**Niezależny projekt open source; nie jest produktem OpenAI.**',
+  nl: '**Onafhankelijk opensourceproject; geen OpenAI-product.**',
+  ms: '**Projek sumber terbuka bebas; bukan produk OpenAI.**',
+  he: '**פרויקט קוד פתוח עצמאי; אינו מוצר של OpenAI.**',
+  hi: '**स्वतंत्र ओपन-सोर्स परियोजना; यह OpenAI उत्पाद नहीं है।**',
+  'zh-TW': '**獨立開源專案，並非 OpenAI 產品。**',
+}
 
 /** render `**emphasized**` segments of a localized string as <strong> */
 function renderEmphasis(text: string) {
@@ -82,7 +106,7 @@ function SlideArt({ kind }: { kind: Slide['art'] }) {
 }
 
 export function Onboarding({ onDone }: OnboardingProps) {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const [index, setIndex] = useState(0)
   const cardRef = useRef<HTMLDivElement>(null)
   const slide = SLIDES[index]
@@ -174,6 +198,7 @@ export function Onboarding({ onDone }: OnboardingProps) {
               )}
               {s.showAccountNote && (
                 <div className="onb-account-note">
+                  <p>{renderEmphasis(INDEPENDENT_PROJECT_NOTICE[lang])}</p>
                   <p>{renderEmphasis(t('onbAccountNote'))}</p>
                 </div>
               )}

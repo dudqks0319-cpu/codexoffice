@@ -1,26 +1,22 @@
-# Codex SDK fork of GenOffice
+# Codexoffice
 
 An AI-native office suite for macOS and Windows: word processor, spreadsheet,
 presentations, and PDF — five Electron apps sharing one engine layer, built
 around AI editing as a first-class workflow rather than a bolted-on chat box.
 
-[![Meet GenOffice — the world's first full-featured open-source AI Office (video)](https://img.youtube.com/vi/B2pLdMX95v4/maxresdefault.jpg)](https://www.youtube.com/watch?v=B2pLdMX95v4)
-
-[Watch the demo video on YouTube](https://www.youtube.com/watch?v=B2pLdMX95v4)
-
-This fork replaces the upstream hosted AI backend with the official OpenAI
-Codex SDK. It is a development fork: there are no signed installers yet, and
-the inherited product name and artwork must be replaced before redistribution.
+Codexoffice uses the official OpenAI Codex SDK for its built-in assistant.
+It is an independent open-source project, not an OpenAI product or affiliated
+publisher. It is a development project: there are no signed installers yet.
 
 ## Apps
 
-| App           | Product              | What it is                                                                                                                                                                                                                                                                                                                                                 |
-| ------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/docs`   | **GenOffice Docs**   | `.docx` word processor. Byte-preserving round trip: only dirty paragraphs are regenerated (paragraph patch), everything else in the original file is kept byte-for-byte, so opening and saving never breaks layout in Word. Paginated view whose line metrics reproduce the original document's layout, tracked changes, comments, styles, equations, ink. |
-| `apps/sheets` | **GenOffice Sheets** | `.xlsx` spreadsheet. UI built on the open-source [Univer](https://github.com/dream-num/univer) core (Apache-2.0) with a large layer of in-house extensions; xlsx import/export runs through an in-house Rust sidecar (calamine + IronCalc), charts are rendered in-house (Konva), plus pivot tables, slicers, conditional formatting, and formula tracing. |
-| `apps/slides` | **GenOffice Slides** | `.pptx` presentations. In-house pptx parse/render/edit engine with masters, charts, cropping, ink, and text shaping (HarfBuzz metrics).                                                                                                                                                                                                                    |
-| `apps/pdf`    | **GenOffice PDF**    | PDF viewer/editor on pdf.js + pdf-lib: annotations, forms, outlines, stamps, signatures, page operations, print.                                                                                                                                                                                                                                           |
-| `apps/shell`  | **GenOffice**        | The suite shell: home screen, tabbed hosting of the four editors, auto-update.                                                                                                                                                                                                                                                                             |
+| App           | Product                | What it is                                                                                                                                                                                                                                                                                                                                                 |
+| ------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/docs`   | **Codexoffice Docs**   | `.docx` word processor. Byte-preserving round trip: only dirty paragraphs are regenerated (paragraph patch), everything else in the original file is kept byte-for-byte, so opening and saving never breaks layout in Word. Paginated view whose line metrics reproduce the original document's layout, tracked changes, comments, styles, equations, ink. |
+| `apps/sheets` | **Codexoffice Sheets** | `.xlsx` spreadsheet. UI built on the open-source [Univer](https://github.com/dream-num/univer) core (Apache-2.0) with a large layer of in-house extensions; xlsx import/export runs through an in-house Rust sidecar (calamine + IronCalc), charts are rendered in-house (Konva), plus pivot tables, slicers, conditional formatting, and formula tracing. |
+| `apps/slides` | **Codexoffice Slides** | `.pptx` presentations. In-house pptx parse/render/edit engine with masters, charts, cropping, ink, and text shaping (HarfBuzz metrics).                                                                                                                                                                                                                    |
+| `apps/pdf`    | **Codexoffice PDF**    | PDF viewer/editor on pdf.js + pdf-lib: annotations, forms, outlines, stamps, signatures, page operations, print.                                                                                                                                                                                                                                           |
+| `apps/shell`  | **Codexoffice**        | The suite shell: home screen, tabbed hosting of the four editors, auto-update.                                                                                                                                                                                                                                                                             |
 
 Every app embeds the same AI panel: block-granular AI editing with version
 snapshots and diffs in docs, a tool-calling agent over workbook/slide/PDF
@@ -82,8 +78,9 @@ automatically.
   under the app's user-data directory, isolated from standalone Codex settings,
   hooks, plugins, rules, memories, and sessions.
 - Model turns run in a temporary empty working directory with a read-only
-  sandbox, approvals disabled, network/web access disabled, and no configured
-  MCP servers. Codex returns a strict text/tool-call envelope; GenOffice's
+  sandbox, approvals disabled, model-controlled arbitrary network/web tools
+  disabled, and no configured MCP servers. Provider egress required by Codex
+  remains available. Codex returns a strict text/tool-call envelope; Codexoffice's
   existing allowlisted tools perform the requested office edits.
 - Renderer requests and model tool inputs are runtime-validated. The main
   process rejects duplicate IDs, bounds request and response sizes, limits
@@ -99,18 +96,35 @@ automatically.
 - Emergency kill switches are available to a trusted launch environment:
   `GENOFFICE_AI_DISABLED=1`, `GENOFFICE_SEARCH_DISABLED=1`, and
   `GENOFFICE_REMOTE_IMAGE_DISABLED=1`.
+- Codex image generation is available in Slides through a separate App Server
+  path. It is fail-closed by default; a trusted launch environment must set
+  `GENOFFICE_CODEX_IMAGE_GENERATION=1`. Every generation shows a usage/cost
+  confirmation with Cancel selected by default, then enforces account
+  capability checks, replay protection, quotas, cancellation, an absolute
+  timeout, one-image output, bounded PNG/JPEG/WebP validation, and a full native
+  decode/re-encode step before PPTX insertion.
+  The generated bitmap is inserted in the main process. Codex credentials and
+  the raw generation response never enter the renderer; the renderer receives
+  the ordinary bounded `RenderSlide` needed to display the image, while the
+  model tool result receives insertion metadata only.
 - The packaged Electron app copies the platform Codex runtime outside ASAR.
   A release smoke test must still prove the packaged executable can authenticate
   and complete a turn on each target OS/architecture.
 - Optional search uses `SERPER_API_KEY` in the main process. Without it, search
-  falls back to DuckDuckGo. Codex itself is not granted network access.
+  falls back to DuckDuckGo. Codex has provider egress, but no model-controlled
+  arbitrary network or web tool in this app-private runtime.
 - Before a public release, configure and observe provider/account-side budget
   caps and alerts. Local in-process guards cannot enforce an account-wide
   ceiling or survive a deliberate app restart.
 
-Capabilities that depended on the removed hosted service and do not have a
-safe local replacement are intentionally unavailable: generated images, media
-analysis/transcription, cloud-generated decks, and PDF-to-Word cloud conversion.
+Codex can build a complete presentation locally with the existing native slide
+tools, analyze bounded image attachments, and generate an original image for a
+slide. Capabilities that still require a separate OpenAI Platform API service
+or a provider-specific converter remain intentionally unavailable: audio/video
+analysis and transcription, hosted whole-page regeneration, and PDF-to-Word
+cloud conversion. Codex account authentication is not reused as a Platform API
+key, and arbitrary local skills/plugins are not enabled inside the app-private
+runtime.
 
 Local UI/e2e driver scripts (Playwright + Electron, for local acceptance, not
 committed by default) live in [`scripts/drivers/`](scripts/drivers/README.md).
@@ -146,11 +160,8 @@ CJK subsets) are OFL/Apache.
 
 ## License
 
-GenOffice is licensed under the [Apache License 2.0](LICENSE), with one
+Codexoffice is licensed under the [Apache License 2.0](LICENSE), with one
 exception: the `ee/` directory is reserved for future enterprise modules and
-is covered by the [GenOffice Enterprise License](ee/LICENSE).
-
-The inherited GenOffice name and artwork are trademarks of Mainfunc, Inc. The
-Apache-2.0 license does not grant trademark rights (see section 6). They remain
-only as source-compatibility identifiers in this development branch; choose a
-new product name and replace the artwork before distributing binaries.
+is covered by the inherited enterprise license in [`ee/LICENSE`](ee/LICENSE).
+Legacy `@genoffice/*` package scopes and environment-variable names remain as
+source-compatibility identifiers; they are not the product name.

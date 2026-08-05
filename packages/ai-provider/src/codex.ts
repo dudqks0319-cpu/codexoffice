@@ -138,7 +138,7 @@ async function stageInput(
   }
 
   const prompt = [
-    'You are the model inside GenOffice. Follow the supplied system instruction and conversation.',
+    'You are the model inside Codexoffice. Follow the supplied system instruction and conversation.',
     'You have no permission to inspect files, run commands, access the network, call MCP/apps/plugins, or execute tools.',
     'The tool definitions below are descriptions only. If a tool is needed, return it in toolCalls; the external AgentLoop is the sole tool executor.',
     'Return only the requested structured JSON envelope. Do not wrap it in markdown. Each toolCalls entry uses inputJson, a JSON-encoded object string matching that tool input schema.',

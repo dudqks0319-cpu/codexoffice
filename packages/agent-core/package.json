@@ -4,7 +4,7 @@
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
-  "description": "Generic ReAct agent loop: pluggable skills (tools + prompt + context), pluggable LLM transport; shared by AI Docs and future apps (Excel / PPT)",
+  "description": "Generic ReAct agent loop with pluggable skills and LLM transport, shared by Codexoffice apps",
   "exports": {
     ".": "./src/index.ts"
   },

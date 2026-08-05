@@ -36,4 +36,9 @@ describe('i18n string tables', () => {
     expect(text).toContain('Codex')
     expect(text).toContain('OpenAI')
   })
+
+  it.each([...LANGS])('locale %s labels the assistant Codex', (lang) => {
+    expect(dicts[lang]!.aiOpenAssistant).toBe('Codex')
+    expect(dicts[lang]!.ribbonAiAssistant).toBe('Codex')
+  })
 })

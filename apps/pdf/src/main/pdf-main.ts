@@ -549,6 +549,7 @@ export function createPdfView(openPath?: string | null): WebContentsView {
 export function startPdfStandalone(): void {
   installNavigationGuard(app)
   installContextMenu(app, () => contextMenuLabels(getUiLang()))
+  app.setPath('userData', join(app.getPath('appData'), 'GenOffice PDF'))
   configurePdfRuntime({
     preloadPath: join(__dirname, '../preload/index.js'),
     rendererUrl: process.env.ELECTRON_RENDERER_URL,

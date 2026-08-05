@@ -10,7 +10,9 @@ test.describe('first-run onboarding', () => {
     try {
       const overlay = page.locator('.onb-overlay')
       await expect(overlay).toBeVisible()
-      await expect(page.locator('.onb-slide.active .onb-title')).toHaveText('Welcome to GenOffice')
+      await expect(page.locator('.onb-slide.active .onb-title')).toHaveText(
+        'Welcome to Codexoffice',
+      )
       await page
         .locator('.onb-slide.active')
         .evaluate(async (slide) => Promise.all(slide.getAnimations().map((item) => item.finished)))
