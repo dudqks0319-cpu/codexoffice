@@ -1,0 +1,37 @@
+{
+  "packagedApp": "/private/tmp/genoffice-final-verify.S0etVS/zip/Codexoffice.app",
+  "login": {
+    "loggedIn": true
+  },
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "max",
+  "state": "COMMITTED",
+  "slideCount": 3,
+  "slides": [
+    {
+      "title": "Summary",
+      "editableNodes": 6,
+      "nodeTypes": ["text", "text", "shape", "shape", "shape", "text"],
+      "evidenceLinked": true,
+      "textPreview": "Summary Decision: adopt Codex SDK 0.146 through a controlled pilot for trust-first, offline-capable office workflows. Trust first Local control, explicit actions, human review. Offline capable Core work should remain usable when network acc"
+    },
+    {
+      "title": "Analysis",
+      "editableNodes": 4,
+      "nodeTypes": ["text", "text", "table", "shape"],
+      "evidenceLinked": true,
+      "textPreview": "Analysis Qualitative readout for the executive decision Dimension Readout Decision signal Trust model Strong fit when approvals and boundaries are explicit Proceed with governance Offline posture Core work should degrade gracefully when net"
+    },
+    {
+      "title": "Risks / Next Actions",
+      "editableNodes": 3,
+      "nodeTypes": ["text", "table", "shape"],
+      "evidenceLinked": true,
+      "textPreview": "Risks / Next Actions Risk Why it matters First mitigation Release drift Behavior can change between updates Pin version; keep regression checks Offline gaps Network-dependent paths may fail unexpectedly Add explicit offline mode and fallbac"
+    }
+  ],
+  "outputDeck": null,
+  "saveCapture": "The first automation copied the draft while its ZIP stream was still open; that incomplete copy was excluded.",
+  "reconstructedDeck": "qa-artifacts/trust-workflow-20260809/luna-max-evidence-deck-reconstructed.pptx",
+  "reconstructedDeckProvenance": "Native editable offline reproduction of the visibly committed Luna Max deck; not the original model-written byte stream."
+}

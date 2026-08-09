@@ -1,0 +1,21 @@
+{
+  "packagedApp": "/private/tmp/genoffice-final-verify.S0etVS/zip/Codexoffice.app",
+  "login": {
+    "loggedIn": true
+  },
+  "image": {
+    "status": "passed",
+    "sourceId": "picnew_1_msm1515y",
+    "mime": "image/png",
+    "width": 1536,
+    "height": 1024
+  },
+  "confirmation": {
+    "ok": true,
+    "mode": "isolated-packaged-smoke"
+  },
+  "slideCount": 1,
+  "nodeKinds": {
+    "picture": 1
+  }
+}

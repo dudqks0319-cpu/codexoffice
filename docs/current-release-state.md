@@ -17,8 +17,8 @@ Artifacts:
 
 | Artifact                                               | SHA-256                                                            |              Size |
 | ------------------------------------------------------ | ------------------------------------------------------------------ | ----------------: |
-| `apps/shell/release-final/Codexoffice-0.5.0-arm64.dmg` | `055845059b0ff4a2c76f8c21859b20f7a95010c9169f73a5362e345f2ef198d6` | 296,632,310 bytes |
-| `apps/shell/release-final/Codexoffice-0.5.0-arm64.zip` | `92fc2009f234a8d924316bd497d7d9b1788e38b446838f08526339973f7650b5` | 263,678,262 bytes |
+| `apps/shell/release-final/Codexoffice-0.5.0-arm64.dmg` | `629e24618addc04ebad2d62a6dd0e64ad1f5fc0eef4e7720051c64ae594e2523` | 296,365,003 bytes |
+| `apps/shell/release-final/Codexoffice-0.5.0-arm64.zip` | `0feb0bc9bd045c0344624c1fc82c5ff8b9111c4a43a052b3c7cab9f7bd5c0a98` | 263,678,441 bytes |
 
 - Developer ID identity: `Developer ID Application: Youngbeen Jung (3FG9QJC8WC)`
 - `codesign --verify --deep --strict`: PASS for the isolated signed staging app,
@@ -28,8 +28,8 @@ Artifacts:
   macOS system tools, then reopens and verifies both artifacts. It deliberately
   does not satisfy the secure
   timestamp/notarization distribution gate.
-- `spctl --assess`: HOLD — local Code Signing subsystem returned an internal
-  error for this unnotarized, untimestamped candidate.
+- `spctl --assess`: HOLD — `source=Unnotarized Developer ID` for this local,
+  untimestamped candidate.
 
 ## Packaged smoke result
 
@@ -46,6 +46,25 @@ Driver: `node scripts/drivers/driver.packaged-smoke.mjs`
 | Slides image generation/insertion | BLOCKED-EXTERNAL-AUTH | Not invoked because the packaged smoke account was not signed in              |
 
 The packaged settings file was written atomically with mode `0600` and contained only the Codex model override; no API key was persisted.
+
+### Isolated authenticated image smoke
+
+An existing Codex login was copied into a mode-`0700` temporary profile with
+`auth.json` mode `0600`; its contents were never printed or committed. The
+normal per-call usage/cost dialog remains enabled. Automation can bypass it only
+when all three explicit smoke flags are set and `GENOFFICE_USER_DATA` resolves
+under the operating-system temporary directory.
+
+- Login: PASS.
+- Codex image generation: PASS — PNG, 1536×1024.
+- Native slide insertion: PASS — one generated `picture` node,
+  `sourceId=picnew_1_msm1515y`.
+- Provider `savedPath` is treated only as bounded metadata. The app never reads,
+  deletes, retains, or trusts that provider-managed path; bounded base64 bytes,
+  magic, MIME, and dimensions are authoritative.
+- Evidence: `authenticated-image-smoke.json`,
+  `07-authenticated-before-image.png`, and
+  `08-authenticated-image-inserted.png`.
 
 ## Authenticated GPT-5.6 package smoke
 
@@ -128,39 +147,73 @@ start another Electron process. Independent results:
 Evidence: `qa-artifacts/model-comparison/comparison-report.md` and
 `qa-artifacts/model-comparison/independent-verification.json`.
 
+## Luna/max review-first evidence deck package smoke
+
+The independently extracted packaged app used an isolated authenticated profile
+and persisted `gpt-5.6-luna` with `max` reasoning. A complex executive decision
+deck was generated and then evidence-linked in page-scoped review batches to
+keep every paid turn bounded.
+
+- Structure: PASS — exactly three pages titled `Summary`, `Analysis`, and
+  `Risks / Next Actions`.
+- Native editing: PASS — 6, 4, and 3 editable native objects respectively;
+  shapes, text, and tables remain editable.
+- Review/apply: PASS — structure and every page evidence operation reached
+  `REVIEW_READY`, was visually inspected, and then reached `COMMITTED`.
+- Evidence gate: PASS — every page had trusted official-source notes and
+  `verify_evidence_deck` passed before save.
+- Runtime fix: the Slides standalone handler now selects the same bounded
+  reasoning-aware absolute timeout as Docs/Sheets (`max`: 1,200 seconds).
+- Screenshots: `09-luna-max-running.png`,
+  `10a-luna-max-structure-review.png`, `10-luna-max-review-ready.png`,
+  `10b-luna-max-page-2-review.png`, `10c-luna-max-page-3-review.png`, and
+  `11-luna-max-slide-{1,2,3}.png`.
+
+The first automation copied the model-written draft before its streaming ZIP
+writer had closed, so that incomplete copy was excluded instead of being
+reported as a PPTX. Repeating the paid model run was not authorized. The
+committed screenshots and `luna-max-evidence-smoke.json` are the model-run
+evidence; `luna-max-evidence-deck-reconstructed.pptx` is a clearly labelled,
+offline native-editable reproduction, not the original model byte stream. The
+reproduction is 114,322 bytes, SHA-256
+`f42161173ad1a83c369265026b894215b9647b6558533f69d475ee674d88c275`,
+passes ZIP integrity, and reopens in `@genoffice/pptx-engine` as exactly three
+slides with 28 package entries. The driver now waits for both the visible Saved
+status and a stable ZIP end-of-central-directory record before copying future
+runs.
+
 ## Verification
 
 - `npm run format:check`: PASS
 - `npm run lint`: PASS, 0 errors / 8 existing React hook warnings
 - `npm run typecheck`: PASS
-- `npm test`: PASS, 3,676 passed / 2 skipped
+- `npm test`: PASS, 3,678 passed / 2 skipped
+- Rust sidecar: PASS, 53 passed
 - `npm run build:all`: PASS
 - `npm audit --omit=dev`: HOLD, 47 high vulnerabilities remain in existing dependencies (`js-yaml`, `nanoid` through Univer, and `pdfjs-dist`)
-- Post-build relaunch checks hit a machine-level V8 virtual-memory reservation
-  failure while macOS swap was 18.99/19.46 GiB. Two exact Codexoffice test
-  processes remain unkillable in kernel `UEs` state, so the newly packaged max
-  settings UI could not be captured in Electron. Build-time embedded signature
-  verification passed; subsequent `codesign` returned an internal Code Signing
-  subsystem error. Reboot is required before repeat package/UI/signature checks,
-  and none of these checks are counted as a new application PASS.
+- Final package build, ZIP extraction, DMG mount, and independent
+  `codesign --verify --deep --strict` checks: PASS.
 
 ## Remaining distribution gates
 
 1. Release owner: complete Apple notarization and staple/notarization verification before distributing the DMG.
 2. Release owner: configure `GENOFFICE_UPDATE_URL` and verify the generated `app-update.yml` plus a real update-channel artifact.
 3. Dependency owner: triage/fix or formally accept the 47 high audit findings, especially the PDF.js malicious-document execution path and the Univer dependency chain.
-4. QA/auth owner: run the separate paid Slides image-generation/insertion path
-   and retain provider/output evidence; the authenticated text-and-shape deck
-   smoke does not prove bitmap image generation.
+4. Operations owner: configure provider-side usage alerts/budget caps and verify
+   production cost attribution before enabling image generation broadly; the
+   isolated one-shot package smoke proves function, not deployed spend control.
 
 ## Reproduction
 
 ```sh
 cd /Users/jyb-m3max/Desktop/codex/genoffice
-npm run dist:mac
-GENOFFICE_LOCAL_UNTIMESTAMPED_SIGN=1 npm run dist:mac -w @genoffice/shell
+CSC_IDENTITY_AUTO_DISCOVERY=false GENOFFICE_LOCAL_UNTIMESTAMPED_SIGN=1 npm run dist:mac
 node scripts/drivers/driver.packaged-smoke.mjs
 node scripts/drivers/driver.codex-model-list.mjs
+GENOFFICE_PACKAGED_APP=/path/to/Codexoffice.app \
+  GENOFFICE_CODEX_AUTH_SOURCE=/path/to/isolated/codex-home \
+  node scripts/drivers/driver.authenticated-image-smoke.mjs
+node scripts/drivers/driver.rebuild-luna-max-deck.mjs
 ```
 
 The smoke driver uses an isolated temporary HOME/user-data directory, so authentication must be completed explicitly during the run and is not inferred from a developer profile.

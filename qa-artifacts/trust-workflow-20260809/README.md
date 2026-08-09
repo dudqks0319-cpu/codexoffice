@@ -25,8 +25,13 @@ not read or persist API keys.
 - Sheets QA v1: PASS; visible `C3: #REF!` produced one critical formula-error
   finding with `Go to range` and `Propose fix` actions.
 - Slides surface: PASS; Luna/max status and native slide canvas visible.
-- Slides bitmap generation/insertion: BLOCKED-EXTERNAL-AUTH. The isolated app
-  correctly stayed at `Waiting…`; no credentials were entered.
+- Slides bitmap generation/insertion: PASS in the separate isolated authenticated
+  smoke. Codex returned a 1536×1024 PNG and the packaged app inserted one native
+  picture node. See `authenticated-image-smoke.json` and screenshot 08.
+- Luna/max evidence deck: PASS in the separate isolated authenticated smoke —
+  exactly three native-editable slides, page-scoped `REVIEW_READY`/apply, trusted
+  evidence notes on every page, and final `COMMITTED`. See
+  `luna-max-evidence-smoke.json` and screenshots 09-12.
 
 Machine-readable details are in `packaged-smoke.json`. Screenshots 01-06 are
 the same run and must be reviewed together with that JSON timestamp.
@@ -35,10 +40,17 @@ the same run and must be reviewed together with that JSON timestamp.
 
 | Artifact                                               | SHA-256                                                            |              Size |
 | ------------------------------------------------------ | ------------------------------------------------------------------ | ----------------: |
-| `apps/shell/release-final/Codexoffice-0.5.0-arm64.dmg` | `055845059b0ff4a2c76f8c21859b20f7a95010c9169f73a5362e345f2ef198d6` | 296,632,310 bytes |
-| `apps/shell/release-final/Codexoffice-0.5.0-arm64.zip` | `92fc2009f234a8d924316bd497d7d9b1788e38b446838f08526339973f7650b5` | 263,678,262 bytes |
+| `apps/shell/release-final/Codexoffice-0.5.0-arm64.dmg` | `629e24618addc04ebad2d62a6dd0e64ad1f5fc0eef4e7720051c64ae594e2523` | 296,365,003 bytes |
+| `apps/shell/release-final/Codexoffice-0.5.0-arm64.zip` | `0feb0bc9bd045c0344624c1fc82c5ff8b9111c4a43a052b3c7cab9f7bd5c0a98` | 263,678,441 bytes |
+| `luna-max-evidence-deck-reconstructed.pptx`            | `f42161173ad1a83c369265026b894215b9647b6558533f69d475ee674d88c275` |     114,322 bytes |
 
 `codesign --verify --deep --strict` passed for the isolated signed staging app,
 the ZIP extraction, and the DMG-mounted app. These local artifacts are
 deliberately untimestamped and unnotarized, so they are QA candidates, not
 public release artifacts.
+
+The reconstructed PPTX is an offline native-editable reproduction of the
+visibly committed Luna/max deck. The model-run evidence is the screenshot/JSON
+set; the original model-written draft byte stream was excluded because the first
+automation copied it before the streaming ZIP writer closed. The repaired driver
+now requires the visible Saved status plus a stable ZIP central directory.
