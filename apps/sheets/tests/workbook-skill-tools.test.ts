@@ -13,7 +13,7 @@ function call(name: string, input: Record<string, unknown>) {
   return { id: 'call-1', name, input }
 }
 
-/** Only propose_operations' formula read-back branch is async; sync-asserted cases stay sync. */
+/** Keep synchronous cases explicit so an unexpected write/apply promise fails the test. */
 function execSync(c: ReturnType<typeof call>, d: SheetsSkillDeps): ToolExecution {
   const result = executeWorkbookTool(c, d)
   if (result instanceof Promise) throw new Error('expected sync tool execution')
@@ -424,7 +424,7 @@ describe('executeWorkbookTool: propose_operations', () => {
     expect(proposeOperations).not.toHaveBeenCalled()
   })
 
-  it('forwards validated operations and reports auto-applied success', () => {
+  it('forwards validated operations and reports a review-ready, non-mutating change set', () => {
     const proposeOperations = vi.fn().mockReturnValue({ ok: true, plan: EMPTY_PLAN })
     const result = execSync(
       call('propose_operations', {
@@ -437,14 +437,14 @@ describe('executeWorkbookTool: propose_operations', () => {
       [{ op: 'set_cell', sheetId: 'sheet-1', address: 'A1', value: 'new' }],
       'Update A1',
     )
-    expect(result.mutated).toBe(true)
+    expect(result.mutated).toBe(false)
     expect(result.isError).toBeFalsy()
     expect(result.output).toContain('old → new')
-    expect(result.output).toContain('Auto-applied')
-    expect(result.output).toContain('Undo')
+    expect(result.output).toContain('Prepared')
+    expect(result.output).toContain('review')
   })
 
-  it('after writing a formula, reads back the computed value asynchronously (write → verify)', async () => {
+  it('does not read back or claim a formula result before the user applies it', () => {
     const plan: ChangePlan = {
       ...EMPTY_PLAN,
       cellChanges: [
@@ -458,7 +458,7 @@ describe('executeWorkbookTool: propose_operations', () => {
     }
     const proposeOperations = vi.fn().mockReturnValue({ ok: true, plan })
     const readCells = vi.fn().mockReturnValue({ B4: { value: 60, formula: '=SUM(B1:B3)' } })
-    const result = await executeWorkbookTool(
+    const result = execSync(
       call('propose_operations', {
         operations: [
           { op: 'set_formula', sheetId: 'sheet-1', address: 'B4', formula: '=SUM(B1:B3)' },
@@ -467,12 +467,13 @@ describe('executeWorkbookTool: propose_operations', () => {
       }),
       fakeDeps({ proposeOperations, readCells }),
     )
-    expect(result.mutated).toBe(true)
-    expect(result.output).toContain('Formula results: B4 = 60')
-    expect(readCells).toHaveBeenCalledWith(['B4'])
+    expect(result.mutated).toBe(false)
+    expect(result.output).toContain('=SUM(B1:B3)')
+    expect(result.output).not.toContain('Formula results')
+    expect(readCells).not.toHaveBeenCalled()
   })
 
-  it('warns explicitly when read-back finds a formula error value', async () => {
+  it('does not inspect stale pre-apply values when previewing a formula', () => {
     const plan: ChangePlan = {
       ...EMPTY_PLAN,
       cellChanges: [
@@ -486,52 +487,17 @@ describe('executeWorkbookTool: propose_operations', () => {
     }
     const proposeOperations = vi.fn().mockReturnValue({ ok: true, plan })
     const readCells = vi.fn().mockReturnValue({ C1: { value: '#DIV/0!', formula: '=A1/A2' } })
-    const result = await executeWorkbookTool(
+    const result = execSync(
       call('propose_operations', {
         operations: [{ op: 'set_formula', sheetId: 'sheet-1', address: 'C1', formula: '=A1/A2' }],
         summary: 'Divide',
       }),
       fakeDeps({ proposeOperations, readCells }),
     )
-    expect(result.output).toContain('#DIV/0!')
-    expect(result.output).toContain('⚠️ Formula error values present')
-  })
-
-  it('waits for the async apply and reports success only after it lands', async () => {
-    const proposeOperations = vi.fn().mockReturnValue({
-      ok: true,
-      plan: EMPTY_PLAN,
-      applied: Promise.resolve({ ok: true }),
-    })
-    const result = await executeWorkbookTool(
-      call('propose_operations', {
-        operations: [{ op: 'set_cell', sheetId: 'sheet-1', address: 'A1', value: 'new' }],
-        summary: 'Update A1',
-      }),
-      fakeDeps({ proposeOperations }),
-    )
-    expect(result.isError).toBeFalsy()
-    expect(result.mutated).toBe(true)
-    expect(result.output).toContain('Auto-applied')
-  })
-
-  it('returns an error (not success) when the async apply fails', async () => {
-    const proposeOperations = vi.fn().mockReturnValue({
-      ok: true,
-      plan: EMPTY_PLAN,
-      applied: Promise.resolve({ ok: false, reason: 'workbook changed since preview' }),
-    })
-    const result = await executeWorkbookTool(
-      call('propose_operations', {
-        operations: [{ op: 'set_cell', sheetId: 'sheet-1', address: 'A1', value: 'new' }],
-        summary: 'Update A1',
-      }),
-      fakeDeps({ proposeOperations }),
-    )
-    expect(result.isError).toBe(true)
     expect(result.mutated).toBe(false)
-    expect(result.output).toContain('UNCHANGED')
-    expect(result.output).toContain('workbook changed since preview')
+    expect(result.output).toContain('=A1/A2')
+    expect(result.output).not.toContain('#DIV/0!')
+    expect(readCells).not.toHaveBeenCalled()
   })
 
   it('propagates a conflict/streaming-guard error from proposeOperations', () => {

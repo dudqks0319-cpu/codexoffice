@@ -8,6 +8,7 @@
 import { app, dialog, ipcMain } from 'electron'
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { parseFileToText } from '@genoffice/file-parse'
 import type {
   AttachmentAddResult,
@@ -90,7 +91,8 @@ function statAttachment(filePath: string): { meta?: AttachmentMeta; error?: stri
     if (ATTACHMENT_IMAGE_EXTS.has(ext) && stat.size > ATTACHMENT_IMAGE_MAX_BYTES) {
       return { error: `${name}: ${tm('errImageTooLarge')}` }
     }
-    return { meta: { path: filePath, name, ext, sizeBytes: stat.size } }
+    const sha256 = createHash('sha256').update(readFileSync(filePath)).digest('hex')
+    return { meta: { path: filePath, name, ext, sizeBytes: stat.size, sha256 } }
   } catch {
     return { error: `${name}: ${tm('errUnreadable')}` }
   }

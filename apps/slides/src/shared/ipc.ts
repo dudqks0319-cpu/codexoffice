@@ -52,6 +52,8 @@ export interface AttachmentMeta {
   /** Lowercase extension, without the dot */
   ext: string
   sizeBytes: number
+  /** Trusted local content digest computed by the main process. */
+  sha256?: string
 }
 
 export interface AttachmentAddResult {
@@ -1027,6 +1029,8 @@ export interface SlidesApi {
   openPptx: (fitWidthPx: number) => Promise<OpenResult | null>
   openPptxPath: (path: string, fitWidthPx: number) => Promise<OpenResult | null>
   consumePendingOpen: (fitWidthPx: number) => Promise<OpenResult | null>
+  /** Main-process gate for OS/double-click opens while AI changes await review. */
+  setAiReviewPending: (pending: boolean) => void
   /** New blank presentation (single blank 16:9 page, untitled) */
   newBlank: (fitWidthPx: number) => Promise<OpenResult>
   editText: (op: EditTextOp) => Promise<RenderSlide | null>

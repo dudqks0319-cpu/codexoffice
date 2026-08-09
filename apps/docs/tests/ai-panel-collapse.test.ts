@@ -75,9 +75,32 @@ function typeInto(textarea: HTMLTextAreaElement, text: string) {
 beforeAll(() => {
   // jsdom has no scrollTo; the panel auto-scrolls its chat log
   Element.prototype.scrollTo ??= () => {}
+  const values = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, String(value)),
+    removeItem: (key: string) => values.delete(key),
+    clear: () => values.clear(),
+  })
 })
 
 describe('AiPanel collapse', () => {
+  it('shows content-free job scope, model, reasoning, budget, and status', () => {
+    const editor = createEditor()
+    const { container, cleanup } = mount(createElement(AiPanel, panelProps(editor)))
+
+    const jobStrip = container.querySelector('.ai-job-strip')
+    expect(jobStrip?.textContent).toContain('READY')
+    expect(jobStrip?.textContent).toContain(settings.providers.anthropic.model)
+    expect(jobStrip?.textContent).toContain('default')
+    expect(jobStrip?.textContent).toContain('8,192 tokens')
+    expect(jobStrip?.querySelectorAll('.ai-job-chip')).toHaveLength(4)
+    expect(jobStrip?.textContent).not.toContain('EVs market research')
+
+    cleanup()
+    editor.destroy()
+  })
+
   it('keeps the draft input across a collapse/expand cycle', () => {
     const editor = createEditor()
     const { container, root, cleanup } = mount(createElement(AiPanel, panelProps(editor)))

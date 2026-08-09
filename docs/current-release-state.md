@@ -1,31 +1,33 @@
 # GenOffice macOS package release state
 
-Last verified: 2026-08-09 (Asia/Seoul)
+Last verified: 2026-08-10 (Asia/Seoul)
 
 ## Source and build
 
 - Branch: `agent/codex-sdk`
-- HEAD: `bbc7c320e42d9e0a49d4297bf2a4eef1858f18e3`
+- Baseline pushed commit: `e1dcd1a feat: add GPT-5.6 model controls and macOS QA evidence`
+- Trust-workflow implementation: pending final commit below this ledger update
 - Codex SDK transition commit in history: `69bfc5a feat: replace Genspark AI with Codex SDK`
 - Codex SDK package: `@openai/codex-sdk@0.146.0`
-- Build command: `npm run dist:mac`
+- Build commands: `npm run build:all`, then
+  `GENOFFICE_LOCAL_UNTIMESTAMPED_SIGN=1 CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac -w @genoffice/shell`
 - Build result: PASS (docs, sheets, slides, PDF, shell bundles; arm64 package)
 
 Artifacts:
 
-| Artifact                                         | SHA-256                                                            |              Size |
-| ------------------------------------------------ | ------------------------------------------------------------------ | ----------------: |
-| `apps/shell/release/Codexoffice-0.5.0-arm64.dmg` | `dd6556d4d5a34f654e1b8384dd7502863e5864bdebae9fcd26983a618e22f2e8` | 263,795,207 bytes |
-| `apps/shell/release/Codexoffice-0.5.0-arm64.zip` | `80c3ad25f923690b94674e35c09da9e7f77022c7edbcc46fc2cf17a87f2c9ec4` | 262,898,191 bytes |
+| Artifact                                               | SHA-256                                                            |              Size |
+| ------------------------------------------------------ | ------------------------------------------------------------------ | ----------------: |
+| `apps/shell/release-final/Codexoffice-0.5.0-arm64.dmg` | `055845059b0ff4a2c76f8c21859b20f7a95010c9169f73a5362e345f2ef198d6` | 296,632,310 bytes |
+| `apps/shell/release-final/Codexoffice-0.5.0-arm64.zip` | `92fc2009f234a8d924316bd497d7d9b1788e38b446838f08526339973f7650b5` | 263,678,262 bytes |
 
 - Developer ID identity: `Developer ID Application: Youngbeen Jung (3FG9QJC8WC)`
-- `codesign --verify --deep --strict`: PASS for the app, ZIP extraction, and
-  DMG-mounted app.
-- Local fallback build command:
-  `GENOFFICE_LOCAL_UNTIMESTAMPED_SIGN=1 npm run dist:mac -w @genoffice/shell`.
-  This exists because timestamped Developer ID signatures produced an invalid
-  local bundle on this machine; the fallback deliberately does not satisfy the
-  secure-timestamp/notarization distribution gate.
+- `codesign --verify --deep --strict`: PASS for the isolated signed staging app,
+  ZIP extraction, and DMG-mounted app.
+- The local fallback copies the builder output into an isolated staging area,
+  applies one final Developer ID signature, creates ZIP/DMG artifacts with
+  macOS system tools, then reopens and verifies both artifacts. It deliberately
+  does not satisfy the secure
+  timestamp/notarization distribution gate.
 - `spctl --assess`: HOLD — local Code Signing subsystem returned an internal
   error for this unnotarized, untimestamped candidate.
 
@@ -33,14 +35,15 @@ Artifacts:
 
 Driver: `node scripts/drivers/driver.packaged-smoke.mjs`
 
-| Surface                           | Result                | Evidence                                                                         |
-| --------------------------------- | --------------------- | -------------------------------------------------------------------------------- |
-| Home                              | PASS                  | Hero visible, 4 quick cards                                                      |
-| Codex login                       | BLOCKED-EXTERNAL-AUTH | Login attempted; UI remained `Waiting… / Codex account for this app`             |
-| Docs text edit                    | PASS                  | One contenteditable editor; `Codexoffice packaged text smoke` inserted           |
-| Sheets Codex model settings       | PASS                  | Modal opened; save error empty; `after` and reload `restored` both `gpt-5-codex` |
-| Slides canvas/AI surface          | PASS                  | AI input present; one blank 1280×720 slide returned                              |
-| Slides image generation/insertion | BLOCKED-EXTERNAL-AUTH | Not invoked because the packaged smoke account was not signed in                 |
+| Surface                           | Result                | Evidence                                                                      |
+| --------------------------------- | --------------------- | ----------------------------------------------------------------------------- |
+| Home                              | PASS                  | Hero visible, 4 quick cards                                                   |
+| Codex login                       | BLOCKED-EXTERNAL-AUTH | Login attempted; UI remained `Waiting… / Codex account for this app`          |
+| Docs text edit                    | PASS                  | One contenteditable editor; `Codexoffice packaged text smoke` inserted        |
+| Sheets Codex model settings       | PASS                  | `gpt-5.6-luna` + `max` saved and restored after reload                        |
+| Sheets deterministic QA v1        | PASS                  | Visible `C3: #REF!` detected as one critical finding with remediation actions |
+| Slides canvas/AI surface          | PASS                  | AI input present; one blank 1280×720 slide returned                           |
+| Slides image generation/insertion | BLOCKED-EXTERNAL-AUTH | Not invoked because the packaged smoke account was not signed in              |
 
 The packaged settings file was written atomically with mode `0600` and contained only the Codex model override; no API key was persisted.
 
@@ -130,7 +133,8 @@ Evidence: `qa-artifacts/model-comparison/comparison-report.md` and
 - `npm run format:check`: PASS
 - `npm run lint`: PASS, 0 errors / 8 existing React hook warnings
 - `npm run typecheck`: PASS
-- `NODE_OPTIONS=--localstorage-file=/private/tmp/genoffice-vitest.localstorage npm run test`: PASS, 3,643 passed / 2 skipped
+- `npm test`: PASS, 3,676 passed / 2 skipped
+- `npm run build:all`: PASS
 - `npm audit --omit=dev`: HOLD, 47 high vulnerabilities remain in existing dependencies (`js-yaml`, `nanoid` through Univer, and `pdfjs-dist`)
 - Post-build relaunch checks hit a machine-level V8 virtual-memory reservation
   failure while macOS swap was 18.99/19.46 GiB. Two exact Codexoffice test

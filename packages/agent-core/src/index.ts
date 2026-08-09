@@ -23,3 +23,19 @@ export type {
 } from './loop'
 export { createIpcTransport, IPC_STREAM_SILENCE_TIMEOUT_MS } from './electron-transport'
 export type { IpcStreamChunk, IpcStreamStart, IpcTransportOptions } from './electron-transport'
+export {
+  canTransitionJob,
+  INTERRUPTED_JOB_STATES,
+  isInterruptedJobState,
+  JOB_STATES,
+  JobLifecycle,
+} from './job-state'
+export type {
+  InterruptedJobState,
+  JobBudget,
+  JobClock,
+  JobMetadata,
+  JobSnapshot,
+  JobSource,
+  JobState,
+} from './job-state'

@@ -21,6 +21,8 @@ import type { ChangePlan } from '../domain/workbook.types'
 import type { AiSettings } from '@genoffice/ai-provider'
 import type { AttachmentMeta } from '../shared/desktop-api'
 import { AiChatPanel, type AiChatMessage } from './ai/AiChatPanel'
+import type { QAFinding } from './qa-scanner'
+import type { JobSnapshot } from '@genoffice/agent-core'
 import {
   PivotDialog,
   type PivotEditSeed,
@@ -121,6 +123,13 @@ function ToolSymbol({ symbol }: { readonly symbol: string }): React.JSX.Element 
 interface ExcelShellProps {
   readonly prompt: string
   readonly preview: ChangePlan | null
+  readonly onApplyPreview: () => void
+  readonly onRejectPreview: () => void
+  readonly qaFindings: readonly QAFinding[] | null
+  readonly qaBusy: boolean
+  readonly onRunQa: () => void
+  readonly onSelectQaFinding: (finding: QAFinding) => void
+  readonly jobSnapshot: JobSnapshot | null
   readonly selectionFormat: SelectionFormat | null
   /// True when the workbook has any cell content (the one-click AI action
   /// buttons are greyed out on an empty sheet).
@@ -221,6 +230,13 @@ export interface PageLayoutEcho {
 export function ExcelShell({
   prompt,
   preview,
+  onApplyPreview,
+  onRejectPreview,
+  qaFindings,
+  qaBusy,
+  onRunQa,
+  onSelectQaFinding,
+  jobSnapshot,
   selectionFormat,
   sheetHasContent,
   aiBusy,
@@ -415,6 +431,10 @@ export function ExcelShell({
             setIsCopilotOpen(true)
             onSend(nextPrompt)
           }}
+          onQaCheck={() => {
+            setIsCopilotOpen(true)
+            onRunQa()
+          }}
           aiOpen={isCopilotOpen}
           onAiToggle={() => setIsCopilotOpen((open) => !open)}
         />
@@ -435,6 +455,13 @@ export function ExcelShell({
           onRemoveAttachment={onRemoveAttachment}
           prompt={prompt}
           preview={preview}
+          onApplyPreview={onApplyPreview}
+          onRejectPreview={onRejectPreview}
+          qaFindings={qaFindings}
+          qaBusy={qaBusy}
+          onSelectQaFinding={onSelectQaFinding}
+          jobSnapshot={jobSnapshot}
+          sourceScope={activeCellA1 || 'A1'}
           aiBusy={aiBusy}
           onPromptChange={onPromptChange}
           onSend={onSend}
@@ -980,6 +1007,7 @@ function Ribbon({
   selectedChart,
   onCommand,
   onAiRun,
+  onQaCheck,
   aiOpen,
   onAiToggle,
   onRefreshPivot,
@@ -994,6 +1022,7 @@ function Ribbon({
   readonly onCommand: (command: string) => void
   /** Open the AI panel and immediately send the given prompt */
   readonly onAiRun: (prompt: string) => void
+  readonly onQaCheck: () => void
   /** AI side panel visibility (docs/slides parity: the entry button toggles it) */
   readonly aiOpen: boolean
   readonly onAiToggle: () => void
@@ -2076,7 +2105,7 @@ function Ribbon({
           className="ribbon-tool as-button large ai-entry"
           disabled={!sheetHasContent}
           title={t('aiCheckPrompt')}
-          onClick={() => onAiRun(t('aiCheckPrompt'))}
+          onClick={onQaCheck}
         >
           <span className="tool-icon-row">
             <span className="ai-feature-icon" aria-hidden="true">

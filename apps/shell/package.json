@@ -12,7 +12,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "start": "electron-vite build && electron .",
-    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:mac": "electron-vite build && electron-builder --mac && node build/finalize-local-mac-package.js",
     "dist:win": "electron-vite build && electron-builder --win"
   },
   "devDependencies": {

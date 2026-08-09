@@ -3987,6 +3987,113 @@ body.docs-crop-active
   min-width: 0;
 }
 
+.ai-job-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border-default);
+  background: var(--color-bg-subtle);
+  scrollbar-width: none;
+}
+
+.ai-job-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.ai-job-state,
+.ai-job-chip {
+  flex: 0 0 auto;
+  max-width: 150px;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  background: var(--color-bg-page);
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-job-state {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.ai-job-state.running {
+  border-color: rgba(15, 127, 255, 0.4);
+  color: var(--color-brand-secondary);
+}
+
+.ai-job-state.review {
+  border-color: #d6a400;
+  color: #795900;
+}
+
+.ai-proposal-card {
+  flex: 0 0 auto;
+  margin: 0 12px 10px;
+  padding: 12px;
+  border: 1px solid #d6a400;
+  border-radius: var(--radius-12);
+  background: #fffaf0;
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.ai-proposal-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ai-proposal-heading {
+  margin-top: 6px;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.ai-proposal-card ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.ai-proposal-warning {
+  color: #8a4b00;
+}
+
+.ai-proposal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ai-proposal-actions button {
+  min-height: 30px;
+  padding: 5px 12px;
+  border-radius: var(--radius-8);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-proposal-reject {
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+}
+
+.ai-proposal-apply {
+  border: 1px solid var(--color-btn-primary);
+  background: var(--color-btn-primary);
+  color: var(--color-btn-primary-text);
+}
+
 .ai-header-btn {
   display: flex;
   align-items: center;

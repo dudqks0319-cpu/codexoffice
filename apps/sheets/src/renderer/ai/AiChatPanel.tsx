@@ -4,6 +4,8 @@ import { CodexMark } from '../ribbon-icons'
 import type { AiSettings } from '@genoffice/ai-provider'
 import type { ChangePlan } from '../../domain/workbook.types'
 import type { AttachmentMeta } from '../../shared/desktop-api'
+import type { QAFinding } from '../qa-scanner'
+import type { JobSnapshot } from '@genoffice/agent-core'
 import { useI18n, type TFunc } from '../i18n/locale'
 import { CodexSettingsDialog } from './CodexSettingsDialog'
 import { Markdown } from '@genoffice/ui'
@@ -55,7 +57,7 @@ export interface AiChatMessage {
   readonly undelivered?: boolean | undefined
   /** the run failed because Codex is signed out — render an inline sign-in button */
   readonly loginRequired?: boolean | undefined
-  /** Set when this message reflects an auto-applied plan; renders an inline [Undo] button. */
+  /** Set after the user explicitly applies a reviewed plan; renders an inline [Undo] button. */
   readonly autoApplied?: { readonly opCount: number } | undefined
 }
 
@@ -72,6 +74,13 @@ export function AiChatPanel({
   onRemoveAttachment,
   prompt,
   preview,
+  onApplyPreview,
+  onRejectPreview,
+  qaFindings,
+  qaBusy,
+  onSelectQaFinding,
+  jobSnapshot,
+  sourceScope,
   aiBusy,
   onPromptChange,
   onSend,
@@ -100,6 +109,13 @@ export function AiChatPanel({
   readonly onRemoveAttachment: (path: string) => void
   readonly prompt: string
   readonly preview: ChangePlan | null
+  readonly onApplyPreview: () => void
+  readonly onRejectPreview: () => void
+  readonly qaFindings: readonly QAFinding[] | null
+  readonly qaBusy: boolean
+  readonly onSelectQaFinding: (finding: QAFinding) => void
+  readonly jobSnapshot: JobSnapshot | null
+  readonly sourceScope: string
   readonly aiBusy: boolean
   readonly onPromptChange: (prompt: string) => void
   /** Send the composer text, or the given instruction when provided (used by the failed-run Retry) */
@@ -120,6 +136,18 @@ export function AiChatPanel({
   const asideRef = useRef<HTMLElement | null>(null)
   const [resizing, setResizing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [qaFilter, setQaFilter] = useState<'all' | QAFinding['severity'] | 'unverified'>('all')
+  const codexConfig = aiSettings?.providers.codex
+  const modelLabel = jobSnapshot?.metadata.model ?? codexConfig?.model ?? 'Codex default'
+  const reasoningLabel = jobSnapshot?.metadata.reasoning ?? codexConfig?.reasoningEffort ?? 'low'
+  const filteredQaFindings =
+    qaFindings?.filter((finding) =>
+      qaFilter === 'all'
+        ? true
+        : qaFilter === 'unverified'
+          ? finding.status === 'unverified'
+          : finding.severity === qaFilter,
+    ) ?? []
   /** Wall-clock start of the current run (aiBusy false→true), drives the elapsed badge */
   const busyStartRef = useRef(0)
   useEffect(() => {
@@ -308,6 +336,25 @@ export function AiChatPanel({
           </div>
         </header>
 
+        <div className="ai-job-strip" aria-label={t('aiSettingsTitle')}>
+          <span
+            className={`ai-job-state${jobSnapshot?.state === 'REVIEW_READY' ? ' review' : aiBusy ? ' running' : ''}`}
+          >
+            {jobSnapshot?.state ?? (aiBusy ? 'RUNNING' : 'READY')}
+          </span>
+          <span className="ai-job-chip" title={t('aiSettingsTitle')}>
+            {modelLabel}
+          </span>
+          <span className="ai-job-chip">{reasoningLabel}</span>
+          <span className="ai-job-chip" title={sourceScope}>
+            {sourceScope}
+          </span>
+          <span className="ai-job-chip">
+            ≤ {jobSnapshot?.metadata.maximumBudget.amount.toLocaleString() ?? '8,192'}{' '}
+            {jobSnapshot?.metadata.maximumBudget.unit ?? 'tokens'}
+          </span>
+        </div>
+
         <div className="ai-chat" ref={chatRef} onScroll={onChatScroll}>
           {/* Past conversation (read-only transcript), shown continuously with the current turn */}
           {historicChat.length > 0 && (
@@ -434,6 +481,76 @@ export function AiChatPanel({
                   <span>{warning}</span>
                 </div>
               ))}
+              <div className="preview-actions">
+                <button className="secondary" type="button" onClick={onRejectPreview}>
+                  {t('aiCancel')}
+                </button>
+                <button className="primary-action" type="button" onClick={onApplyPreview}>
+                  {t('appApply')}
+                </button>
+              </div>
+            </section>
+          )}
+
+          {(qaBusy || qaFindings !== null) && (
+            <section className="ai-qa-card" aria-label="Workbook QA results">
+              <header>
+                <strong>Workbook QA v1</strong>
+                <span>{qaBusy ? 'Scanning…' : `${qaFindings?.length ?? 0} finding(s)`}</span>
+              </header>
+              {!qaBusy && qaFindings?.length === 0 && (
+                <p className="ai-qa-pass">
+                  No deterministic findings. Unsupported cases remain unverified.
+                </p>
+              )}
+              {!qaBusy && (qaFindings?.length ?? 0) > 0 && (
+                <div className="ai-qa-filters" aria-label="QA severity filters">
+                  {(['all', 'critical', 'warning', 'info', 'unverified'] as const).map((filter) => (
+                    <button
+                      type="button"
+                      className={qaFilter === filter ? 'active' : ''}
+                      key={filter}
+                      onClick={() => setQaFilter(filter)}
+                    >
+                      {filter}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!qaBusy &&
+                filteredQaFindings.map((finding, index) => (
+                  <article
+                    className={`ai-qa-finding severity-${finding.severity} status-${finding.status}`}
+                    key={`${finding.ruleId}-${finding.sheetId ?? 'workbook'}-${finding.range ?? index}`}
+                  >
+                    <span className="ai-qa-finding-head">
+                      <strong>{finding.ruleId.replaceAll('-', ' ')}</strong>
+                      <span>{finding.status}</span>
+                    </span>
+                    <span>{finding.evidence}</span>
+                    <small>{finding.remediation}</small>
+                    <span className="ai-qa-actions">
+                      <button
+                        type="button"
+                        disabled={!finding.range}
+                        onClick={() => onSelectQaFinding(finding)}
+                      >
+                        Go to range
+                      </button>
+                      <button
+                        type="button"
+                        disabled={aiBusy}
+                        onClick={() =>
+                          onSend(
+                            `Workbook QA finding ${finding.ruleId}${finding.sheetName ? ` on ${finding.sheetName}` : ''}${finding.range ? `!${finding.range}` : ''}: ${finding.evidence}. Propose a safe fix for review before applying.`,
+                          )
+                        }
+                      >
+                        Propose fix
+                      </button>
+                    </span>
+                  </article>
+                ))}
             </section>
           )}
         </div>

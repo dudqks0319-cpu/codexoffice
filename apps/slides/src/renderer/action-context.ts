@@ -93,6 +93,7 @@ export interface ActionCtx {
   setPath: Set<string | null>
   setDirty: Set<boolean>
   setStatus: Set<string>
+  aiReviewPending: boolean
   images: Map<string, HTMLImageElement>
 
   // Selection / editing

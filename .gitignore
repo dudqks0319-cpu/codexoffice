@@ -2,6 +2,7 @@ node_modules
 out/
 dist/
 release/
+/apps/shell/release-final/
 *.log
 .DS_Store
 .refs/
@@ -12,6 +13,7 @@ electron-builder.env
 
 # Local ad-hoc e2e driver scripts (not pushed); the folder and README are tracked, the scripts are not
 /scripts/drivers/driver.*.mjs
+!/scripts/drivers/driver.packaged-smoke.mjs
 /probe*.mjs
 /apps/shell/build/THIRD-PARTY-NOTICES.txt
 /example/

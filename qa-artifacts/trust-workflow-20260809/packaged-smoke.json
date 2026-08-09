@@ -1,0 +1,66 @@
+{
+  "evidenceDir": "/Users/jyb-m3max/Desktop/codex/genoffice/qa-artifacts/trust-workflow-20260809",
+  "userDataDir": "/var/folders/dx/2zprs00s3050gd97w54748700000gn/T/codexoffice-packaged-home-YnDoc8/user-data",
+  "cdpPort": 9347,
+  "home": {
+    "title": "Codexoffice",
+    "url": "file:///private/tmp/genoffice-smoke.ZmJuoF/Codexoffice.app/Contents/Resources/app.asar/out/renderer/index.html",
+    "hero": true,
+    "account": "Sign in",
+    "quickCards": 4
+  },
+  "login": {
+    "menu": "Sign in to Codex in this app\nLanguage\nEnglish\nVersion\n0.5.0",
+    "attempted": true,
+    "accountText": "Waiting…\nCodex account for this app",
+    "loggedIn": false,
+    "waiting": true
+  },
+  "docs": {
+    "url": "file:///private/tmp/genoffice-smoke.ZmJuoF/Codexoffice.app/Contents/Resources/modules/docs/renderer/index.html?mode=tab",
+    "editorCount": 1,
+    "editedText": "AutoSave\nHome\nInsert\nDraw\nDesign\nLayout\nReferences\nReview\nView\nC\nCodex AI\nAI Summarize\nAI Polish\nPaste\nAa\nB\nI\nU\nab\nx\n2\nx\n2\nA\n1\n2\n3\nA\nZ\nAaBb\nNormal\nAaBb\nHeading 1\nAaBb\nHeading 2\nAaBb\nHeading 3\nAa\nEmphasis\nAa\nIntense Emphasis\nC\nCodex\nREADY\ncodex default\nlow\nAt cursor\n≤ 8,192 tokens\nLet AI help you write and edit\nGive an instruction or just ask a question;\nwith text selected, rewrite commands apply to the selection.\nSummarize the key points of this document\nPolish the whole document for a more professional tone\nContinue writing from where the document leaves off\nTrack changes\nDifferent First Page\n\nCodexoffice packaged text smoke\n\nPage 1 of 1\n4 words\n— Blank document created. Describe what to generate in the AI pane on the right.\n−\n+\n100%"
+  },
+  "settings": {
+    "status": "passed",
+    "opened": true,
+    "before": "",
+    "saveError": "",
+    "closedAfterSave": true,
+    "after": {
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "max"
+    },
+    "restored": {
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "max"
+    }
+  },
+  "qa": {
+    "buttonVisible": true,
+    "card": "Workbook QA v1\n1 FINDING(S)\nall\ncritical\nwarning\ninfo\nunverified\nformula error\nISSUE\nC3: #REF!\nRepair the broken reference or formula before using this result.\nGo to range\nPropose fix",
+    "findingCount": 1
+  },
+  "slideStatus": {
+    "body": "AutoSave\nHome\nInsert\nDraw\nDesign\nTransitions\nAnimations\nSlide Show\nReview\nView\nC\nCodex AI\nAI Beautify\nAI Fact Check\nPaste\nNew Slide\nLayout\nAdd Section\nB\nI\nU\nab\nx2\nx2\nA\nParagraph\nFormat Pane\nAlign\nFind/Replace\nC\nCodex\nREADY\ngpt-5.6-luna\nmax\nPage 1 / 1\n≤ 8,192 tokens\nLet AI generate your presentation\nDescribe the topic, audience, and rough page count;\nAI generates the whole deck onto the canvas.\nBuild a quarterly project review deck for me\nCreate a product launch presentation\nMake an onboarding training deck\n1\nC\nCodex AI\nSlide 1 of 1\nNotes\n−\n+\n64%",
+    "aiInput": true,
+    "slides": [
+      {
+        "widthPx": 1280,
+        "heightPx": 720,
+        "scale": 1,
+        "background": {
+          "kind": "none"
+        },
+        "nodes": []
+      }
+    ],
+    "account": {
+      "loggedIn": false
+    }
+  },
+  "image": {
+    "status": "blocked-external-auth",
+    "detail": "Codex account was not signed in"
+  }
+}

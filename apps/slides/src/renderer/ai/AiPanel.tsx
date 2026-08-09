@@ -1,10 +1,19 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
-import { AgentLoop, composeSkills, type AgentImage, type ToolDisplay } from '@genoffice/agent-core'
+import {
+  AgentLoop,
+  composeSkills,
+  JobLifecycle,
+  type AgentImage,
+  type JobSnapshot,
+  type JobState,
+  type ToolDisplay,
+} from '@genoffice/agent-core'
 import type { RenderSlide } from '@genoffice/pptx-render'
 import type { AiSettings, AttachmentAddResult, AttachmentMeta } from '../../shared/ipc'
 import { ATTACHMENT_IMAGE_EXTS } from '../../shared/ipc'
 import {
   createSlidesSkill,
+  registerRuntimeEvidencePath,
   type DeckAccess,
   type ClarifyQuestion,
   type DeckProgressEvent,
@@ -12,6 +21,13 @@ import {
 } from './slides-skill'
 import { createFilesSkill } from './files-skill'
 import { createElectronTransport } from './transport'
+import {
+  acceptsSlidesJobCallback,
+  createSlidesJobMetadata,
+  deckRevision,
+  SLIDES_AI_MAXIMUM_BUDGET,
+  transitionSlidesJob,
+} from './slides-job'
 import { renderSlidesToPngBase64 } from '../export-render'
 import { isQcEnabled, qcSlidePage, QC_MAX_PAGES } from './slide-qc'
 import { useI18n, t as tGlobal, aiLangDirective, type TFunc } from '../i18n/locale'
@@ -60,19 +76,6 @@ const PASTE_MIME_EXT: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/gif': 'gif',
   'image/webp': 'webp',
-}
-
-/** Cap on tool args/output persisted to the transcript (the store layer has another 16k truncation fallback) */
-const PERSIST_TOOL_FIELD_MAX = 16_000
-
-/** Tool args → JSON string (truncated; returns undefined on serialization failure, doesn't block persistence) */
-function safeJsonInput(input: unknown): string | undefined {
-  try {
-    const s = JSON.stringify(input)
-    return s && s !== '{}' ? s.slice(0, PERSIST_TOOL_FIELD_MAX) : undefined
-  } catch {
-    return undefined
-  }
 }
 
 /** Generation progress snapshot in the chat stream (same card updated in real time) */
@@ -158,6 +161,8 @@ interface AiPanelProps {
   onPathChange?: (path: string) => void
   /** Generation progress callback (for the canvas top progress bar) */
   onDeckProgress?: (event: DeckProgressEvent | null) => void
+  /** Blocks save/open/export while live AI mutations await explicit review. */
+  onReviewPendingChange?: (pending: boolean) => void
   /** Absolute path of the currently open file (for chat history persistence) */
   currentFilePath?: string | null
 }
@@ -235,11 +240,16 @@ export function AiPanel({
   onCollapse,
   onPathChange,
   onDeckProgress,
+  onReviewPendingChange,
   currentFilePath,
 }: AiPanelProps) {
   const { t } = useI18n()
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [jobSnapshot, setJobSnapshot] = useState<JobSnapshot | null>(null)
+  useEffect(() => {
+    onReviewPendingChange?.(jobSnapshot?.state === 'REVIEW_READY')
+  }, [jobSnapshot?.state, onReviewPendingChange])
   const [chat, setChat] = useState<ChatEntry[]>([])
   const [snapshots, setSnapshots] = useState<DeckSnapshot[]>([])
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
@@ -312,6 +322,23 @@ export function AiPanel({
   const runToolsRef = useRef<
     Array<{ name: string; summary: string; isError?: boolean; input?: string; output?: string }>
   >([])
+  const jobLifecycleRef = useRef<JobLifecycle | null>(null)
+  const currentGenerationRef = useRef(0)
+  const activeGenerationRef = useRef(0)
+  const cancellationRequestedRef = useRef(false)
+
+  const transitionJob = (next: JobState) => {
+    const snapshot = transitionSlidesJob(jobLifecycleRef.current, next)
+    if (snapshot) setJobSnapshot(snapshot)
+    return snapshot
+  }
+
+  const callbackIsCurrent = () =>
+    acceptsSlidesJobCallback(
+      jobLifecycleRef.current,
+      activeGenerationRef.current,
+      currentGenerationRef.current,
+    )
 
   // ── Chat history persistence ──────────────────────────────────────────────
   /** Resolve chatId and load history on first mount (AiPanel resets by key; no need to watch currentFilePath changes) */
@@ -425,17 +452,25 @@ export function AiPanel({
   /** Wall-clock start of the current run, drives the elapsed badge */
   const runStartedAtRef = useRef(0)
   const historyBatchActiveRef = useRef(false)
+  const runMutatedRef = useRef(false)
   const inputEditedSinceRunRef = useRef(false)
 
-  const finishHistoryBatch = async () => {
-    if (!historyBatchActiveRef.current) return
+  const finishHistoryBatch = async (mode: 'record' | 'restore' = 'record') => {
+    if (!historyBatchActiveRef.current) return null
     historyBatchActiveRef.current = false
     const id = await window.slidesApi.endHistoryBatch()
-    if (typeof id !== 'number') return
+    if (typeof id !== 'number') return null
+    if (mode === 'restore') {
+      const restored = await window.slidesApi.aiSnapshotRestore(id)
+      if (!restored) return null
+      applyDeckRef.current(restored, Math.min(currentRef.current, restored.length - 1))
+      return id
+    }
     const label = (lastDisplayTextRef.current ?? instructionRef.current).slice(0, 40)
     setSnapshots((prev) =>
       [{ id, label, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 20),
     )
+    return id
   }
 
   const rollback = async (snapshot: DeckSnapshot) => {
@@ -443,6 +478,7 @@ export function AiPanel({
     if (!restored) return
     applyDeckRef.current(restored, Math.min(currentRef.current, restored.length - 1))
     setSnapshots((prev) => prev.filter((s) => s.id !== snapshot.id))
+    if (jobLifecycleRef.current?.snapshot.state === 'COMMITTED') transitionJob('RESTORED')
   }
 
   const patchLastAssistant = (
@@ -473,6 +509,34 @@ export function AiPanel({
           setActiveClarify(questions)
         })
       },
+      getEvidenceSources: async () => {
+        const readAttachments = attachmentsRef.current.filter((attachment) =>
+          readAttachmentPathsRef.current.has(attachment.path),
+        )
+        const refreshed = await window.desktop.addAttachmentPaths(
+          readAttachments.map((attachment) => attachment.path),
+        )
+        const freshByPath = new Map(
+          refreshed.accepted.map((attachment) => [attachment.path, attachment]),
+        )
+        return attachmentsRef.current.flatMap((attachment, index) => {
+          const current = freshByPath.get(attachment.path)
+          if (!readAttachmentPathsRef.current.has(attachment.path) || !current?.sha256) return []
+          const kind = ['xlsx', 'xlsm', 'xlsb', 'xls', 'csv'].includes(attachment.ext)
+            ? 'workbook'
+            : 'document'
+          const locator = `${kind}:${index + 1}:${attachment.name}`
+          registerRuntimeEvidencePath(locator, attachment.path)
+          return [
+            {
+              locator,
+              title: attachment.name,
+              hash: `sha256:${current.sha256}`,
+              kind,
+            },
+          ]
+        })
+      },
       fitWidthPx,
     }
     accessRef.current = access
@@ -489,8 +553,11 @@ export function AiPanel({
       // Page-by-page deck generation needs more tool rounds
       maxTurns: 24,
       events: {
-        onText: (text) => patchLastAssistant({ text }),
+        onText: (text) => {
+          if (callbackIsCurrent()) patchLastAssistant({ text })
+        },
         onToolStart: (call) => {
+          if (!callbackIsCurrent()) return
           // Live "running" chip: replaced in place by onToolExecuted
           const activity: ToolActivity = {
             name: call.name,
@@ -500,6 +567,8 @@ export function AiPanel({
           patchLastAssistant((last) => ({ tools: [...(last.tools ?? []), activity] }))
         },
         onToolExecuted: ({ call, execution }) => {
+          if (!callbackIsCurrent()) return
+          if (execution.mutated) runMutatedRef.current = true
           const activity: ToolActivity = {
             name: call.name,
             summary: execution.summary,
@@ -512,12 +581,8 @@ export function AiPanel({
           if (!execution.display) {
             runToolsRef.current.push({
               name: call.name,
-              summary: execution.summary,
+              summary: call.name.replace(/[_-]+/g, ' '),
               isError: execution.isError,
-              input: safeJsonInput(call.input),
-              output: execution.output
-                ? execution.output.slice(0, PERSIST_TOOL_FIELD_MAX)
-                : undefined,
             })
           }
           patchLastAssistant((last) => {
@@ -528,34 +593,75 @@ export function AiPanel({
           })
         },
         onTurnEnd: () => {
+          if (!callbackIsCurrent()) return
           lastTurnToolsRef.current = []
           patchLastAssistant({ streaming: false })
           setChat((prev) => [...prev, { role: 'assistant', text: '', streaming: true }])
         },
         onDone: ({ text, cancelled, turnLimit }) => {
+          const lifecycle = jobLifecycleRef.current
+          const cancelledRun = cancelled || cancellationRequestedRef.current || !callbackIsCurrent()
           const finalText = turnLimit
             ? [text, tGlobal('aiTurnLimit')].filter(Boolean).join('\n\n')
-            : text || (cancelled ? tGlobal('aiStoppedNote') : '')
+            : text || (cancelledRun ? tGlobal('aiStoppedNote') : '')
           patchLastAssistant((last) => ({
             streaming: false,
             text: finalText || (last.tools?.length ? last.text : tGlobal('aiNoResponse')),
             // A stop mid-tool can leave a running placeholder behind — drop it
             tools: last.tools?.filter((tl) => !tl.running),
           }))
-          void finishHistoryBatch().finally(() => {
+          void (async () => {
+            const state = lifecycle?.snapshot.state
+            if (cancelledRun && historyBatchActiveRef.current) {
+              if (state === 'RUNNING') transitionJob('APPLYING')
+              const restored = await finishHistoryBatch('restore')
+              transitionJob(restored === null ? 'RECOVERY_REQUIRED' : 'RESTORED')
+            } else if (!cancelledRun && state === 'RUNNING' && runMutatedRef.current) {
+              transitionJob('REVIEW_READY')
+            } else {
+              await finishHistoryBatch()
+              if (cancelledRun && (state === 'PREPARING' || state === 'RUNNING')) {
+                transitionJob('CANCELLED')
+              } else if (!cancelledRun && state === 'RUNNING') {
+                transitionJob('COMPLETED')
+              }
+            }
             setBusy(false)
-            // Post-generation layout QC: only after a completed run that landed generated pages
-            if (cancelled) qcPagesRef.current = []
-            else if (qcPagesRef.current.length > 0) void runQcPassRef.current()
-          })
+            cancellationRequestedRef.current = false
+            // Visual QC is intentionally deferred until the user accepts the proposal.
+            if (cancelledRun) qcPagesRef.current = []
+          })()
           // Persist the assistant message (deckProgress not stored; tools store the whole run's full activity) —
           // side effects outside the updater (StrictMode double-invokes updaters, duplicating history writes)
-          if (finalText && !cancelled) {
+          if (finalText && !cancelledRun) {
             persistMessage('assistant', finalText, runToolsRef.current)
           }
         },
         onError: (error) => {
+          const lifecycle = jobLifecycleRef.current
+          const current = callbackIsCurrent()
           qcPagesRef.current = []
+          if (!current || cancellationRequestedRef.current) {
+            void (async () => {
+              if (historyBatchActiveRef.current) {
+                if (lifecycle?.snapshot.state === 'RUNNING') transitionJob('APPLYING')
+                const restored = await finishHistoryBatch('restore')
+                transitionJob(restored === null ? 'RECOVERY_REQUIRED' : 'RESTORED')
+              } else {
+                await finishHistoryBatch()
+                if (
+                  lifecycle?.snapshot.state === 'PREPARING' ||
+                  lifecycle?.snapshot.state === 'RUNNING'
+                ) {
+                  transitionJob('CANCELLED')
+                }
+              }
+              cancellationRequestedRef.current = false
+              setBusy(false)
+            })()
+            return
+          }
+          transitionJob('FAILED')
           setChat((prev) => {
             const next = [...prev]
             // the loop rolled this run's user message out of the model context — surface that
@@ -693,8 +799,34 @@ export function AiPanel({
     // so duplicate triggers must be blocked synchronously (e.g. StrictMode double-running the preset autoRun effect),
     // otherwise two sets of bubbles get pushed and the earlier assistant placeholder stays at "thinking" forever.
     // qcRunningRef: the post-generation QC pass edits the deck outside the main loop — no concurrent runs
-    if (!instruction || !loop || loop.busy || runStartingRef.current || qcRunningRef.current) return
+    if (
+      !instruction ||
+      !loop ||
+      loop.busy ||
+      runStartingRef.current ||
+      qcRunningRef.current ||
+      jobLifecycleRef.current?.snapshot.state === 'REVIEW_READY'
+    )
+      return
     runStartingRef.current = true
+    const generation = currentGenerationRef.current + 1
+    currentGenerationRef.current = generation
+    activeGenerationRef.current = generation
+    cancellationRequestedRef.current = false
+    const provider = settingsRef.current.provider
+    const providerSettings = settingsRef.current.providers[provider]
+    const lifecycle = new JobLifecycle(
+      createSlidesJobMetadata({
+        jobId: crypto.randomUUID(),
+        ...(currentFilePath ? { sessionId: 'presentation-open' } : {}),
+        model: providerSettings.model || `${provider} default`,
+        reasoning: providerSettings.reasoningEffort ?? 'default',
+        sourceHash: deckRevision(slidesRef.current),
+      }),
+    )
+    jobLifecycleRef.current = lifecycle
+    setJobSnapshot(lifecycle.snapshot)
+    transitionJob('PREPARING')
     setInput('')
     inputEditedSinceRunRef.current = false
     instructionRef.current = instruction
@@ -702,6 +834,7 @@ export function AiPanel({
     lastDisplayTextRef.current = displayText
     lastTurnToolsRef.current = []
     runToolsRef.current = []
+    runMutatedRef.current = false
     stickToBottomRef.current = true
     // Internal orchestration prompts skip the chat bubble and go only to the model.
     const shown = displayText ?? instruction
@@ -717,6 +850,14 @@ export function AiPanel({
     persistMessage('user', shown, undefined, attachmentsRef.current)
     void collectImageAttachments()
       .then(async (images) => {
+        if (
+          !acceptsSlidesJobCallback(lifecycle, generation, currentGenerationRef.current, [
+            'PREPARING',
+          ])
+        ) {
+          runStartingRef.current = false
+          return
+        }
         // AI Beautify sends the current slide's rendering along, so the model sees what it edits;
         // the note rides on the model instruction only — the chat bubble stays the localized preset text
         let modelInstruction = instruction
@@ -730,12 +871,34 @@ export function AiPanel({
         // Clear the flag before run: loop.run sets running synchronously, leaving no re-entry window
         runStartingRef.current = false
         if (await window.slidesApi.beginHistoryBatch()) historyBatchActiveRef.current = true
+        transitionJob('RUNNING')
         loop.run(modelInstruction, images)
       })
       .catch(() => {
         runStartingRef.current = false
+        if (lifecycle.snapshot.state === 'PREPARING') transitionJob('FAILED')
         void finishHistoryBatch().finally(() => setBusy(false))
       })
+  }
+
+  const applyReviewedProposal = async () => {
+    if (jobLifecycleRef.current?.snapshot.state !== 'REVIEW_READY') return
+    setBusy(true)
+    transitionJob('APPLYING')
+    const snapshotId = await finishHistoryBatch()
+    transitionJob(snapshotId === null ? 'RECOVERY_REQUIRED' : 'COMMITTED')
+    setBusy(false)
+    if (snapshotId !== null && qcPagesRef.current.length > 0) void runQcPassRef.current()
+  }
+
+  const rejectReviewedProposal = async () => {
+    if (jobLifecycleRef.current?.snapshot.state !== 'REVIEW_READY') return
+    setBusy(true)
+    transitionJob('APPLYING')
+    const restored = await finishHistoryBatch('restore')
+    qcPagesRef.current = []
+    transitionJob(restored === null ? 'RECOVERY_REQUIRED' : 'RESTORED')
+    setBusy(false)
   }
 
   /**
@@ -832,7 +995,14 @@ export function AiPanel({
   const cancel = () => {
     dismissClarify()
     qcAbortRef.current?.abort()
+    cancellationRequestedRef.current = true
+    currentGenerationRef.current += 1
+    if (jobLifecycleRef.current?.snapshot.state === 'PREPARING') transitionJob('CANCELLED')
     loopRef.current?.cancel()
+    if (!loopRef.current?.busy && !historyBatchActiveRef.current) {
+      cancellationRequestedRef.current = false
+      setBusy(false)
+    }
   }
 
   // Abort a QC pass still running when the panel unmounts (new file / panel remount by key)
@@ -841,11 +1011,15 @@ export function AiPanel({
   const retry = () => runWith(lastInstructionRef.current, lastDisplayTextRef.current)
 
   const newChat = () => {
+    if (jobLifecycleRef.current?.snapshot.state === 'REVIEW_READY') return
+    if (busy || runStartingRef.current) cancel()
     dismissClarify()
     qcAbortRef.current?.abort()
     loopRef.current?.reset()
     setBusy(false)
     setChat([])
+    jobLifecycleRef.current = null
+    setJobSnapshot(null)
     inputRef.current?.focus()
   }
 
@@ -938,6 +1112,13 @@ export function AiPanel({
     resizer.setPointerCapture(e.pointerId)
   }
 
+  const providerSettings = settings.providers[settings.provider]
+  const modelLabel =
+    jobSnapshot?.metadata.model ?? (providerSettings.model || `${settings.provider} default`)
+  const reasoningLabel =
+    jobSnapshot?.metadata.reasoning ?? providerSettings.reasoningEffort ?? 'default'
+  const scopeLabel = slides.length === 0 ? 'Empty deck' : `Page ${current + 1} / ${slides.length}`
+
   // collapsed: rail only — after all hooks, so the instance and its state survive
   if (!open) {
     return (
@@ -989,6 +1170,34 @@ export function AiPanel({
           )}
         </div>
       </div>
+
+      <div className="ai-job-strip" aria-label="AI job status">
+        <span className={`ai-job-state${busy ? ' running' : ''}`}>
+          {jobSnapshot?.state ?? (busy ? 'RUNNING' : 'READY')}
+        </span>
+        <span className="ai-job-chip" title={modelLabel}>
+          {modelLabel}
+        </span>
+        <span className="ai-job-chip">{reasoningLabel}</span>
+        <span className="ai-job-chip">{scopeLabel}</span>
+        <span className="ai-job-chip">
+          ≤{' '}
+          {jobSnapshot?.metadata.maximumBudget.amount.toLocaleString() ??
+            SLIDES_AI_MAXIMUM_BUDGET.toLocaleString()}{' '}
+          {jobSnapshot?.metadata.maximumBudget.unit ?? 'tokens'}
+        </span>
+      </div>
+      {jobSnapshot?.state === 'REVIEW_READY' && (
+        <div className="ai-review-actions" role="group" aria-label="Review AI changes">
+          <span>Review the generated deck before it is committed.</span>
+          <button type="button" onClick={() => void rejectReviewedProposal()}>
+            Reject changes
+          </button>
+          <button type="button" className="primary" onClick={() => void applyReviewedProposal()}>
+            Apply changes
+          </button>
+        </div>
+      )}
 
       <div ref={logRef} className="ai-chat" onScroll={onLogScroll}>
         {/* Past conversation (read-only transcript, not fed to the model), displayed continuously with the current turn */}

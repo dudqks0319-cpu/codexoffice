@@ -6488,3 +6488,73 @@ body.vib .slide-list {
 .ai-login-btn:hover {
   opacity: 0.88;
 }
+
+.ai-job-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border-default);
+  background: var(--color-bg-subtle);
+  scrollbar-width: none;
+}
+
+.ai-job-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.ai-job-state,
+.ai-job-chip {
+  flex: 0 0 auto;
+  max-width: 150px;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  background: var(--color-bg-page);
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-job-state {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.ai-job-state.running {
+  border-color: rgba(15, 127, 255, 0.4);
+  color: var(--color-brand-secondary);
+}
+
+.ai-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e8ded9;
+  background: #fff8f4;
+  font-size: 12px;
+}
+
+.ai-review-actions span {
+  flex: 1;
+}
+
+.ai-review-actions button {
+  border: 1px solid #c9b8b0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+
+.ai-review-actions button.primary {
+  border-color: #c74421;
+  background: #c74421;
+  color: #fff;
+}

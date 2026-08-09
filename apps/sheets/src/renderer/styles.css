@@ -3593,7 +3593,7 @@ textarea:focus {
   line-height: 1.5;
 }
 
-/* Inline "Applied N edits [Undo]" banner shown after auto-apply */
+/* Inline "Applied N edits [Undo]" banner shown after explicit review/apply */
 .ai-auto-applied {
   display: inline-flex;
   align-items: center;
@@ -3627,6 +3627,99 @@ textarea:focus {
   background: var(--excel-green, #217346);
   color: #ffffff;
   border-color: var(--excel-green, #217346);
+}
+
+.ai-qa-card {
+  display: grid;
+  gap: 8px;
+  margin: 10px 12px 14px;
+  padding: 12px;
+  border: 1px solid #d9e5dd;
+  border-radius: 10px;
+  background: #fbfdfb;
+}
+
+.ai-qa-card > header,
+.ai-qa-finding-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ai-qa-card > header span,
+.ai-qa-finding-head span {
+  color: #647067;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.ai-qa-pass {
+  margin: 0;
+  color: #246b40;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ai-qa-finding {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #e2e6e3;
+  border-left: 4px solid #d39b22;
+  border-radius: 7px;
+  background: #fff;
+  color: #202522;
+  text-align: left;
+}
+
+.ai-qa-finding.severity-critical {
+  border-left-color: #c94040;
+}
+
+.ai-qa-finding.severity-info,
+.ai-qa-finding.status-unverified {
+  border-left-color: #6685b8;
+}
+
+.ai-qa-finding > span:not(.ai-qa-finding-head),
+.ai-qa-finding small {
+  line-height: 1.35;
+}
+
+.ai-qa-finding small {
+  color: #66706a;
+}
+
+.ai-qa-filters,
+.ai-qa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-qa-filters button,
+.ai-qa-actions button {
+  padding: 4px 8px;
+  border: 1px solid #cfd8d2;
+  border-radius: 999px;
+  background: #fff;
+  color: #405048;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ai-qa-filters button.active,
+.ai-qa-actions button:hover:not(:disabled) {
+  border-color: var(--excel-green, #217346);
+  background: #edf7f0;
+  color: var(--excel-green, #217346);
+}
+
+.ai-qa-actions button:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 /* Thinking indicator (white background, no container):
@@ -3769,6 +3862,50 @@ textarea:focus {
 
 .ai-preview-card {
   align-self: stretch;
+}
+
+.ai-job-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-default);
+  background: var(--surface-subtle, #f7f8f8);
+}
+
+.ai-job-state,
+.ai-job-chip {
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid var(--border, #dfe2e4);
+  border-radius: 999px;
+  overflow: hidden;
+  color: var(--text-secondary, #374151);
+  background: var(--surface, #ffffff);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-job-state {
+  border-color: #bfd6ca;
+  color: var(--excel-green, #217346);
+  background: #f0f8f4;
+  font-weight: 600;
+}
+
+.ai-job-state.running {
+  border-color: #b9cff5;
+  color: #245ca6;
+  background: #f1f6ff;
+}
+
+.ai-job-state.review {
+  border-color: #e0c078;
+  color: #7b5710;
+  background: #fff8e8;
 }
 
 /* Composer floats over the chat scroll area — no top border (agent-shell §4.6) */

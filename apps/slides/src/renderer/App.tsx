@@ -205,6 +205,11 @@ export function App() {
   const [path, setPath] = useState<string | null>(null)
   /** AiPanel reset key: incremented only on applyOpen (open/new file), not on draft path updates */
   const [aiPanelKey, setAiPanelKey] = useState(0)
+  const [aiReviewPending, setAiReviewPending] = useState(false)
+  useEffect(() => {
+    window.slidesApi.setAiReviewPending(aiReviewPending)
+    return () => window.slidesApi.setAiReviewPending(false)
+  }, [aiReviewPending])
   /** Theme body default font (fallback for the font box when the selection has no text element) */
   const [defaultFont, setDefaultFont] = useState<string | null>(null)
   const [current, setCurrent] = useState(0)
@@ -564,9 +569,13 @@ export function App() {
   )
 
   const openDialog = useCallback(async () => {
+    if (aiReviewPending) {
+      setStatus('Review and apply or reject the pending AI changes before opening another file.')
+      return
+    }
     const r = await window.slidesApi.openPptx(FIT_WIDTH)
     applyOpen(r)
-  }, [applyOpen])
+  }, [aiReviewPending, applyOpen])
 
   // Save/export flows live in file-actions.ts; the editing-active flag lets ⌘S wait for the edit overlay to commit
   const editingActiveRef = useRef(false)
@@ -1981,6 +1990,7 @@ export function App() {
     setPath,
     setDirty,
     setStatus,
+    aiReviewPending,
     images,
     selectedIds,
     setSelectedIds,
@@ -2362,6 +2372,7 @@ export function App() {
                   open={showAi}
                   onExpand={toggleAi}
                   onCollapse={toggleAi}
+                  onReviewPendingChange={setAiReviewPending}
                   onUndo={() => void undo()}
                   onPathChange={(p) => {
                     setPath(p)

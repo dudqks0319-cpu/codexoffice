@@ -266,6 +266,8 @@ export { registerAiIpc } from './ai-ipc'
 let pendingOpenPath: string | null = null
 /** tab mode: each view queues its own path; the renderer consumes it after mounting */
 const pendingByWc = new Map<number, string>()
+const aiReviewPendingWc = new Set<number>()
+const reviewBlockedOpenByWc = new Map<number, string>()
 /**
  * Renderer freeze watchdog: the freeze is sporadic and has never
  * reproduced under instrumentation, so when it does happen, capture the
@@ -923,6 +925,22 @@ export function registerSlidesIpc(): void {
     if (!path || !existsSync(path)) return null
     if (await rejectLegacyPpt(path)) return null
     return openAndBuild(e.sender, path, fitWidthPx)
+  })
+
+  ipcMain.on('slides:ai-review-pending', (e, pending: boolean) => {
+    const wcId = e.sender.id
+    if (pending) {
+      aiReviewPendingWc.add(wcId)
+      return
+    }
+    aiReviewPendingWc.delete(wcId)
+    const queued = reviewBlockedOpenByWc.get(wcId)
+    if (!queued || !existsSync(queued) || e.sender.isDestroyed()) return
+    reviewBlockedOpenByWc.delete(wcId)
+    const fitWidthPx = sessions.get(wcId)?.fitWidthPx ?? 1280
+    void openAndBuild(e.sender, queued, fitWidthPx).then((result) => {
+      if (!e.sender.isDestroyed()) e.sender.send('slides:opened', result)
+    })
   })
 
   ipcMain.handle('slides:consume-pending-open', async (e, fitWidthPx: number) => {
@@ -3629,6 +3647,11 @@ export function startSlidesStandalone(): void {
     if (app.isReady()) {
       const win = BrowserWindow.getAllWindows()[0]
       if (win) {
+        if (aiReviewPendingWc.has(win.webContents.id)) {
+          reviewBlockedOpenByWc.set(win.webContents.id, path)
+          win.focus()
+          return
+        }
         openAndBuild(win.webContents, path, 1280).then((r) =>
           win.webContents.send('slides:opened', r),
         )

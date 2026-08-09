@@ -8,12 +8,7 @@ import {
   formatAddress,
   type RangeBounds,
 } from '../../domain/cell-address'
-import type {
-  ApplyOutcome,
-  CellFormatState,
-  CellScalar,
-  ChangePlan,
-} from '../../domain/workbook.types'
+import type { CellFormatState, CellScalar, ChangePlan } from '../../domain/workbook.types'
 import { t } from '../i18n/locale'
 import { guideCatalogSummary, loadGuides } from './guides'
 
@@ -22,9 +17,8 @@ import { guideCatalogSummary, loadGuides } from './guides'
  * and one propose tool. Mirrors the docx skill's read-before-write discipline
  * (get_document_context / read_blocks / replace_blocks), but the mutating
  * tool never touches the workbook directly — it only computes a ChangePlan
- * and hands it to the SAME plan/apply path the manual flow uses, which now
- * auto-applies immediately (undo via ⌘Z / inline button covers everything;
- * the preview card only remains as a manual fallback when apply fails).
+ * and hands it to the SAME plan/apply path the manual flow uses. The tool is
+ * deliberately non-mutating: only the user's Apply action commits the plan.
  */
 
 /** raw shape the model sends for one operation; validated against workbookOperationSchema */
@@ -75,20 +69,14 @@ export interface SheetsSkillDeps {
   readFormats(addresses: readonly string[]): Record<string, CellFormatState>
   /** formatted report of a sheet's feature state (filters, CF, DV, names, visuals, …) */
   readSheetFeatures(sheetId?: string): string
-  /** `applied` resolves with the real apply result (the lazy path applies async);
-   * the tool awaits it so the model never hears "applied" for a batch that failed */
   proposeOperations(
     operations: readonly WorkbookOperation[],
     summary: string,
-  ): { ok: true; plan: ChangePlan; applied?: Promise<ApplyOutcome> } | { ok: false; error: string }
+  ): { ok: true; plan: ChangePlan } | { ok: false; error: string }
 }
 
 const MAX_READ_ADDRESSES = 100
 const MAX_READ_RANGE_CELLS = 2000
-/** Read-back after write: max number of formula cells whose results are read back */
-const MAX_READBACK_FORMULAS = 10
-/** Read-back after write: wait time (ms) for Univer's async formula recalc */
-const FORMULA_RECALC_DELAY_MS = 300
 const MAX_READ_FORMAT_CELLS = 200
 
 export const WORKBOOK_TOOLS: AgentToolDef[] = [
@@ -182,7 +170,7 @@ export const WORKBOOK_TOOLS: AgentToolDef[] = [
   {
     name: 'propose_operations',
     description:
-      'Submit a batch of change operations, applied to the workbook immediately (the user can roll back with the [Undo] button or ⌘Z). Basic operations: ' +
+      'Submit a batch of change operations for review. The workbook is unchanged until the user presses Apply in the preview card. Basic operations: ' +
       '{op:"set_cell",sheetId,address,value} | {op:"set_formula",sheetId,address,formula(starts with =)} | ' +
       '{op:"clear_cell",sheetId,address} | {op:"rename_sheet",sheetId,name}. ' +
       'Field definitions for the remaining operations live in the guides — load_guide before using them: ' +
@@ -215,7 +203,7 @@ export const WORKBOOK_TOOLS: AgentToolDef[] = [
 export interface ToolExecution {
   output: string
   isError?: boolean
-  /** true when propose_operations auto-applied a batch of changes */
+  /** true only when a tool directly mutated the workbook; proposals remain false */
   mutated: boolean
   summary: string
 }
@@ -548,57 +536,20 @@ export function executeWorkbookTool(
       const outcome = deps.proposeOperations(operations, summaryInput.trim())
       if (!outcome.ok) return fail(t('aiToolPropose'), outcome.error)
       const summary = summaryInput.trim()
-      const finish = (): ToolExecution | Promise<ToolExecution> => {
-        const warnings =
-          outcome.plan.warnings.length > 0 ? `\nNote: ${outcome.plan.warnings.join('; ')}` : ''
-        const opCount =
-          outcome.plan.cellChanges.length +
-          outcome.plan.formatChanges.length +
-          outcome.plan.sheetRenames.length +
-          outcome.plan.structuralChanges.length
-        const base = `Auto-applied ${opCount} change(s) (undo via the side panel [Undo] button or ⌘Z): ${formatPlanSummary(outcome.plan)}${warnings}`
-        // Read-back after write (write → verify): formula cells fetch their
-        // computed values after the async recalc, so the AI sees real results and
-        // errors like #REF!/#DIV/0! instead of just what it wrote.
-        const formulaAddrs = outcome.plan.cellChanges
-          .filter((c) => c.after.formula)
-          .map((c) => c.address)
-        if (formulaAddrs.length === 0) {
-          return { output: base, mutated: true, summary }
-        }
-        return (async (): Promise<ToolExecution> => {
-          await new Promise((resolve) => setTimeout(resolve, FORMULA_RECALC_DELAY_MS))
-          const shown = formulaAddrs.slice(0, MAX_READBACK_FORMULAS)
-          const cells = deps.readCells(shown)
-          const lines = shown.map((addr) => {
-            const v = cells[addr]?.value
-            return `${addr} = ${v === null || v === undefined ? '(still computing; verify with read_cells)' : String(v)}`
-          })
-          const rest = formulaAddrs.length - shown.length
-          const hasError = lines.some((l) =>
-            /#(REF!|DIV\/0!|VALUE!|NAME\?|N\/A|NUM!|NULL!)/.test(l),
-          )
-          return {
-            output:
-              `${base}\nFormula results: ${lines.join('; ')}${rest > 0 ? `; …${rest} more formula cells` : ''}` +
-              (hasError
-                ? '\n⚠️ Formula error values present — check references/divisors and fix them.'
-                : ''),
-            mutated: true,
-            summary,
-          }
-        })()
+      const warnings =
+        outcome.plan.warnings.length > 0 ? `\nNote: ${outcome.plan.warnings.join('; ')}` : ''
+      const opCount =
+        outcome.plan.cellChanges.length +
+        outcome.plan.formatChanges.length +
+        outcome.plan.sheetRenames.length +
+        outcome.plan.structuralChanges.length
+      return {
+        output:
+          `Prepared ${opCount} change(s) for user review; the workbook is unchanged until Apply: ` +
+          `${formatPlanSummary(outcome.plan)}${warnings}`,
+        mutated: false,
+        summary,
       }
-      if (!outcome.applied) return finish()
-      return outcome.applied.then((applied) =>
-        applied.ok
-          ? finish()
-          : fail(
-              t('aiToolPropose'),
-              `Apply failed — the workbook is UNCHANGED: ${applied.reason ?? 'unknown reason'}. ` +
-                'Do not tell the user the changes were made; adjust the operations and retry, or explain the failure.',
-            ),
-      )
     }
 
     default:
