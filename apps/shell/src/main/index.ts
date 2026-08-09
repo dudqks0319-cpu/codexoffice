@@ -8,7 +8,7 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, dirname, extname, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import {
   BrowserWindow,
   Menu,
@@ -138,21 +138,32 @@ import { initAutoUpdater } from './updater'
 // run silently quits and forwards its argv to the running installed Codexoffice.
 // GENOFFICE_USER_DATA: test drivers point this at a scratch dir so an
 // automated instance can run alongside the dev instance (separate lock).
-if (!app.isPackaged)
-  app.setPath(
-    'userData',
-    process.env.GENOFFICE_USER_DATA ?? join(app.getPath('appData'), 'GenOffice Dev'),
-  )
+// A trusted packaged smoke launcher may use the same absolute override; with no
+// override, the installed app keeps the established canonical path below.
+const requestedUserData = process.env.GENOFFICE_USER_DATA
+const allowPackagedUserDataOverride =
+  !app.isPackaged || process.env.GENOFFICE_PACKAGED_SMOKE === '1'
+const userDataOverride =
+  requestedUserData && allowPackagedUserDataOverride && isAbsolute(requestedUserData)
+    ? requestedUserData
+    : undefined
+
+if (!app.isPackaged) {
+  app.setPath('userData', userDataOverride ?? join(app.getPath('appData'), 'GenOffice Dev'))
+}
 
 // Keep the established packaged path even though the display name is now Codexoffice.
 // Older AI Office installs are copied only when that established target is absent or empty.
 if (app.isPackaged) {
   const appData = app.getPath('appData')
-  const userData = join(appData, 'GenOffice')
+  const userData = userDataOverride ?? join(appData, 'GenOffice')
   const olderUserData = join(appData, 'AI Office')
   app.setPath('userData', userData)
-  const targetEmpty = !existsSync(userData) || readdirSync(userData).length === 0
-  if (targetEmpty && existsSync(olderUserData)) cpSync(olderUserData, userData, { recursive: true })
+  if (!userDataOverride) {
+    const targetEmpty = !existsSync(userData) || readdirSync(userData).length === 0
+    if (targetEmpty && existsSync(olderUserData))
+      cpSync(olderUserData, userData, { recursive: true })
+  }
 }
 
 // module build outputs: packaged builds carry them as extraResources

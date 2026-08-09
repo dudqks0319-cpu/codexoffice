@@ -10,6 +10,7 @@ const MAX_STDERR_BYTES = 64 * 1024
 const ALLOWED_REQUESTS = new Set([
   'initialize',
   'account/read',
+  'model/list',
   'modelProvider/capabilities/read',
   'thread/start',
   'turn/start',

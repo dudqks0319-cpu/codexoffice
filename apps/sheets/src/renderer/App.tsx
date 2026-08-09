@@ -2970,6 +2970,11 @@ export function App(): React.JSX.Element {
         onStop={handleStopAgent}
         onNewChat={handleNewChat}
         onUndo={handleUndo}
+        aiSettings={aiSettings}
+        onAiSettingsSave={async (nextSettings) => {
+          const saved = await window.desktopApi.setAiSettings(nextSettings)
+          setAiSettingsState(saved)
+        }}
         onCommand={handleRibbonCommand}
         zoomPercent={zoomPercent}
         canSave={pendingEdits > 0}

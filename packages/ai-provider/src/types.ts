@@ -2,14 +2,29 @@ import type { AgentMessage, AgentToolCall, AgentToolDef } from '@genoffice/agent
 
 export type AiProviderId = 'codex' | 'anthropic' | 'gemini' | 'deepseek' | 'openai' | 'custom'
 
+/** Reasoning levels supported by the current Codex model runtime. */
+export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
 export interface CodexAccountStatus {
   loggedIn: boolean
   authMethod?: 'chatgpt' | 'api-key' | 'unknown'
 }
 
+/** Safe subset of a model/list entry exposed to renderer model pickers. */
+export interface CodexModelSummary {
+  id: string
+  model: string
+  displayName: string
+  description: string
+  hidden: boolean
+  isDefault: boolean
+  defaultReasoningEffort: string
+}
+
 export interface AiProviderConfig {
   apiKey: string
   model: string
+  reasoningEffort?: CodexReasoningEffort
   /** only used by the custom (OpenAI-compatible) provider */
   baseUrl?: string | undefined
 }

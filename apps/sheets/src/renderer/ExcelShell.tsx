@@ -18,6 +18,7 @@ import { type SelectionFormat } from './selection-format'
 
 import type { ChartSeriesVisualState } from '../domain/chart-visual'
 import type { ChangePlan } from '../domain/workbook.types'
+import type { AiSettings } from '@genoffice/ai-provider'
 import type { AttachmentMeta } from '../shared/desktop-api'
 import { AiChatPanel, type AiChatMessage } from './ai/AiChatPanel'
 import {
@@ -142,6 +143,8 @@ interface ExcelShellProps {
   readonly onStop: () => void
   readonly onNewChat: () => void
   readonly onUndo: () => void
+  readonly aiSettings: AiSettings | null
+  readonly onAiSettingsSave: (settings: AiSettings) => Promise<void>
   readonly onCommand: (command: string) => void
   /// Left side of the status bar (ready / streaming / AI progress messages).
   readonly statusMessage: string
@@ -255,6 +258,8 @@ export function ExcelShell({
   onStop,
   onNewChat,
   onUndo,
+  aiSettings,
+  onAiSettingsSave,
   onCommand,
   statusMessage,
   zoomPercent,
@@ -436,6 +441,8 @@ export function ExcelShell({
           onStop={onStop}
           onNewChat={onNewChat}
           onUndo={onUndo}
+          aiSettings={aiSettings}
+          onAiSettingsSave={onAiSettingsSave}
           onExpand={() => setIsCopilotOpen(true)}
           onCollapse={() => setIsCopilotOpen(false)}
         />

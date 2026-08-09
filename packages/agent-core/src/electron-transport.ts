@@ -49,6 +49,8 @@ export interface IpcTransportOptions<S> {
   /** abort the in-flight turn in the main process */
   cancel(requestId: string): void
   getSettings(): S
+  /** Optional per-request override for models that legitimately reason silently longer. */
+  silenceTimeoutMs?(settings: S): number
   /** localized fallback when an error chunk carries no message */
   unknownErrorText(): string
   /** localized message for timeouts (errorCode 'timeout' and the silence watchdog) */
@@ -67,6 +69,8 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
   return {
     stream(request: AgentStreamRequest, cb) {
       const requestId = crypto.randomUUID()
+      const settings = options.getSettings()
+      const silenceTimeoutMs = options.silenceTimeoutMs?.(settings) ?? IPC_STREAM_SILENCE_TIMEOUT_MS
       let settled = false
       let silenceTimer: ReturnType<typeof setTimeout> | undefined
       const settle = () => {
@@ -84,7 +88,7 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
         silenceTimer = setTimeout(() => {
           options.cancel(requestId)
           fail(timeoutText())
-        }, IPC_STREAM_SILENCE_TIMEOUT_MS)
+        }, silenceTimeoutMs)
       }
       const unsubscribe = options.onStream((chunk) => {
         if (chunk.requestId !== requestId || settled) return
@@ -117,7 +121,7 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
         Promise.resolve(
           options.start({
             requestId,
-            settings: options.getSettings(),
+            settings,
             system: request.system,
             messages: request.messages,
             tools: request.tools,

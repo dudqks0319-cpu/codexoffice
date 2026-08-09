@@ -26,6 +26,7 @@ export const IPC_CHANNELS = {
   aiStreamChunk: 'ai:stream-chunk',
   aiCodexStatus: 'ai:codex-status',
   aiCodexLogin: 'ai:codex-login',
+  aiCodexModels: 'ai:codex-models',
   // Chat attachments (sheets: prefix — docs already registers global files:* in
   // the shell; avoids collisions)
   filesPick: 'sheets:files-pick',

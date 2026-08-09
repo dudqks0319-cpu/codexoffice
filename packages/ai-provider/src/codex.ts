@@ -4,8 +4,13 @@ import path from 'node:path'
 import { Codex, type CodexOptions, type Input, type ThreadOptions } from '@openai/codex-sdk'
 import type { AgentMessage, AgentToolCall, AgentToolDef } from '@genoffice/agent-core'
 import { codexChildEnvironment, resolveCodexExecutable } from './codex-executable'
-import type { AiProviderConfig } from './types'
-import { AiTimeoutError, createStreamWatchdog } from './watchdog'
+import type { AiProviderConfig, CodexReasoningEffort } from './types'
+import {
+  AI_CONNECT_TIMEOUT_MS,
+  AiTimeoutError,
+  aiIdleTimeoutMsForReasoning,
+  createStreamWatchdog,
+} from './watchdog'
 import type { StreamCallbacks } from './stream'
 
 export const CODEX_MAX_IMAGES = 8
@@ -31,8 +36,12 @@ interface CodexThreadLike {
   ): Promise<{ events: AsyncIterable<unknown> }>
 }
 
+type GenOfficeThreadOptions = Omit<ThreadOptions, 'modelReasoningEffort'> & {
+  modelReasoningEffort?: CodexReasoningEffort
+}
+
 interface CodexClientLike {
-  startThread(options: ThreadOptions): CodexThreadLike
+  startThread(options: GenOfficeThreadOptions): CodexThreadLike
 }
 
 export interface CodexDependencies {
@@ -47,7 +56,13 @@ interface CodexEnvelope {
 }
 
 function makeClient(options: CodexOptions): CodexClientLike {
-  return new Codex(options)
+  const client = new Codex(options)
+  return {
+    // SDK 0.146.0's declaration stops at xhigh, while its runtime forwards the
+    // value verbatim and current Codex models accept max. Keep the compatibility
+    // cast isolated here until the SDK declaration catches up.
+    startThread: (threadOptions) => client.startThread(threadOptions as ThreadOptions),
+  }
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {
@@ -431,7 +446,11 @@ export async function streamCodex(
   const directory = await deps.makeTempDirectory()
   try {
     await chmod(directory, 0o700)
-    const wd = createStreamWatchdog(cb.signal)
+    const wd = createStreamWatchdog(
+      cb.signal,
+      AI_CONNECT_TIMEOUT_MS,
+      aiIdleTimeoutMsForReasoning(config.reasoningEffort),
+    )
     await wd.guard(async () => {
       const input = await stageInput(directory, system, messages, tools)
       const client = deps.createClient({
@@ -439,11 +458,11 @@ export async function streamCodex(
         env: codexChildEnvironment(),
         config: HARDENED_CODEX_CONFIG,
       })
-      const threadOptions: ThreadOptions = {
+      const threadOptions: GenOfficeThreadOptions = {
         sandboxMode: 'read-only',
         workingDirectory: directory,
         skipGitRepoCheck: true,
-        modelReasoningEffort: 'low',
+        modelReasoningEffort: config.reasoningEffort ?? 'low',
         networkAccessEnabled: false,
         webSearchMode: 'disabled',
         webSearchEnabled: false,

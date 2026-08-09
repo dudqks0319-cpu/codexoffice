@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { AiComposer, AiTypingIndicator } from '@genoffice/ui'
 import { CodexMark } from '../ribbon-icons'
+import type { AiSettings } from '@genoffice/ai-provider'
 import type { ChangePlan } from '../../domain/workbook.types'
 import type { AttachmentMeta } from '../../shared/desktop-api'
 import { useI18n, type TFunc } from '../i18n/locale'
+import { CodexSettingsDialog } from './CodexSettingsDialog'
 import { Markdown } from '@genoffice/ui'
 import sendEnterOn from '../assets/send-enter-on.png'
 import sendEnterOff from '../assets/send-enter-off.png'
@@ -78,6 +80,8 @@ export function AiChatPanel({
   onUndo,
   onExpand,
   onCollapse,
+  aiSettings,
+  onAiSettingsSave,
 }: {
   readonly isOpen: boolean
   /** the workbook has cells with content — empty workbooks get "build me a sheet" copy instead */
@@ -105,6 +109,8 @@ export function AiChatPanel({
   readonly onUndo: () => void
   readonly onExpand: () => void
   readonly onCollapse: () => void
+  readonly aiSettings: AiSettings | null
+  readonly onAiSettingsSave: (settings: AiSettings) => Promise<void>
 }): React.JSX.Element {
   const { t } = useI18n()
   const chatRef = useRef<HTMLDivElement | null>(null)
@@ -113,6 +119,7 @@ export function AiChatPanel({
   const [dragOver, setDragOver] = useState(false)
   const asideRef = useRef<HTMLElement | null>(null)
   const [resizing, setResizing] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   /** Wall-clock start of the current run (aiBusy false→true), drives the elapsed badge */
   const busyStartRef = useRef(0)
   useEffect(() => {
@@ -241,223 +248,255 @@ export function AiChatPanel({
   }
 
   return (
-    <aside
-      ref={asideRef}
-      className={`copilot${dragOver ? ' ai-panel-dragover' : ''}${resizing ? ' ai-panel-resizing' : ''}`}
-      onDragOver={(e) => {
-        if (e.dataTransfer.types.includes('Files')) {
-          e.preventDefault()
-          e.stopPropagation()
-          setDragOver(true)
-        }
-      }}
-      onDragLeave={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false)
-      }}
-      onDrop={onDrop}
-    >
-      <div
-        className="ai-panel-resizer"
-        onPointerDown={startResize}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Codex"
-      />
-      <header className="ai-panel-header">
-        <span className="ai-panel-title">
-          <CodexMark size={22} />
-          Codex
-        </span>
-        <div className="ai-panel-header-actions">
-          {(chat.length > 0 || historicChat.length > 0) && (
-            <button className="ai-header-btn" onClick={onNewChat} title={t('aiNewChat')}>
-              <IconNewChat size={15} />
-            </button>
-          )}
-          <button className="ai-header-btn" onClick={onCollapse} title={t('aiCollapsePanel')}>
-            <IconCollapse size={15} />
-          </button>
-        </div>
-      </header>
-
-      <div className="ai-chat" ref={chatRef} onScroll={onChatScroll}>
-        {/* Past conversation (read-only transcript), shown continuously with the current turn */}
-        {historicChat.length > 0 && (
-          <>
-            {historicChat.map((entry, i) => (
-              <div key={`h${i}`} className={`ai-msg ai-msg-${entry.role} ai-msg-historic`}>
-                {entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
-                {entry.text && <Markdown text={entry.text} />}
-              </div>
-            ))}
-            <div className="ai-history-sep">{t('aiHistorySep')}</div>
-          </>
-        )}
-        {chat.length === 0 && historicChat.length === 0 && (
-          <div className="ai-chat-empty">
-            <div className="ai-chat-empty-title">
-              {t(hasContent ? 'aiEmptyTitle' : 'aiEmptyBuildTitle')}
-            </div>
-            <div className="ai-chat-empty-body">
-              {t(hasContent ? 'aiEmptyBodyLine1' : 'aiEmptyBuildBody')}
-            </div>
-          </div>
-        )}
-        {chat.map((entry, index) => (
-          <div
-            key={index}
-            className={`ai-msg ai-msg-${entry.role}${entry.isError ? ' ai-msg-error' : ''}${entry.role === 'assistant' && entry.streaming ? ' ai-msg-streaming' : ''}`}
-          >
-            {entry.role === 'user' ? (
-              <>
-                {entry.text}
-                {entry.undelivered && (
-                  <div className="ai-msg-undelivered">
-                    {t('aiUndelivered')}
-                    {!aiBusy && (
-                      <button className="ai-retry-btn" onClick={() => onSend(entry.text)}>
-                        {t('aiRetry')}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                {entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
-                {entry.text ? (
-                  <Markdown text={entry.text} />
-                ) : (
-                  entry.streaming && (
-                    <span className="ai-typing-row">
-                      <AiTypingIndicator
-                        label={entry.tools.length > 0 ? t('aiWorking') : t('aiThinking')}
-                      />
-                    </span>
-                  )
-                )}
-                {entry.autoApplied && (
-                  <div className="ai-auto-applied">
-                    <span className="ai-auto-applied-text">
-                      {t('aiAutoApplied', { count: entry.autoApplied.opCount })}
-                    </span>
-                    <button className="ai-undo-btn" onClick={onUndo} title={t('aiUndoTitle')}>
-                      {t('aiUndo')}
-                    </button>
-                  </div>
-                )}
-                {entry.loginRequired && (
-                  <button
-                    className="ai-login-btn"
-                    onClick={() => void window.desktopApi.aiCodexLogin().catch(() => undefined)}
-                  >
-                    {t('aiCodexLoginBtn')}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        ))}
-
-        {preview && (
-          <section className="preview ai-preview-card" aria-label={t('aiPreviewAria')}>
-            <h3>{t('aiProposedChanges')}</h3>
-            {preview.structuralChanges.map((change, index) => (
-              <div className="change" key={`structural-${index}`}>
-                <strong>{t('aiChangeStructure')}</strong>
-                <span>{change.label}</span>
-              </div>
-            ))}
-            {preview.formatChanges.map((change, index) => (
-              <div className="change" key={`format-${index}`}>
-                <strong>{t('aiChangeFormat')}</strong>
-                <span>{change.label}</span>
-              </div>
-            ))}
-            {preview.cellChanges.slice(0, MAX_PREVIEW_CELL_ROWS).map((change) => (
-              <div className="change" key={`${change.sheetId}-${change.address}`}>
-                <strong>{change.address}</strong>
-                <span>
-                  {formatCell(change.before, t)} → {formatCell(change.after, t)}
-                </span>
-              </div>
-            ))}
-            {preview.cellChanges.length > MAX_PREVIEW_CELL_ROWS && (
-              <div className="change">
-                <strong>…</strong>
-                <span>
-                  {t('aiMoreCells', { count: preview.cellChanges.length - MAX_PREVIEW_CELL_ROWS })}
-                </span>
-              </div>
-            )}
-            {preview.sheetRenames.map((rename) => (
-              <div className="change" key={rename.sheetId}>
-                <strong>{t('aiChangeSheet')}</strong>
-                <span>
-                  {rename.before} → {rename.after}
-                </span>
-              </div>
-            ))}
-            {preview.warnings.map((warning) => (
-              <div className="change" key={warning}>
-                <strong>⚠</strong>
-                <span>{warning}</span>
-              </div>
-            ))}
-          </section>
-        )}
-      </div>
-
-      <div className="ai-composer">
-        {attachments.length > 0 && (
-          <div className="ai-attachments">
-            {attachments.map((attachment) => (
-              <span key={attachment.path} className="ai-attachment-chip" title={attachment.path}>
-                <IconPaperclip size={11} />
-                {attachment.name}
-                <button
-                  className="ai-attachment-remove"
-                  onClick={() => onRemoveAttachment(attachment.path)}
-                  title={t('aiRemoveAttachment')}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        {attachNotice && <div className="ai-attach-notice">{attachNotice}</div>}
-        <AiComposer
-          value={prompt}
-          busy={aiBusy}
-          placeholder={t(hasContent ? 'aiComposerPlaceholder' : 'aiComposerPlaceholderBuild')}
-          hintIdle={t('aiHintIdle')}
-          hintBusy={t('aiHintBusy')}
-          hintIdleTitle={t('aiHintIdleTitle')}
-          sendLabel={t('aiSend')}
-          stopLabel={t('aiStop')}
-          ariaLabel={t('aiInstructionAria')}
-          iconOnly
-          sendIconEnabled={<img src={sendEnterOn} alt="" aria-hidden />}
-          sendIconDisabled={<img src={sendEnterOff} alt="" aria-hidden />}
-          stopIcon={<img src={sendStop} alt="" aria-hidden />}
-          footerStart={
-            <button
-              className="ai-attach-btn"
-              onClick={onPickAttachments}
-              title={t('aiAttachTitle')}
-            >
-              <img src={attachIcon} alt="" aria-hidden />
-            </button>
+    <>
+      <aside
+        ref={asideRef}
+        className={`copilot${dragOver ? ' ai-panel-dragover' : ''}${resizing ? ' ai-panel-resizing' : ''}`}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('Files')) {
+            e.preventDefault()
+            e.stopPropagation()
+            setDragOver(true)
           }
-          textareaRef={inputRef}
-          onChange={onPromptChange}
-          onSend={send}
-          onStop={onStop}
-          onPasteFiles={onPasteFiles}
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false)
+        }}
+        onDrop={onDrop}
+      >
+        <div
+          className="ai-panel-resizer"
+          onPointerDown={startResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Codex"
         />
-      </div>
-    </aside>
+        <header className="ai-panel-header">
+          <span className="ai-panel-title">
+            <CodexMark size={22} />
+            Codex
+          </span>
+          <div className="ai-panel-header-actions">
+            <button
+              type="button"
+              className="ai-header-btn"
+              onClick={() => setSettingsOpen(true)}
+              title={t('aiSettingsTitle')}
+              aria-label={t('aiSettingsTitle')}
+              disabled={!aiSettings}
+            >
+              <IconSettings size={15} />
+            </button>
+            {(chat.length > 0 || historicChat.length > 0) && (
+              <button
+                type="button"
+                className="ai-header-btn"
+                onClick={onNewChat}
+                title={t('aiNewChat')}
+              >
+                <IconNewChat size={15} />
+              </button>
+            )}
+            <button
+              type="button"
+              className="ai-header-btn"
+              onClick={onCollapse}
+              title={t('aiCollapsePanel')}
+            >
+              <IconCollapse size={15} />
+            </button>
+          </div>
+        </header>
+
+        <div className="ai-chat" ref={chatRef} onScroll={onChatScroll}>
+          {/* Past conversation (read-only transcript), shown continuously with the current turn */}
+          {historicChat.length > 0 && (
+            <>
+              {historicChat.map((entry, i) => (
+                <div key={`h${i}`} className={`ai-msg ai-msg-${entry.role} ai-msg-historic`}>
+                  {entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
+                  {entry.text && <Markdown text={entry.text} />}
+                </div>
+              ))}
+              <div className="ai-history-sep">{t('aiHistorySep')}</div>
+            </>
+          )}
+          {chat.length === 0 && historicChat.length === 0 && (
+            <div className="ai-chat-empty">
+              <div className="ai-chat-empty-title">
+                {t(hasContent ? 'aiEmptyTitle' : 'aiEmptyBuildTitle')}
+              </div>
+              <div className="ai-chat-empty-body">
+                {t(hasContent ? 'aiEmptyBodyLine1' : 'aiEmptyBuildBody')}
+              </div>
+            </div>
+          )}
+          {chat.map((entry, index) => (
+            <div
+              key={index}
+              className={`ai-msg ai-msg-${entry.role}${entry.isError ? ' ai-msg-error' : ''}${entry.role === 'assistant' && entry.streaming ? ' ai-msg-streaming' : ''}`}
+            >
+              {entry.role === 'user' ? (
+                <>
+                  {entry.text}
+                  {entry.undelivered && (
+                    <div className="ai-msg-undelivered">
+                      {t('aiUndelivered')}
+                      {!aiBusy && (
+                        <button className="ai-retry-btn" onClick={() => onSend(entry.text)}>
+                          {t('aiRetry')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
+                  {entry.text ? (
+                    <Markdown text={entry.text} />
+                  ) : (
+                    entry.streaming && (
+                      <span className="ai-typing-row">
+                        <AiTypingIndicator
+                          label={entry.tools.length > 0 ? t('aiWorking') : t('aiThinking')}
+                        />
+                      </span>
+                    )
+                  )}
+                  {entry.autoApplied && (
+                    <div className="ai-auto-applied">
+                      <span className="ai-auto-applied-text">
+                        {t('aiAutoApplied', { count: entry.autoApplied.opCount })}
+                      </span>
+                      <button className="ai-undo-btn" onClick={onUndo} title={t('aiUndoTitle')}>
+                        {t('aiUndo')}
+                      </button>
+                    </div>
+                  )}
+                  {entry.loginRequired && (
+                    <button
+                      className="ai-login-btn"
+                      onClick={() => void window.desktopApi.aiCodexLogin().catch(() => undefined)}
+                    >
+                      {t('aiCodexLoginBtn')}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+
+          {preview && (
+            <section className="preview ai-preview-card" aria-label={t('aiPreviewAria')}>
+              <h3>{t('aiProposedChanges')}</h3>
+              {preview.structuralChanges.map((change, index) => (
+                <div className="change" key={`structural-${index}`}>
+                  <strong>{t('aiChangeStructure')}</strong>
+                  <span>{change.label}</span>
+                </div>
+              ))}
+              {preview.formatChanges.map((change, index) => (
+                <div className="change" key={`format-${index}`}>
+                  <strong>{t('aiChangeFormat')}</strong>
+                  <span>{change.label}</span>
+                </div>
+              ))}
+              {preview.cellChanges.slice(0, MAX_PREVIEW_CELL_ROWS).map((change) => (
+                <div className="change" key={`${change.sheetId}-${change.address}`}>
+                  <strong>{change.address}</strong>
+                  <span>
+                    {formatCell(change.before, t)} → {formatCell(change.after, t)}
+                  </span>
+                </div>
+              ))}
+              {preview.cellChanges.length > MAX_PREVIEW_CELL_ROWS && (
+                <div className="change">
+                  <strong>…</strong>
+                  <span>
+                    {t('aiMoreCells', {
+                      count: preview.cellChanges.length - MAX_PREVIEW_CELL_ROWS,
+                    })}
+                  </span>
+                </div>
+              )}
+              {preview.sheetRenames.map((rename) => (
+                <div className="change" key={rename.sheetId}>
+                  <strong>{t('aiChangeSheet')}</strong>
+                  <span>
+                    {rename.before} → {rename.after}
+                  </span>
+                </div>
+              ))}
+              {preview.warnings.map((warning) => (
+                <div className="change" key={warning}>
+                  <strong>⚠</strong>
+                  <span>{warning}</span>
+                </div>
+              ))}
+            </section>
+          )}
+        </div>
+
+        <div className="ai-composer">
+          {attachments.length > 0 && (
+            <div className="ai-attachments">
+              {attachments.map((attachment) => (
+                <span key={attachment.path} className="ai-attachment-chip" title={attachment.path}>
+                  <IconPaperclip size={11} />
+                  {attachment.name}
+                  <button
+                    className="ai-attachment-remove"
+                    onClick={() => onRemoveAttachment(attachment.path)}
+                    title={t('aiRemoveAttachment')}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {attachNotice && <div className="ai-attach-notice">{attachNotice}</div>}
+          <AiComposer
+            value={prompt}
+            busy={aiBusy}
+            placeholder={t(hasContent ? 'aiComposerPlaceholder' : 'aiComposerPlaceholderBuild')}
+            hintIdle={t('aiHintIdle')}
+            hintBusy={t('aiHintBusy')}
+            hintIdleTitle={t('aiHintIdleTitle')}
+            sendLabel={t('aiSend')}
+            stopLabel={t('aiStop')}
+            ariaLabel={t('aiInstructionAria')}
+            iconOnly
+            sendIconEnabled={<img src={sendEnterOn} alt="" aria-hidden />}
+            sendIconDisabled={<img src={sendEnterOff} alt="" aria-hidden />}
+            stopIcon={<img src={sendStop} alt="" aria-hidden />}
+            footerStart={
+              <button
+                className="ai-attach-btn"
+                onClick={onPickAttachments}
+                title={t('aiAttachTitle')}
+              >
+                <img src={attachIcon} alt="" aria-hidden />
+              </button>
+            }
+            textareaRef={inputRef}
+            onChange={onPromptChange}
+            onSend={send}
+            onStop={onStop}
+            onPasteFiles={onPasteFiles}
+          />
+        </div>
+      </aside>
+      {aiSettings && (
+        <CodexSettingsDialog
+          open={settingsOpen}
+          settings={aiSettings}
+          onClose={() => setSettingsOpen(false)}
+          onSave={onAiSettingsSave}
+        />
+      )}
+    </>
   )
 }
 
@@ -497,6 +536,15 @@ function IconNewChat({ size }: { size: number }): React.JSX.Element {
         strokeLinejoin="round"
       />
       <path d="M12.2 9.4v4M10.2 11.4h4" />
+    </Svg>
+  )
+}
+
+function IconSettings({ size }: { size: number }): React.JSX.Element {
+  return (
+    <Svg size={size}>
+      <path d="M6.7 2.4 7.3 1h1.4l.6 1.4 1.2.7 1.5-.3 1 1.1-.6 1.4.5 1.2 1.3.7v1.5l-1.3.7-.5 1.2.6 1.4-1 1.1-1.5-.3-1.2.7-.6 1.4H7.3l-.6-1.4-1.2-.7-1.5.3-1-1.1.6-1.4-.5-1.2-1.3-.7V6.5l1.3-.7.5-1.2-.6-1.4 1-1.1 1.5.3 1.2-.7Z" />
+      <circle cx="8" cy="7.2" r="2.1" />
     </Svg>
   )
 }

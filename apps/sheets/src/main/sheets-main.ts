@@ -45,13 +45,14 @@ import { ProjectStore } from '@genoffice/project-store'
 
 import {
   acquireAiRequest,
+  aiTurnTimeoutMsForReasoning,
   AiCreditsError,
   AiTimeoutError,
   chatForProvider,
   configureCodexHome,
   createAiTurnController,
-  defaultAiSettings,
   getCodexAccountStatus,
+  listCodexModels,
   loginCodex,
   parseAiChatRequest,
   parseAiRequestId,
@@ -61,6 +62,7 @@ import {
   type AiSettings,
   type AiStreamChunk,
   type CodexAccountStatus,
+  type CodexModelSummary,
 } from '@genoffice/ai-provider/node'
 import { csvToXlsxBuffer, decodeCsvBuffer } from '../gateway/csv-import'
 import { webSearch, imageSearch } from '@genoffice/ai-search'
@@ -93,9 +95,15 @@ import {
   workbookRangeRequestSchema,
   workbookRangeResultSchema,
   workbookSaveRequestSchema,
+  aiSettingsInputSchema,
   type WorkbookSaveRequest,
 } from '../shared/desktop-api'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
+import {
+  normalizeSheetsAiSettings,
+  restoreSheetsAiSettings,
+  serializableSheetsAiSettings,
+} from './ai-settings'
 import { closeGuardDecision } from './close-guard'
 import { exportPdf } from './pdf-export'
 import { XlsxSidecarClient } from './xlsx-sidecar-client'
@@ -1159,6 +1167,48 @@ function userDataPath(...parts: string[]): string {
   return join(app.getPath('userData'), ...parts)
 }
 
+const aiSettingsPath = () => userDataPath('ai-settings.json')
+let cachedAiSettings: AiSettings | null = null
+
+function getSheetsAiSettings(): AiSettings {
+  if (cachedAiSettings) return cachedAiSettings
+  try {
+    const stored = JSON.parse(readFileSync(aiSettingsPath(), 'utf8')) as unknown
+    cachedAiSettings = restoreSheetsAiSettings(stored)
+  } catch {
+    cachedAiSettings = restoreSheetsAiSettings(null)
+  }
+  return cachedAiSettings
+}
+
+function setSheetsAiSettings(input: unknown): AiSettings {
+  const parsed = aiSettingsInputSchema.safeParse(input)
+  if (!parsed.success || !parsed.data.providers.codex) {
+    throw new Error('Invalid AI settings.')
+  }
+
+  const next = normalizeSheetsAiSettings(parsed.data)
+  const path = aiSettingsPath()
+  const tempPath = `${path}.${process.pid}.tmp`
+  mkdirSync(dirname(path), { recursive: true })
+  try {
+    writeFileSync(tempPath, JSON.stringify(serializableSheetsAiSettings(next)), {
+      encoding: 'utf8',
+      mode: 0o600,
+    })
+    renameSync(tempPath, path)
+  } catch (error) {
+    try {
+      unlinkSync(tempPath)
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw error
+  }
+  cachedAiSettings = next
+  return next
+}
+
 // ── Crash recovery ──────────────────────────────────────────
 // A dirty renderer asks for a recovery copy every 30s; it is written through the
 // normal save pipeline (writeWorkbookTo) to a userData path, so it is a real .xlsx.
@@ -2016,10 +2066,12 @@ export function registerSheetsAiIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.aiGetSettings, (event): AiSettings => {
     sessionFor(event)
-    return defaultAiSettings()
+    return getSheetsAiSettings()
   })
 
   ipcMain.handle(IPC_CHANNELS.aiCodexStatus, (): Promise<CodexAccountStatus> => checkCodexAccount())
+
+  ipcMain.handle(IPC_CHANNELS.aiCodexModels, (): Promise<CodexModelSummary[]> => listCodexModels())
 
   ipcMain.handle(IPC_CHANNELS.aiCodexLogin, async (event): Promise<CodexAccountStatus> => {
     const controller = new AbortController()
@@ -2032,17 +2084,18 @@ export function registerSheetsAiIpc(): void {
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.aiSetSettings, (event) => {
+  ipcMain.handle(IPC_CHANNELS.aiSetSettings, (event, input: unknown): AiSettings => {
     sessionFor(event)
+    return setSheetsAiSettings(input)
   })
 
   ipcMain.handle(IPC_CHANNELS.aiChat, async (event, input: unknown) => {
     sessionFor(event)
     const request = parseAiChatRequest(input)
     const provider = 'codex' as const
-    const config = defaultAiSettings().providers.codex
+    const config = getSheetsAiSettings().providers.codex
     const lease = acquireAiRequest(`sheets-chat-${randomUUID()}`, 8192)
-    const deadline = createAiTurnController()
+    const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
     const abortOnDestroyed = () => deadline.controller.abort()
     event.sender.once('destroyed', abortOnDestroyed)
     try {
@@ -2071,12 +2124,12 @@ export function registerSheetsAiIpc(): void {
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
     const provider = 'codex' as const
-    const config = defaultAiSettings().providers.codex
+    const config = getSheetsAiSettings().providers.codex
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.aiStreamChunk, chunk)
     }
     const lease = acquireAiRequest(requestId, maxTokens)
-    const deadline = createAiTurnController()
+    const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
     const controller = deadline.controller
     const abortOnDestroyed = () => controller.abort()
     event.sender.once('destroyed', abortOnDestroyed)

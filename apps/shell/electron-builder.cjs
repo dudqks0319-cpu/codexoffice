@@ -130,6 +130,10 @@ const config = {
   dmg: {
     sign: true,
   },
+  // On some macOS/electron-builder combinations the first embedded signature
+  // can be invalidated before artifacts are assembled. Verify and repair it
+  // before the DMG/ZIP targets are produced.
+  afterSign: 'build/repair-mac-signature.js',
   afterAllArtifactBuild: 'build/notarize-dmg.js',
 }
 

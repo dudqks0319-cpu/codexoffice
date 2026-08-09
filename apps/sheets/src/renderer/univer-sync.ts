@@ -244,9 +244,15 @@ export function applyFormatPatchToRange(
   if (patch.fillColor !== undefined) range.setBackground(patch.fillColor as unknown as string)
   if (patch.numberFormat !== undefined) range.setNumberFormat(patch.numberFormat ?? 'General')
   if (patch.horizontalAlign !== undefined) {
-    range.setHorizontalAlignment(
-      (patch.horizontalAlign ?? 'normal') as 'left' | 'center' | 'normal',
-    )
+    // Univer's facade setter accepts only left/center/normal even though the
+    // underlying style enum also supports right/justify/distributed. Apply the
+    // neutral style value directly so AI and imported workbook formatting use
+    // the same complete alignment vocabulary.
+    range.setValue({
+      s: {
+        ht: patch.horizontalAlign === null ? null : mapHorizontalAlignment(patch.horizontalAlign),
+      },
+    } as unknown as ICellData)
   }
   if (patch.verticalAlign !== undefined) {
     if (patch.verticalAlign === null) range.setValue({ s: { vt: null } } as unknown as ICellData)

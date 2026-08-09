@@ -13,6 +13,7 @@ interface FakeSettings {
 function setup(
   startImpl?: (request: IpcStreamStart<FakeSettings>) => void | Promise<unknown>,
   creditsErrorText?: () => string,
+  silenceTimeoutMs?: (settings: FakeSettings) => number,
 ) {
   let listener: ((chunk: IpcStreamChunk) => void) | undefined
   const unsubscribe = vi.fn(() => {
@@ -34,6 +35,7 @@ function setup(
     unknownErrorText: () => 'unknown error',
     timeoutErrorText: () => 'timed out',
     ...(creditsErrorText ? { creditsErrorText } : {}),
+    ...(silenceTimeoutMs ? { silenceTimeoutMs } : {}),
   })
   const cb = {
     onDelta: vi.fn(),
@@ -135,6 +137,21 @@ describe('createIpcTransport', () => {
       vi.advanceTimersByTime(IPC_STREAM_SILENCE_TIMEOUT_MS)
       expect(cb.onError).toHaveBeenCalledWith('timed out')
       expect(cancelled).toEqual([started[0]!.requestId])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses a bounded settings-aware silence timeout when provided', () => {
+    vi.useFakeTimers()
+    try {
+      const configured = vi.fn(() => 120_000)
+      const { cb } = setup(undefined, undefined, configured)
+      vi.advanceTimersByTime(90_000)
+      expect(cb.onError).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(30_000)
+      expect(cb.onError).toHaveBeenCalledWith('timed out')
+      expect(configured).toHaveBeenCalledWith({ provider: 'codex' })
     } finally {
       vi.useRealTimers()
     }

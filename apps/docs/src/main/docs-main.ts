@@ -4,12 +4,13 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { copyFile, mkdir, readFile, readdir, stat, unlink } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { BrowserWindow, Menu, WebContentsView, app, dialog, ipcMain, shell } from 'electron'
 import {
   appMenuLabels,
@@ -32,24 +33,29 @@ import type {
 import { parseFileToText } from '@genoffice/file-parse'
 import {
   acquireAiRequest,
+  aiTurnTimeoutMsForReasoning,
   AiCreditsError,
   AiTimeoutError,
   chatForProvider,
   configureCodexExecutable,
   configureCodexHome,
   createAiTurnController,
-  defaultAiSettings,
   getCodexAccountStatus,
+  listCodexModels,
   loginCodex,
+  parseCodexSettingsInput,
   packagedCodexExecutablePath,
   parseAiChatRequest,
   parseAiRequestId,
   parseAiStreamRequest,
+  restoreCodexSettings,
   runIfAiTurnActive,
+  serializableCodexSettings,
   streamForProvider,
   type AiSettings,
   type AiStreamChunk,
   type CodexAccountStatus,
+  type CodexModelSummary,
 } from '@genoffice/ai-provider/node'
 import { webSearch, imageSearch } from '@genoffice/ai-search'
 import type {
@@ -2000,6 +2006,46 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2))
 }
 
+// ---- shared AI settings persistence (the unified shell registers this once) ----
+
+const aiSettingsPath = () => userDataPath('ai-settings.json')
+let cachedAiSettings: AiSettings | null = null
+
+function getAiSettings(): AiSettings {
+  if (cachedAiSettings) return cachedAiSettings
+  let stored: unknown = null
+  try {
+    if (existsSync(aiSettingsPath())) stored = JSON.parse(readFileSync(aiSettingsPath(), 'utf-8'))
+  } catch {
+    /* corrupted state file: restore the SDK default model */
+  }
+  cachedAiSettings = restoreCodexSettings(stored)
+  return cachedAiSettings
+}
+
+function setAiSettings(input: unknown): AiSettings {
+  const next = parseCodexSettingsInput(input)
+  const path = aiSettingsPath()
+  const tempPath = `${path}.${process.pid}.tmp`
+  mkdirSync(dirname(path), { recursive: true })
+  try {
+    writeFileSync(tempPath, JSON.stringify(serializableCodexSettings(next)), {
+      encoding: 'utf8',
+      mode: 0o600,
+    })
+    renameSync(tempPath, path)
+  } catch (error) {
+    try {
+      unlinkSync(tempPath)
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw error
+  }
+  cachedAiSettings = next
+  return next
+}
+
 // ---- recent files ----
 
 const RECENT_PATH = () => userDataPath('recent.json')
@@ -2492,10 +2538,12 @@ async function loginCodexAccount(signal?: AbortSignal): Promise<CodexAccountStat
  */
 export function registerAiIpc(): void {
   ipcMain.handle('ai:get-settings', (): AiSettings => {
-    return defaultAiSettings()
+    return getAiSettings()
   })
 
   ipcMain.handle('ai:codex-status', (): Promise<CodexAccountStatus> => checkCodexAccount())
+
+  ipcMain.handle('ai:codex-models', (): Promise<CodexModelSummary[]> => listCodexModels())
 
   ipcMain.handle('ai:codex-login', async (event): Promise<CodexAccountStatus> => {
     const controller = new AbortController()
@@ -2508,7 +2556,7 @@ export function registerAiIpc(): void {
     }
   })
 
-  ipcMain.handle('ai:set-settings', () => undefined)
+  ipcMain.handle('ai:set-settings', (_event, input: unknown): AiSettings => setAiSettings(input))
 
   ipcMain.handle('ai:stream', async (event, input: unknown) => {
     const request = parseAiStreamRequest(input)
@@ -2516,12 +2564,12 @@ export function registerAiIpc(): void {
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
     const provider = 'codex' as const
-    const config = defaultAiSettings().providers.codex
+    const config = getAiSettings().providers.codex
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send('ai:stream-chunk', chunk)
     }
     const lease = acquireAiRequest(requestId, maxTokens)
-    const deadline = createAiTurnController()
+    const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
     const controller = deadline.controller
     const streamKey = `${event.sender.id}:${requestId}`
     const abortOnDestroyed = () => controller.abort()
@@ -2631,9 +2679,9 @@ export function registerAiIpc(): void {
     const request = parseAiChatRequest(input)
     const { system, user } = request
     const provider = 'codex' as const
-    const config = defaultAiSettings().providers.codex
+    const config = getAiSettings().providers.codex
     const lease = acquireAiRequest(`docs-chat-${++aiChatSequence}`, 8192)
-    const deadline = createAiTurnController()
+    const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
     const abortOnDestroyed = () => deadline.controller.abort()
     event.sender.once('destroyed', abortOnDestroyed)
     try {

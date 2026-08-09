@@ -7,6 +7,7 @@ import type {
   AiStreamChunk,
   AiStreamRequest,
   CodexAccountStatus,
+  CodexModelSummary,
 } from '@genoffice/ai-provider'
 
 const MAX_RANGE_CELLS = 20_000
@@ -1682,9 +1683,10 @@ export type WorkbookConditionalRule = z.infer<typeof conditionalRuleSchema>
 
 const aiProviderConfigSchema = z
   .object({
-    apiKey: z.string().optional(),
-    model: z.string().optional(),
-    baseUrl: z.string().optional(),
+    apiKey: z.string().max(4096).optional(),
+    model: z.string().max(128).optional(),
+    reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
+    baseUrl: z.string().max(2048).optional(),
   })
   .strict()
 
@@ -1895,7 +1897,7 @@ export interface DesktopApi {
   /// shell home.
   consumeNewBlankWorkbook(): Promise<boolean>
   getAiSettings(): Promise<AiSettings>
-  setAiSettings(settings: AiSettings): Promise<void>
+  setAiSettings(settings: AiSettings): Promise<AiSettings>
   aiChat(request: AiChatRequest): Promise<AiChatResponse>
   /// start a streaming AI call; deltas arrive via onAiStream with the same requestId
   aiStream(request: AiStreamRequest): Promise<void>
@@ -1904,6 +1906,8 @@ export interface DesktopApi {
   aiCodexStatus(): Promise<CodexAccountStatus>
   /// Starts Codex account authentication and returns the resulting status.
   aiCodexLogin(): Promise<CodexAccountStatus>
+  /// Models currently visible to this app's signed-in Codex account.
+  aiCodexModels(): Promise<CodexModelSummary[]>
   /// Web search (main-process Serper/DuckDuckGo, shared with docs/slides)
   webSearch(query: string, maxResults?: number): Promise<WebSearchResult>
   onAiStream(handler: (chunk: AiStreamChunk) => void): () => void

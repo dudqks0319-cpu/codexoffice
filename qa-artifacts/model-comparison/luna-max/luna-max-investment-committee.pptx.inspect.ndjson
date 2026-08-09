@@ -1,0 +1,98 @@
+{"kind":"deck","id":"pr/zqixce","name":"Deck"}
+{"kind":"layout","layoutId":"8c4c978b-707e-439e-af74-ddafbe141db5","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"d4ead1a8-b351-419f-ac63-9e8b5f6bde9d","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/z1b2gl","slide":1,"title":"INVESTMENT COMMITTEE · G5.6 LUNA-MAX","textShapes":19}
+{"kind":"textbox","id":"sh/gfmdojyl","slide":1,"name":"eyebrow","text":"INVESTMENT COMMITTEE · G5.6 LUNA-MAX","textPreview":"INVESTMENT COMMITTEE · G5.6 LUNA-MAX","textChars":36,"textLines":1,"bbox":[56,34,720,24]}
+{"kind":"shape","id":"sh/fedwfeh0","slide":1,"name":"top-rule","bbox":[56,72,76,4]}
+{"kind":"textbox","id":"sh/ed4vmtgf","slide":1,"name":"title","text":"조건부 GO: Base는 양수지만 Downside 방어가 필요합니다.","textPreview":"조건부 GO: Base는 양수지만 Downside 방어가 필요합니다.","textChars":38,"textLines":1,"bbox":[56,92,1168,74]}
+{"kind":"textbox","id":"sh/p4fel8zi","slide":1,"name":"subtitle","text":"Executive decision frame · 10개 B2B SaaS 투자안의 12개월 모델 결과","textPreview":"Executive decision frame · 10개 B2B SaaS 투자안의 12개월 모델 결과","textChars":55,"textLines":1,"bbox":[56,148,1168,32]}
+{"kind":"textbox","id":"sh/o36ds3yx","slide":1,"name":"footer","text":"Source: model comparison portfolio workbook","textPreview":"Source: model comparison portfolio workbook","textChars":43,"textLines":1,"bbox":[56,687,700,20]}
+{"kind":"shape","id":"sh/nidwjyhc","slide":1,"name":"page","bbox":[1180,687,44,20]}
+{"kind":"shape","id":"sh/2h4vqtgr","slide":1,"name":"metric-strip","bbox":[56,204,1168,145]}
+{"kind":"textbox","id":"sh/58bup4zy","slide":1,"name":"총 투자액-label","text":"총 투자액","textPreview":"총 투자액","textChars":5,"textLines":1,"bbox":[86,225,260,24]}
+{"kind":"textbox","id":"sh/472dgzyd","slide":1,"name":"총 투자액-value","text":"₩1,152.0M","textPreview":"₩1,152.0M","textChars":9,"textLines":1,"bbox":[86,252,260,54]}
+{"kind":"textbox","id":"sh/2l0zeto3","slide":1,"name":"예상 ARR-label","text":"예상 ARR","textPreview":"예상 ARR","textChars":6,"textLines":1,"bbox":[365,225,260,24]}
+{"kind":"textbox","id":"sh/3m907ypo","slide":1,"name":"예상 ARR-value","text":"₩1,175.9M","textPreview":"₩1,175.9M","textChars":9,"textLines":1,"bbox":[365,252,260,54]}
+{"kind":"textbox","id":"sh/onihg36t","slide":1,"name":"Base 순가치-label","text":"Base 순가치","textPreview":"Base 순가치","textChars":8,"textLines":1,"bbox":[644,225,260,24]}
+{"kind":"textbox","id":"sh/pori987e","slide":1,"name":"Base 순가치-value","text":"₩23.8M","textPreview":"₩23.8M","textChars":6,"textLines":1,"bbox":[644,252,260,54]}
+{"kind":"textbox","id":"sh/qp0jidoz","slide":1,"name":"가중 성공확률-label","text":"가중 성공확률","textPreview":"가중 성공확률","textChars":7,"textLines":1,"bbox":[923,225,260,24]}
+{"kind":"textbox","id":"sh/bq90bipk","slide":1,"name":"가중 성공확률-value","text":"60.3%","textPreview":"60.3%","textChars":5,"textLines":1,"bbox":[923,252,260,54]}
+{"kind":"shape","id":"sh/cri1kn65","slide":1,"name":"decision-block","bbox":[56,378,1168,230]}
+{"kind":"textbox","id":"sh/dsbids7q","slide":1,"name":"decision-kicker","text":"결론","textPreview":"결론","textChars":2,"textLines":1,"bbox":[86,406,120,26]}
+{"kind":"textbox","id":"sh/ytkjmdob","slide":1,"name":"decision-headline","text":"단계적 집행이 합리적입니다.","textPreview":"단계적 집행이 합리적입니다.","textChars":15,"textLines":1,"bbox":[86,440,540,48]}
+{"kind":"textbox","id":"sh/zet0fipg","slide":1,"name":"decision-copy","text":"Base 순가치는 양수지만, Downside 순가치는 음수입니다.\n우선순위 1~3위 조합을 먼저 검증하고 비용·성공확률을 게이트로 관리합니다.","textPreview":"Base 순가치는 양수지만, Downside 순가치는 음수입니다. | 우선순위 1~3위 조합을 먼저 검증하고 비용·성공확률을 게이트로 관리합니다.","textChars":79,"textLines":2,"bbox":[86,500,600,72]}
+{"kind":"shape","id":"sh/vit03ilo","slide":1,"name":"decision-divider","bbox":[742,415,2,150]}
+{"kind":"textbox","id":"sh/ahkzux43","slide":1,"name":"scenario-label","text":"12개월 순가치 스트레스","textPreview":"12개월 순가치 스트레스","textChars":13,"textLines":1,"bbox":[790,414,350,26]}
+{"kind":"textbox","id":"sh/xkvi5s3u","slide":1,"name":"downside-value","text":"Downside  -₩618.1M","textPreview":"Downside  -₩618.1M","textChars":18,"textLines":1,"bbox":[790,458,380,30]}
+{"kind":"textbox","id":"sh/wjmhwnm9","slide":1,"name":"base-value","text":"Base       ₩23.8M","textPreview":"Base       ₩23.8M","textChars":17,"textLines":1,"bbox":[790,500,380,30]}
+{"kind":"textbox","id":"sh/nutgzils","slide":1,"name":"upside-value","text":"Upside     ₩608.2M","textPreview":"Upside     ₩608.2M","textChars":18,"textLines":1,"bbox":[790,542,380,30]}
+{"kind":"notes","id":"nt/z1b2gl","slide":1,"text":"[Sources]\n- Reference: gpt-5.6-luna-xhigh-saas-portfolio.xlsx\n- Derived values: Portfolio!A8:L17, Scenarios!B20:D20, Dashboard!A4:H10\n[/Sources]"}
+{"kind":"slide","id":"sl/u8t022","slide":2,"title":"PORTFOLIO PRIORITY · SCENARIO STRESS","textShapes":20}
+{"kind":"textbox","id":"sh/h83ixkza","slide":2,"name":"eyebrow","text":"PORTFOLIO PRIORITY · SCENARIO STRESS","textPreview":"PORTFOLIO PRIORITY · SCENARIO STRESS","textChars":36,"textLines":1,"bbox":[56,34,720,24]}
+{"kind":"shape","id":"sh/u5szm50j","slide":2,"name":"top-rule","bbox":[56,72,76,4]}
+{"kind":"textbox","id":"sh/v6l0va14","slide":2,"name":"title","text":"상위 3개가 수익을 만들지만, 전체 Downside는 큽니다.","textPreview":"상위 3개가 수익을 만들지만, 전체 Downside는 큽니다.","textChars":34,"textLines":1,"bbox":[56,92,1168,74]}
+{"kind":"textbox","id":"sh/83ahkvid","slide":2,"name":"subtitle","text":"Portfolio & scenario stress test · 우선순위 점수와 시나리오 순가치의 교차 검토","textPreview":"Portfolio & scenario stress test · 우선순위 점수와 시나리오 순가치의 교차 검토","textChars":59,"textLines":1,"bbox":[56,148,1168,32]}
+{"kind":"textbox","id":"sh/94jit0jy","slide":2,"name":"footer","text":"Source: model comparison portfolio workbook","textPreview":"Source: model comparison portfolio workbook","textChars":43,"textLines":1,"bbox":[56,687,700,20]}
+{"kind":"shape","id":"sh/mhszil0n","slide":2,"name":"page","bbox":[1180,687,44,20]}
+{"kind":"shape","id":"sh/7i10rq18","slide":2,"name":"priority-block","bbox":[56,198,420,430]}
+{"kind":"textbox","id":"sh/kfahgvih","slide":2,"name":"priority-title","text":"상위 3개 우선순위","textPreview":"상위 3개 우선순위","textChars":10,"textLines":1,"bbox":[84,224,330,32]}
+{"kind":"textbox","id":"sh/lgjip0j2","slide":2,"name":"priority-note","text":"리스크조정점수 기준","textPreview":"리스크조정점수 기준","textChars":10,"textLines":1,"bbox":[84,258,300,24]}
+{"kind":"textbox","id":"sh/54zy1sf6","slide":2,"name":"rank-1","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[84,310,46,36]}
+{"kind":"textbox","id":"sh/k3qh8nyl","slide":2,"name":"priority-1","text":"API 모니터링·개발자 포털","textPreview":"API 모니터링·개발자 포털","textChars":15,"textLines":1,"bbox":[148,308,242,48]}
+{"kind":"textbox","id":"sh/j2xgzix0","slide":2,"name":"score-1","text":"58.8","textPreview":"58.8","textChars":4,"textLines":1,"bbox":[374,313,72,30]}
+{"kind":"shape","id":"sh/i1oz6dgf","slide":2,"name":"priority-rule-1","bbox":[84,372,330,1]}
+{"kind":"textbox","id":"sh/x0fyxsfu","slide":2,"name":"rank-2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[84,396,46,36]}
+{"kind":"textbox","id":"sh/wz6h4ny9","slide":2,"name":"priority-2","text":"영업 파이프라인 자동화 CRM","textPreview":"영업 파이프라인 자동화 CRM","textChars":16,"textLines":1,"bbox":[148,394,242,48]}
+{"kind":"textbox","id":"sh/vyxgvih4","slide":2,"name":"score-2","text":"54.5","textPreview":"54.5","textChars":4,"textLines":1,"bbox":[374,399,72,30]}
+{"kind":"shape","id":"sh/axoz2dgj","slide":2,"name":"priority-rule-2","bbox":[84,458,330,1]}
+{"kind":"textbox","id":"sh/9cfyt8zy","slide":2,"name":"rank-3","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[84,482,46,36]}
+{"kind":"textbox","id":"sh/8bmx03yd","slide":2,"name":"priority-3","text":"HR 인력계획·스킬 매칭","textPreview":"HR 인력계획·스킬 매칭","textChars":13,"textLines":1,"bbox":[148,480,242,48]}
+{"kind":"textbox","id":"sh/0fqhg369","slide":2,"name":"score-3","text":"51.3","textPreview":"51.3","textChars":4,"textLines":1,"bbox":[374,485,72,30]}
+{"kind":"textbox","id":"sh/1gzy987u","slide":2,"name":"top3-impact","text":"Top 3 Base 순가치  ₩59.1M","textPreview":"Top 3 Base 순가치  ₩59.1M","textChars":22,"textLines":1,"bbox":[84,574,340,26]}
+{"kind":"shape","id":"sh/ed8zedo3","slide":2,"name":"scenario-block","bbox":[504,198,720,430]}
+{"kind":"textbox","id":"sh/zehg7ipo","slide":2,"name":"scenario-title","text":"Downside / Base / Upside","textPreview":"Downside / Base / Upside","textChars":24,"textLines":1,"bbox":[536,224,420,32]}
+{"kind":"textbox","id":"sh/crqhc36x","slide":2,"name":"scenario-note","text":"12개월 포트폴리오 순가치 · ₩M","textPreview":"12개월 포트폴리오 순가치 · ₩M","textChars":19,"textLines":1,"bbox":[536,258,360,24]}
+{"kind":"textbox","id":"sh/qpozato7","slide":2,"name":"scenario-values","text":"-₩618.1M     ₩23.8M     ₩608.2M","textPreview":"-₩618.1M     ₩23.8M     ₩608.2M","textChars":31,"textLines":1,"bbox":[560,556,590,28]}
+{"kind":"textbox","id":"sh/rqhg3yps","slide":2,"name":"scenario-implication","text":"의미: 전체 포트폴리오는 Downside에서 방어되지 않으므로, 상위 3개를 먼저 검증하고 확장합니다.","textPreview":"의미: 전체 포트폴리오는 Downside에서 방어되지 않으므로, 상위 3개를 먼저 검증하고 확장합니다.","textChars":57,"textLines":1,"bbox":[536,592,650,34]}
+{"kind":"chart","id":"ch/x0judwvm","slide":2,"name":"","chartType":"bar","bbox":[544,300,640,245]}
+{"kind":"notes","id":"nt/u8t022","slide":2,"text":"[Sources]\n- Reference: gpt-5.6-luna-xhigh-saas-portfolio.xlsx\n- Derived values: Portfolio!A8:L17, Scenarios!B20:D20, Dashboard!A4:H10\n[/Sources]"}
+{"kind":"slide","id":"sl/3wjsah","slide":3,"title":"RECOMMENDATION · 90-DAY GATES","textShapes":28}
+{"kind":"textbox","id":"sh/ud4zi9sn","slide":3,"name":"eyebrow","text":"RECOMMENDATION · 90-DAY GATES","textPreview":"RECOMMENDATION · 90-DAY GATES","textChars":29,"textLines":1,"bbox":[56,34,720,24]}
+{"kind":"shape","id":"sh/h0vitore","slide":3,"name":"top-rule","bbox":[56,72,76,4]}
+{"kind":"textbox","id":"sh/gzmhkjat","slide":3,"name":"title","text":"권고 조합은 상위 3개로 제한하고 90일 검증 게이트를 둡니다.","textPreview":"권고 조합은 상위 3개로 제한하고 90일 검증 게이트를 둡니다.","textChars":35,"textLines":1,"bbox":[56,92,1168,74]}
+{"kind":"textbox","id":"sh/32x0vy94","slide":3,"name":"subtitle","text":"Recommendation & 90-day gates · 모델 수익성은 보존하고, 하방 노출은 단계적으로 줄이는 운영안","textPreview":"Recommendation & 90-day gates · 모델 수익성은 보존하고, 하방 노출은 단계적으로 줄이는 운영안","textChars":66,"textLines":1,"bbox":[56,148,1168,32]}
+{"kind":"textbox","id":"sh/214zmtsz","slide":3,"name":"footer","text":"Source: model comparison portfolio workbook","textPreview":"Source: model comparison portfolio workbook","textChars":43,"textLines":1,"bbox":[56,687,700,20]}
+{"kind":"shape","id":"sh/p4fixora","slide":3,"name":"page","bbox":[1180,687,44,20]}
+{"kind":"shape","id":"sh/436ho3ap","slide":3,"name":"recommendation-block","bbox":[56,198,373,430]}
+{"kind":"textbox","id":"sh/r6x0zy9g","slide":3,"name":"recommendation-title","text":"권고 투자 조합","textPreview":"권고 투자 조합","textChars":8,"textLines":1,"bbox":[84,224,317,32]}
+{"kind":"textbox","id":"sh/q5ozqtsv","slide":3,"name":"recommendation-names","text":"1. API 모니터링·개발자 포털\n2. 영업 파이프라인 자동화 CRM\n3. HR 인력계획·스킬 매칭","textPreview":"1. API 모니터링·개발자 포털 | 2. 영업 파이프라인 자동화 CRM | 3. HR 인력계획·스킬 매칭","textChars":55,"textLines":3,"bbox":[84,282,317,100]}
+{"kind":"shape","id":"sh/ori5wna1","slide":3,"name":"recommendation-divider","bbox":[84,402,317,1]}
+{"kind":"textbox","id":"sh/psrmpsrm","slide":3,"name":"rec-investment-label","text":"상위 3개 집행비","textPreview":"상위 3개 집행비","textChars":9,"textLines":1,"bbox":[84,428,160,22]}
+{"kind":"textbox","id":"sh/2p0nuxsv","slide":3,"name":"rec-investment","text":"₩266.0M","textPreview":"₩266.0M","textChars":7,"textLines":1,"bbox":[84,454,317,36]}
+{"kind":"textbox","id":"sh/nq94ni9g","slide":3,"name":"rec-arr-label","text":"기대 ARR / Base 순가치","textPreview":"기대 ARR / Base 순가치","textChars":17,"textLines":1,"bbox":[84,506,210,22]}
+{"kind":"textbox","id":"sh/cv2507ad","slide":3,"name":"rec-arr","text":"₩325.1M / ₩59.1M","textPreview":"₩325.1M / ₩59.1M","textChars":16,"textLines":1,"bbox":[84,532,317,34]}
+{"kind":"shape","id":"sh/xwbmtcry","slide":3,"name":"risks-block","bbox":[453,198,373,430]}
+{"kind":"textbox","id":"sh/at0nyxs7","slide":3,"name":"risks-title","text":"가장 큰 리스크 3개","textPreview":"가장 큰 리스크 3개","textChars":11,"textLines":1,"bbox":[481,224,317,32]}
+{"kind":"textbox","id":"sh/but4r29s","slide":3,"name":"risk-num-1","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[481,296,40,28]}
+{"kind":"textbox","id":"sh/kj2547q9","slide":3,"name":"risk-1","text":"하방 동시 악화: ARR 0.8x · 성공확률 -15% · 비용 1.15x","textPreview":"하방 동시 악화: ARR 0.8x · 성공확률 -15% · 비용 1.15x","textChars":41,"textLines":1,"bbox":[533,294,265,60]}
+{"kind":"shape","id":"sh/lkb6xcru","slide":3,"name":"risk-rule-1","bbox":[481,366,317,1]}
+{"kind":"textbox","id":"sh/tgrmhcjy","slide":3,"name":"risk-num-2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[481,388,40,28]}
+{"kind":"textbox","id":"sh/8fy587id","slide":3,"name":"risk-2","text":"음수 Base 순가치: 공급망 -₩33.0M · 마케팅 -₩13.4M · AI -₩4.8M","textPreview":"음수 Base 순가치: 공급망 -₩33.0M · 마케팅 -₩13.4M · AI -₩4.8M","textChars":50,"textLines":1,"bbox":[533,386,265,60]}
+{"kind":"shape","id":"sh/7ep4f21s","slide":3,"name":"risk-rule-2","bbox":[481,458,317,1]}
+{"kind":"textbox","id":"sh/6dgn6x07","slide":3,"name":"risk-num-3","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[481,480,40,28]}
+{"kind":"textbox","id":"sh/h4rmlwja","slide":3,"name":"risk-3","text":"리스크 점수 상위 하위안: 공급망 68 · 마케팅 60 · AI 55","textPreview":"리스크 점수 상위 하위안: 공급망 68 · 마케팅 60 · AI 55","textChars":38,"textLines":1,"bbox":[533,478,265,60]}
+{"kind":"textbox","id":"sh/g3i5crip","slide":3,"name":"risk-stop","text":"중단 공통 기준: Base 순가치가 0 이하가 되면 확장을 멈춥니다.","textPreview":"중단 공통 기준: Base 순가치가 0 이하가 되면 확장을 멈춥니다.","textChars":38,"textLines":1,"bbox":[481,564,317,42]}
+{"kind":"shape","id":"sh/vi94jm14","slide":3,"name":"gates-block","bbox":[850,198,373,430]}
+{"kind":"textbox","id":"sh/uh0nah0j","slide":3,"name":"gates-title","text":"30 / 60 / 90일 검증 게이트","textPreview":"30 / 60 / 90일 검증 게이트","textChars":20,"textLines":1,"bbox":[878,224,317,32]}
+{"kind":"textbox","id":"sh/x8nm9sjq","slide":3,"name":"gate-when-1","text":"30일","textPreview":"30일","textChars":3,"textLines":1,"bbox":[878,294,70,28]}
+{"kind":"textbox","id":"sh/w7el0n25","slide":3,"name":"gate-main-1","text":"상위 3개 수요·해결 적합성 검증","textPreview":"상위 3개 수요·해결 적합성 검증","textChars":18,"textLines":1,"bbox":[956,292,239,30]}
+{"kind":"textbox","id":"sh/mdcjatg3","slide":3,"name":"gate-stop-1","text":"중단: 성공확률 가정을 유지할 근거가 없으면 확장 금지","textPreview":"중단: 성공확률 가정을 유지할 근거가 없으면 확장 금지","textChars":30,"textLines":1,"bbox":[956,328,239,44]}
+{"kind":"shape","id":"sh/nelkjyho","slide":3,"name":"gate-rule-1","bbox":[878,374,317,1]}
+{"kind":"textbox","id":"sh/ofu1c3y9","slide":3,"name":"gate-when-2","text":"60일","textPreview":"60일","textChars":3,"textLines":1,"bbox":[878,394,70,28]}
+{"kind":"textbox","id":"sh/9g32l8zu","slide":3,"name":"gate-main-2","text":"원가·운영비와 Downside 노출 점검","textPreview":"원가·운영비와 Downside 노출 점검","textChars":22,"textLines":1,"bbox":[956,392,239,30]}
+{"kind":"textbox","id":"sh/ahwjetgz","slide":3,"name":"gate-stop-2","text":"중단: 비용 추세가 1.15x 하방 가정을 넘으면 재설계","textPreview":"중단: 비용 추세가 1.15x 하방 가정을 넘으면 재설계","textChars":31,"textLines":1,"bbox":[956,428,239,44]}
+{"kind":"shape","id":"sh/bi5knyhk","slide":3,"name":"gate-rule-2","bbox":[878,474,317,1]}
+{"kind":"textbox","id":"sh/wje1g3y5","slide":3,"name":"gate-when-3","text":"90일","textPreview":"90일","textChars":3,"textLines":1,"bbox":[878,494,70,28]}
+{"kind":"textbox","id":"sh/xkn2p8zq","slide":3,"name":"gate-main-3","text":"Portfolio 재랭킹 및 집행 조합 확정","textPreview":"Portfolio 재랭킹 및 집행 조합 확정","textChars":24,"textLines":1,"bbox":[956,492,239,30]}
+{"kind":"textbox","id":"sh/qlsj290v","slide":3,"name":"gate-stop-3","text":"중단: Base 순가치 ≤ 0 또는 상위 3개 밖으로 이동","textPreview":"중단: Base 순가치 ≤ 0 또는 상위 3개 밖으로 이동","textChars":32,"textLines":1,"bbox":[956,528,239,44]}
+{"kind":"notes","id":"nt/3wjsah","slide":3,"text":"[Sources]\n- Reference: gpt-5.6-luna-xhigh-saas-portfolio.xlsx\n- Derived values: Portfolio!A8:L17, Scenarios!B20:D20, Dashboard!A4:H10\n[/Sources]"}

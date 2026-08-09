@@ -10,7 +10,7 @@ import {
   type CodexDependencies,
 } from '../src/codex'
 
-const CONFIG = { apiKey: '', model: 'gpt-test' }
+const CONFIG = { apiKey: '', model: 'gpt-test', reasoningEffort: 'max' as const }
 
 function completedEnvelope(envelope: unknown): unknown[] {
   return [
@@ -106,7 +106,7 @@ describe('Codex provider', () => {
       expect(threadOptions).toMatchObject({
         sandboxMode: 'read-only',
         skipGitRepoCheck: true,
-        modelReasoningEffort: 'low',
+        modelReasoningEffort: 'max',
         networkAccessEnabled: false,
         webSearchMode: 'disabled',
         approvalPolicy: 'never',

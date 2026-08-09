@@ -54,11 +54,16 @@ describe('Codexoffice product metadata', () => {
 
   it('preserves installed identities and existing user data paths', () => {
     const shellMain = read('apps/shell/src/main/index.ts')
-    expect(shellMain).toContain("const userData = join(appData, 'GenOffice')")
+    expect(shellMain).toContain("const userData = userDataOverride ?? join(appData, 'GenOffice')")
+    expect(shellMain).toMatch(
+      /const userDataOverride\s*=\s*requestedUserData && allowPackagedUserDataOverride && isAbsolute\(requestedUserData\)\s*\?/,
+    )
+    expect(shellMain).toContain("process.env.GENOFFICE_PACKAGED_SMOKE === '1'")
     expect(shellMain).toContain("const olderUserData = join(appData, 'AI Office')")
     expect(shellMain).toContain("app.setPath('userData', userData)")
     expect(shellMain).toContain('readdirSync(userData).length === 0')
     expect(shellMain).toContain('cpSync(olderUserData, userData, { recursive: true })')
+    expect(shellMain).toContain('if (!userDataOverride)')
     expect(read('apps/docs/src/main/docs-main.ts')).toContain("'GenOffice Docs'")
     expect(read('apps/sheets/src/main/sheets-main.ts')).toContain("'GenOffice Sheets'")
     expect(read('apps/slides/src/main/slides-main.ts')).toContain("'GenOffice Slides'")

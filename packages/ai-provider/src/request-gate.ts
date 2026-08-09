@@ -1,3 +1,5 @@
+import { AI_DEFAULT_TURN_TIMEOUT_MS } from './watchdog'
+
 export interface AiRequestGateOptions {
   now?: () => number
   isDisabled?: () => boolean
@@ -15,7 +17,7 @@ export interface AiRequestLease {
   release(): void
 }
 
-export function createAiTurnController(timeoutMs = 180_000): {
+export function createAiTurnController(timeoutMs = AI_DEFAULT_TURN_TIMEOUT_MS): {
   controller: AbortController
   readonly timedOut: boolean
   release(): void

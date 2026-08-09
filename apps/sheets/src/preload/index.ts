@@ -5,6 +5,7 @@ import type {
   AiSettings,
   AiStreamChunk,
   CodexAccountStatus,
+  CodexModelSummary,
 } from '@genoffice/ai-provider'
 import type { ProjectApi } from '@genoffice/project-store'
 import type {
@@ -216,7 +217,9 @@ const desktopApi: DesktopApi = {
     return result as unknown as AiSettings
   },
   async setAiSettings(settings) {
-    await ipcRenderer.invoke(IPC_CHANNELS.aiSetSettings, settings)
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiSetSettings, settings)
+    if (!isRecord(result)) throw new Error('Invalid AI settings response.')
+    return result as unknown as AiSettings
   },
   async aiChat(request) {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiChat, request)
@@ -245,6 +248,13 @@ const desktopApi: DesktopApi = {
       throw new Error('Invalid Codex account login response.')
     }
     return result as unknown as CodexAccountStatus
+  },
+  async aiCodexModels() {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiCodexModels)
+    if (!Array.isArray(result) || !result.every(isCodexModelSummary)) {
+      throw new Error('Invalid Codex model list response.')
+    }
+    return result
   },
   async webSearch(query, maxResults) {
     if (typeof query !== 'string' || !query.trim() || query.length > 512) {
@@ -2082,6 +2092,19 @@ function parseChartPointExplosions(
 
 function isRecord(input: unknown): input is Record<string, unknown> {
   return typeof input === 'object' && input !== null && !Array.isArray(input)
+}
+
+function isCodexModelSummary(input: unknown): input is CodexModelSummary {
+  return (
+    isRecord(input) &&
+    typeof input.id === 'string' &&
+    typeof input.model === 'string' &&
+    typeof input.displayName === 'string' &&
+    typeof input.description === 'string' &&
+    typeof input.hidden === 'boolean' &&
+    typeof input.isDefault === 'boolean' &&
+    typeof input.defaultReasoningEffort === 'string'
+  )
 }
 
 function isUuid(input: unknown): input is string {

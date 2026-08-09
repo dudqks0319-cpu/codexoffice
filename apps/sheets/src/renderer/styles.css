@@ -1472,12 +1472,23 @@ select.select-like {
   border-radius: var(--radius-8);
   color: var(--color-text-secondary);
   padding: 0;
+  cursor: pointer;
   transition: all var(--transition-fast);
 }
 
 .ai-header-btn:hover {
   background: var(--color-bg-subtle);
   color: var(--color-text-primary);
+}
+
+.ai-header-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ai-header-btn:disabled:hover {
+  background: none;
+  color: var(--color-text-secondary);
 }
 
 .ai-notice {
@@ -2854,6 +2865,220 @@ textarea:focus {
 .modal input:focus,
 .modal select:focus {
   border-color: var(--excel-green);
+}
+
+.ai-settings-modal {
+  width: min(620px, calc(100vw - 32px));
+  max-width: min(620px, calc(100vw - 32px));
+  max-height: min(780px, calc(100vh - 32px));
+  overflow: auto;
+}
+
+.ai-model-picker {
+  margin-bottom: 16px;
+}
+
+.ai-reasoning-picker {
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+
+.ai-reasoning-picker legend {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ai-reasoning-options {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ai-reasoning-option {
+  position: relative;
+  padding: 7px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.ai-reasoning-option.selected {
+  border-color: var(--excel-green);
+  background: color-mix(in srgb, var(--excel-green) 8%, var(--surface));
+  color: var(--text);
+  font-weight: 650;
+}
+
+.ai-reasoning-option:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--excel-green) 35%, transparent);
+  outline-offset: 1px;
+}
+
+.ai-reasoning-option > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.ai-model-picker-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.ai-model-picker-heading h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.ai-model-count {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.ai-model-options {
+  display: grid;
+  gap: 6px;
+  max-height: 372px;
+  overflow: auto;
+  padding: 1px;
+}
+
+.ai-model-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 20px;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.ai-model-option:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.ai-model-option.selected {
+  border-color: var(--excel-green);
+  background: color-mix(in srgb, var(--excel-green) 8%, var(--surface));
+}
+
+.ai-model-option:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--excel-green) 35%, transparent);
+  outline-offset: 1px;
+}
+
+.ai-model-option > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.ai-model-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.ai-model-name-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ai-model-name-row strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-model-default {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--excel-green);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.ai-model-description {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-model-check {
+  color: var(--excel-green);
+  font-size: 15px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.ai-model-status {
+  margin: 0;
+  padding: 18px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.ai-model-status-error {
+  color: #b42318;
+}
+
+.ai-settings-hint {
+  margin: -4px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ai-settings-error {
+  margin: 10px 0 0;
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .modal-actions {

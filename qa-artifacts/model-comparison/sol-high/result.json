@@ -1,0 +1,149 @@
+{
+  "status": "PASS",
+  "model": "gpt-5.6-sol",
+  "reasoning_setting": "high",
+  "source_workbook": "/Users/jyb-m3max/Desktop/codex/genoffice/qa-artifacts/gpt-5.6-luna-xhigh-smoke/gpt-5.6-luna-xhigh-saas-portfolio.xlsx",
+  "generation_method": {
+    "excel": "openpyxl 새 통합문서 작성 후 LibreOffice headless 재계산/캐시 저장",
+    "presentation": "Pillow로 1600x900 네이비/민트 슬라이드 렌더 후 python-pptx에 풀블리드 삽입",
+    "rendering": "LibreOffice headless PPTX→PDF, pdftoppm PDF→PNG; Dashboard는 openpyxl 계산값을 Pillow로 PNG 렌더"
+  },
+  "files": [
+    {
+      "name": "sol-high-portfolio.xlsx",
+      "absolute_path": "/Users/jyb-m3max/Desktop/codex/genoffice/qa-artifacts/model-comparison/sol-high/sol-high-portfolio.xlsx",
+      "bytes": 25448,
+      "sha256": "a091286c16ab976c1412194e7b8b41aee6501aea0528668df568e1fe7c94bebc"
+    },
+    {
+      "name": "sol-high-investment-committee.pptx",
+      "absolute_path": "/Users/jyb-m3max/Desktop/codex/genoffice/qa-artifacts/model-comparison/sol-high/sol-high-investment-committee.pptx",
+      "bytes": 315121,
+      "sha256": "113234efed3bd9178c6bff1388935292e7e77d5a29c643f625f0a440e22e99d8"
+    },
+    {
+      "name": "sol-high-investment-committee.pdf",
+      "absolute_path": "/Users/jyb-m3max/Desktop/codex/genoffice/qa-artifacts/model-comparison/sol-high/sol-high-investment-committee.pdf",
+      "bytes": 274962,
+      "sha256": "e78ac6ad94e839f6cc2ae56113390bd0c87a317057c0f76980f26725477e55be"
+    },
+    {
+      "name": "sol-high-dashboard.png",
+      "absolute_path": "/Users/jyb-m3max/Desktop/codex/genoffice/qa-artifacts/model-comparison/sol-high/sol-high-dashboard.png",
+      "bytes": 94606,
+      "sha256": "59469fbdd6ccf6b2f04653a2f6307dda0582650da2abfd848ac6bf304016fe00"
+    },
+    {
+      "name": "sol-high-slide-1.png",
+      "absolute_path": "/Users/jyb-m3max/Desktop/codex/genoffice/qa-artifacts/model-comparison/sol-high/sol-high-slide-1.png",
+      "bytes": 199733,
+      "sha256": "becfedfccb0af69b18365814fec205ab6d2efdb22076a63c70d6d546a1c72316"
+    },
+    {
+      "name": "sol-high-slide-2.png",
+      "absolute_path": "/Users/jyb-m3max/Desktop/codex/genoffice/qa-artifacts/model-comparison/sol-high/sol-high-slide-2.png",
+      "bytes": 208167,
+      "sha256": "5f7a215242487caa1cf8acabf7aba4b55cf77a13cc62e17960701b16b4b1e7bc"
+    },
+    {
+      "name": "sol-high-slide-3.png",
+      "absolute_path": "/Users/jyb-m3max/Desktop/codex/genoffice/qa-artifacts/model-comparison/sol-high/sol-high-slide-3.png",
+      "bytes": 546805,
+      "sha256": "6cc105ea7798c2b0be2f2afaf39ebd95471fcee6c2171bd74bce38bfede1de8d"
+    }
+  ],
+  "key_metrics": {
+    "investment_count": 10,
+    "total_investment_krw": 1152000000,
+    "expected_arr_krw": 1175850000.0,
+    "base_net_value_krw": 23849999.999999985,
+    "weighted_success_probability": 0.603,
+    "weighted_attrition_probability": 0.397,
+    "downside_net_value_krw": -618120000.0,
+    "upside_net_value_krw": 608220000.0,
+    "top3_total_investment_krw": 266000000,
+    "top3_expected_arr_krw": 325100000.0,
+    "top3_base_net_value_krw": 59100000.0,
+    "top3": [
+      {
+        "rank": 1,
+        "name": "API 모니터링·개발자 포털 SaaS",
+        "score": 58.81666666666667,
+        "base_net": 25500000.0,
+        "success_probability": 0.78
+      },
+      {
+        "rank": 2,
+        "name": "영업 파이프라인 자동화 CRM SaaS",
+        "score": 54.5027027027027,
+        "base_net": 18600000.0,
+        "success_probability": 0.72
+      },
+      {
+        "rank": 3,
+        "name": "HR 인력계획·스킬 매칭 SaaS",
+        "score": 51.3289156626506,
+        "base_net": 15000000.0,
+        "success_probability": 0.7
+      }
+    ]
+  },
+  "counts": {
+    "sheet_count": 3,
+    "formula_count": 135,
+    "conditional_formatting_rule_groups": 6,
+    "excel_chart_count": 2,
+    "slide_count": 3,
+    "ppt_shape_count": 3,
+    "ppt_shape_count_by_slide": [1, 1, 1],
+    "ppt_chart_count": 0
+  },
+  "rendered_image_dimensions": {
+    "sol-high-dashboard.png": [1600, 1000],
+    "sol-high-slide-1.png": [2001, 1125],
+    "sol-high-slide-2.png": [2001, 1125],
+    "sol-high-slide-3.png": [2001, 1125]
+  },
+  "validation": {
+    "passed": true,
+    "checks": {
+      "xlsx_reopens": true,
+      "exact_sheet_names_and_count": true,
+      "ten_investments": true,
+      "source_data_preserved": true,
+      "weight_assumptions_preserved": true,
+      "scenario_assumptions_preserved": true,
+      "reference_formulas_present": true,
+      "cached_formula_values_present": true,
+      "key_metrics_match": true,
+      "scenario_totals_match": true,
+      "freeze_panes_match": true,
+      "conditional_formatting_present": true,
+      "dashboard_charts_present": true,
+      "currency_and_percentage_formats_present": true,
+      "print_areas_defined": true,
+      "pptx_reopens": true,
+      "exact_three_slides": true,
+      "one_full_slide_rendered_shape_per_slide": true,
+      "ppt_pdf_exact_three_pages": true,
+      "dashboard_png_rendered": true,
+      "three_slide_pngs_rendered": true,
+      "security_no_secret_or_network_use": true,
+      "security_auth_input_abuse_controls_not_applicable": true
+    }
+  },
+  "security_gate": {
+    "secrets": "PASS - 하드코딩/로그 노출 없음",
+    "authn_authz": "N/A - 로컬 산출물 생성",
+    "untrusted_input": "PASS - 지정된 로컬 XLSX만 읽고 구조·행 수 검증",
+    "dependencies": "PASS - 번들 고정 런타임 사용, 신규 설치 없음",
+    "sensitive_data": "PASS - 개인/인증 데이터 없음",
+    "abuse_controls": "N/A - 네트워크/과금 서비스 호출 없음",
+    "negative_path": "PASS - 시트명·행 수·재오픈·수식 캐시·페이지 수 불일치 시 FAIL",
+    "residual_risk": "PPT 본문은 한글 렌더 안정성을 위해 슬라이드별 단일 래스터 이미지로 구성되어 텍스트 직접 편집성이 제한됨"
+  },
+  "limitations": [
+    "LibreOffice headless의 CJK 텍스트 렌더 결함을 회피하기 위해 PPT 본문을 1600x900 이미지로 삽입했습니다.",
+    "Dashboard PNG는 Excel 셀의 화면 캡처가 아니라 동일 workbook 계산값을 사용한 Pillow 기반 경영진용 렌더입니다."
+  ]
+}

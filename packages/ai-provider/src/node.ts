@@ -17,6 +17,8 @@ export {
 export type { CodexDependencies } from './codex'
 export { getCodexAccountStatus, loginCodex, logoutCodex } from './codex-auth'
 export type { CodexAuthDependencies } from './codex-auth'
+export { listCodexModels } from './codex-models'
+export type { CodexModelDependencies } from './codex-models'
 export { CodexAppServerClient } from './codex-app-server'
 export type {
   CodexAppServerClientLike,
@@ -50,8 +52,17 @@ export {
 export {
   AI_CHAT_RESPONSE_TIMEOUT_MS,
   AI_CONNECT_TIMEOUT_MS,
+  AI_DEFAULT_TURN_TIMEOUT_MS,
+  AI_HIGH_REASONING_IDLE_TIMEOUT_MS,
+  AI_HIGH_REASONING_TURN_TIMEOUT_MS,
   AI_IDLE_TIMEOUT_MS,
+  AI_MAX_REASONING_IDLE_TIMEOUT_MS,
+  AI_MAX_REASONING_TURN_TIMEOUT_MS,
+  AI_XHIGH_REASONING_IDLE_TIMEOUT_MS,
+  AI_XHIGH_REASONING_TURN_TIMEOUT_MS,
   AiTimeoutError,
+  aiIdleTimeoutMsForReasoning,
+  aiTurnTimeoutMsForReasoning,
   createStreamWatchdog,
 } from './watchdog'
 export type { StreamWatchdog } from './watchdog'

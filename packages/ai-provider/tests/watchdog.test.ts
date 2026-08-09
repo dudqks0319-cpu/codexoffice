@@ -3,8 +3,17 @@ import type { AgentToolCall } from '@genoffice/agent-core'
 import { streamForProvider } from '../src/stream'
 import {
   AI_CONNECT_TIMEOUT_MS,
+  AI_DEFAULT_TURN_TIMEOUT_MS,
+  AI_HIGH_REASONING_IDLE_TIMEOUT_MS,
+  AI_HIGH_REASONING_TURN_TIMEOUT_MS,
   AI_IDLE_TIMEOUT_MS,
+  AI_MAX_REASONING_IDLE_TIMEOUT_MS,
+  AI_MAX_REASONING_TURN_TIMEOUT_MS,
+  AI_XHIGH_REASONING_IDLE_TIMEOUT_MS,
+  AI_XHIGH_REASONING_TURN_TIMEOUT_MS,
   AiTimeoutError,
+  aiIdleTimeoutMsForReasoning,
+  aiTurnTimeoutMsForReasoning,
   createStreamWatchdog,
 } from '../src/watchdog'
 
@@ -26,6 +35,17 @@ function abortable(signal: AbortSignal): Promise<never> {
 }
 
 describe('createStreamWatchdog', () => {
+  it('keeps longer but bounded deadlines for high-effort Codex turns', () => {
+    expect(aiIdleTimeoutMsForReasoning('medium')).toBe(AI_IDLE_TIMEOUT_MS)
+    expect(aiTurnTimeoutMsForReasoning('medium')).toBe(AI_DEFAULT_TURN_TIMEOUT_MS)
+    expect(aiIdleTimeoutMsForReasoning('high')).toBe(AI_HIGH_REASONING_IDLE_TIMEOUT_MS)
+    expect(aiTurnTimeoutMsForReasoning('high')).toBe(AI_HIGH_REASONING_TURN_TIMEOUT_MS)
+    expect(aiIdleTimeoutMsForReasoning('xhigh')).toBe(AI_XHIGH_REASONING_IDLE_TIMEOUT_MS)
+    expect(aiTurnTimeoutMsForReasoning('xhigh')).toBe(AI_XHIGH_REASONING_TURN_TIMEOUT_MS)
+    expect(aiIdleTimeoutMsForReasoning('max')).toBe(AI_MAX_REASONING_IDLE_TIMEOUT_MS)
+    expect(aiTurnTimeoutMsForReasoning('max')).toBe(AI_MAX_REASONING_TURN_TIMEOUT_MS)
+  })
+
   it('aborts and reports AiTimeoutError when nothing arrives within the connect timeout', async () => {
     const wd = createStreamWatchdog(undefined, 1_000, 5_000)
     const run = wd.guard(() => abortable(wd.signal))
