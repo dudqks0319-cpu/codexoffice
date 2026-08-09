@@ -37,7 +37,7 @@
 - [x] Build arm64 DMG/ZIP and run packaged login/edit/QA/deck smoke.
 - [x] Capture screenshots in versioned `qa-artifacts/` directories.
 - [x] Update release ledger with PASS/HOLD/BLOCKED-EXTERNAL gates.
-- [ ] Commit and push verified implementation slices.
+- [x] Commit verified implementation slices (`ef2e810`); push recorded in the final handoff.
 
 ## Design constraints
 

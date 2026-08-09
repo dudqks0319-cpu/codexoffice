@@ -6,7 +6,7 @@ Last verified: 2026-08-10 (Asia/Seoul)
 
 - Branch: `agent/codex-sdk`
 - Baseline pushed commit: `e1dcd1a feat: add GPT-5.6 model controls and macOS QA evidence`
-- Trust-workflow implementation: pending final commit below this ledger update
+- Trust-workflow implementation commit: `ef2e810 feat: add review-first AI trust workflows`
 - Codex SDK transition commit in history: `69bfc5a feat: replace Genspark AI with Codex SDK`
 - Codex SDK package: `@openai/codex-sdk@0.146.0`
 - Build commands: `npm run build:all`, then
