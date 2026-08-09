@@ -269,7 +269,7 @@ describe('Codex App Server image generation core', () => {
     expect(client.stopped).toBe(true)
   })
 
-  it('rejects a savedPath outside the mode-0700 temporary directory', async () => {
+  it('accepts an absolute provider-managed savedPath without using it as image input', async () => {
     const client = completedClient()
     client.onTurnStart = () => {
       client.notify('item/completed', {
@@ -280,7 +280,33 @@ describe('Codex App Server image generation core', () => {
           type: 'imageGeneration',
           status: 'completed',
           result: png().toString('base64'),
-          savedPath: '/etc/hosts',
+          savedPath: '/provider-managed/generated-image.png',
+        },
+      })
+      client.notify('turn/completed', {
+        threadId: 'thread-1',
+        turn: { id: 'turn-1', status: 'completed' },
+      })
+    }
+    await expect(generatorWith(() => client).generate(request())).resolves.toMatchObject({
+      mime: 'image/png',
+      width: 32,
+      height: 24,
+    })
+  })
+
+  it('rejects malformed relative savedPath metadata', async () => {
+    const client = completedClient()
+    client.onTurnStart = () => {
+      client.notify('item/completed', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          id: 'image-1',
+          type: 'imageGeneration',
+          status: 'completed',
+          result: png().toString('base64'),
+          savedPath: '../generated-image.png',
         },
       })
       client.notify('turn/completed', {

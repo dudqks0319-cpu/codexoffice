@@ -64,7 +64,13 @@ exports.default = async function repairMacSignature(context) {
     platform: 'darwin',
     type: 'distribution',
     hardenedRuntime: true,
-    timestamp: !forceUntimestampedLocalSign,
+    // osx-sign 1.3.x reads per-file signing options only through
+    // `optionsForFile`. Its top-level `timestamp` option is ignored, and a
+    // boolean false still falls back to `--timestamp`. The literal `none`
+    // below emits `--timestamp=none` for every nested code object.
+    optionsForFile: forceUntimestampedLocalSign
+      ? () => ({ timestamp: 'none', hardenedRuntime: true })
+      : undefined,
     strictVerify: true,
     // osx-sign's binary detector also classifies fonts and Office fixtures as
     // binary. Signing those wastes one timestamp request per asset and can

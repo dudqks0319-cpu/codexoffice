@@ -76,14 +76,15 @@ available and must be observed in signed-build release testing. Shell, web, MCP,
 apps, plugins, skills, hooks, memories, and multi-agent features are disabled.
 
 Only one PNG, JPEG, or WebP result up to 8 MiB and 4096 pixels per dimension is
-accepted. File signatures, dimensions, base64 equivalence, and any saved path's
-containment inside a mode-`0700` temporary directory are checked, then Electron
-fully decodes and re-encodes the bitmap as bounded PNG before insertion. Codex
-credentials, process handles, and the raw generation
-response stay in main. The renderer receives the same bounded `RenderSlide`
-representation used for existing pictures, while the model tool result receives
-insertion metadata only. These desktop quotas reset when the app restarts and
-therefore do not replace account/provider limits.
+accepted. File signatures and dimensions are checked from the bounded base64
+result, which is authoritative. An optional provider-managed `savedPath` is
+validated only as bounded absolute-path metadata and is never dereferenced,
+read, retained, or deleted. Electron then fully decodes and re-encodes the
+bitmap as bounded PNG before insertion. Codex credentials, process handles, and
+the raw generation response stay in main. The renderer receives the same bounded
+`RenderSlide` representation used for existing pictures, while the model tool
+result receives insertion metadata only. These desktop quotas reset when the app
+restarts and therefore do not replace account/provider limits.
 
 ## Threat Model: AI-Generated Layout Scripts (slides)
 

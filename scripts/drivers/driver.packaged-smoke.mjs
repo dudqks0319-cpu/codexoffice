@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -10,6 +10,7 @@ const appBundle = process.env.GENOFFICE_PACKAGED_APP
   : join(repoRoot, 'apps/shell/release/mac-arm64/Codexoffice.app')
 const appBinary = join(appBundle, 'Contents/MacOS/Codexoffice')
 const homeDir = await mkdtemp(join(tmpdir(), 'codexoffice-packaged-home-'))
+await chmod(homeDir, 0o700)
 const tempDir = join(homeDir, 'tmp')
 await mkdir(tempDir)
 const evidenceDir = join(repoRoot, 'qa-artifacts', 'trust-workflow-20260809')
@@ -17,6 +18,13 @@ await mkdir(evidenceDir, { recursive: true })
 const userDataDir = join(homeDir, 'user-data')
 await mkdir(userDataDir, { recursive: true })
 await writeFile(join(userDataDir, 'app-settings.json'), JSON.stringify({ onboardingSeen: true }))
+const codexAuthSource = process.env.GENOFFICE_CODEX_AUTH_SOURCE
+if (codexAuthSource) {
+  const isolatedCodexHome = join(userDataDir, 'codex')
+  await mkdir(isolatedCodexHome, { recursive: true, mode: 0o700 })
+  await copyFile(join(resolve(codexAuthSource), 'auth.json'), join(isolatedCodexHome, 'auth.json'))
+  await chmod(join(isolatedCodexHome, 'auth.json'), 0o600)
+}
 const port = 9347
 
 const { ELECTRON_RUN_AS_NODE: _runAsNode, ...parentEnv } = process.env
@@ -283,4 +291,5 @@ try {
       // The process group may already have exited.
     }
   }
+  await rm(homeDir, { recursive: true, force: true })
 }

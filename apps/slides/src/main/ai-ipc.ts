@@ -5,8 +5,16 @@
  */
 import { app, BrowserWindow, dialog, ipcMain, nativeImage } from 'electron'
 import type { IpcMainInvokeEvent, MessageBoxOptions } from 'electron'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
 import {
   acquireAiRequest,
   AiCreditsError,
@@ -17,6 +25,7 @@ import {
   CODEX_IMAGE_MAX_DIMENSION,
   defaultAiSettings,
   createAiTurnController,
+  aiTurnTimeoutMsForReasoning,
   getCodexAccountStatus,
   loginCodex,
   parseAiRequestId,
@@ -150,6 +159,7 @@ export async function confirmImageGeneration(
   event: IpcMainInvokeEvent,
   prompt: string,
 ): Promise<boolean> {
+  if (shouldAutoConfirmImageGeneration()) return true
   const korean = getUiLang() === 'ko'
   const options: MessageBoxOptions = {
     type: 'question',
@@ -168,6 +178,30 @@ export async function confirmImageGeneration(
     ? await dialog.showMessageBox(parent, options)
     : await dialog.showMessageBox(options)
   return result.response === 0
+}
+
+/**
+ * Automation-only approval for a one-shot packaged smoke run. All three
+ * explicit switches and an isolated OS temp userData path are required so a
+ * normal packaged launch can never skip the per-call usage/cost dialog.
+ */
+export function shouldAutoConfirmImageGeneration(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (
+    env.GENOFFICE_PACKAGED_SMOKE !== '1' ||
+    env.GENOFFICE_SMOKE_AUTO_CONFIRM_IMAGE !== '1' ||
+    env.GENOFFICE_CODEX_IMAGE_GENERATION !== '1'
+  ) {
+    return false
+  }
+  const requestedUserData = env.GENOFFICE_USER_DATA
+  if (!requestedUserData) return false
+  try {
+    const tempRoot = realpathSync(resolve(tmpdir()))
+    const isolatedUserData = realpathSync(resolve(requestedUserData))
+    return isolatedUserData.startsWith(`${tempRoot}${sep}`)
+  } catch {
+    return false
+  }
 }
 
 /** Decode and normalize provider bytes before they cross into the PPTX archive. */
@@ -420,7 +454,7 @@ export function registerAiIpc(): void {
       if (!event.sender.isDestroyed()) event.sender.send('ai:stream-chunk', chunk)
     }
     const lease = acquireAiRequest(requestId, maxTokens)
-    const deadline = createAiTurnController()
+    const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
     const controller = deadline.controller
     const streamKey = `${event.sender.id}:${requestId}`
     const abortOnDestroyed = () => controller.abort()

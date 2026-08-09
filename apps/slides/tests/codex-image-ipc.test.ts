@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CodexImageError, type CodexImageResult } from '@genoffice/ai-provider/node'
 import type { Session } from '../src/main/session-state'
@@ -43,6 +46,7 @@ import {
   normalizeGeneratedImageForInsertion,
   parseGenerateSlideImageOp,
   registerSlidesOnlyAiIpc,
+  shouldAutoConfirmImageGeneration,
   type SlidesImageGenerationDependencies,
 } from '../src/main/ai-ipc'
 
@@ -201,6 +205,30 @@ describe('Codex slide image IPC', () => {
         cancelId: 1,
       }),
     )
+  })
+
+  it('auto-confirms only for an explicit packaged smoke in an isolated temp profile', () => {
+    const isolatedUserData = mkdtempSync(join(realpathSync(tmpdir()), 'genoffice-image-smoke-'))
+    const enabled = {
+      GENOFFICE_PACKAGED_SMOKE: '1',
+      GENOFFICE_SMOKE_AUTO_CONFIRM_IMAGE: '1',
+      GENOFFICE_CODEX_IMAGE_GENERATION: '1',
+      GENOFFICE_USER_DATA: isolatedUserData,
+    }
+    try {
+      expect(shouldAutoConfirmImageGeneration(enabled)).toBe(true)
+      expect(
+        shouldAutoConfirmImageGeneration({
+          ...enabled,
+          GENOFFICE_USER_DATA: '/Users/example/Library/Application Support/GenOffice',
+        }),
+      ).toBe(false)
+      expect(
+        shouldAutoConfirmImageGeneration({ ...enabled, GENOFFICE_SMOKE_AUTO_CONFIRM_IMAGE: '0' }),
+      ).toBe(false)
+    } finally {
+      rmSync(isolatedUserData, { recursive: true, force: true })
+    }
   })
 
   it('shows the complete bounded prompt in the per-call confirmation', async () => {

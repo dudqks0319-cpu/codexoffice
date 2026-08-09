@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { chmod, lstat, mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { codexChildEnvironment, resolveCodexExecutable } from './codex-executable'
@@ -12,6 +12,7 @@ export const CODEX_IMAGE_MAX_PROMPT_BYTES = 8 * 1024
 export const CODEX_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 export const CODEX_IMAGE_MAX_DIMENSION = 4096
 export const CODEX_IMAGE_DEFAULT_TIMEOUT_MS = 180_000
+const CODEX_IMAGE_MAX_SAVED_PATH_BYTES = 4 * 1024
 
 const REPLAY_TTL_MS = 24 * 60 * 60_000
 const BURST_WINDOW_MS = 60_000
@@ -139,7 +140,6 @@ export interface CodexImageFileSystem {
   makeTempDirectory(prefix: string): Promise<string>
   chmod(filePath: string, mode: number): Promise<void>
   lstat(filePath: string): Promise<FileStatLike>
-  realpath(filePath: string): Promise<string>
   remove(filePath: string): Promise<void>
 }
 
@@ -201,7 +201,6 @@ function defaultFileSystem(): CodexImageFileSystem {
     makeTempDirectory: (prefix) => mkdtemp(prefix),
     chmod,
     lstat,
-    realpath,
     remove: (filePath) => rm(filePath, { recursive: true, force: true }),
   }
 }
@@ -376,16 +375,6 @@ function validateImage(bytes: Buffer): Omit<CodexImageResult, 'requestId' | 'byt
   }
 }
 
-function isPathInside(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate)
-  return (
-    relative !== '' &&
-    !relative.startsWith(`..${path.sep}`) &&
-    relative !== '..' &&
-    !path.isAbsolute(relative)
-  )
-}
-
 function safeThreadResponse(
   value: unknown,
   directory: string,
@@ -522,7 +511,7 @@ export class CodexImageGenerator {
         throw new CodexImageError('IMAGE_PROTOCOL_INVALID')
       }
       active.threadId = thread.thread.id
-      const completion = this.#completion(client, request.requestId, directory, active)
+      const completion = this.#completion(client, request.requestId, active)
       const started = await this.#abortable(
         client.request('turn/start', {
           threadId: active.threadId,
@@ -644,7 +633,6 @@ export class CodexImageGenerator {
   #completion(
     client: CodexAppServerClientLike,
     requestId: string,
-    directory: string,
     active: ActiveTurn,
   ): Promise<CodexImageResult> {
     return new Promise((resolve, reject) => {
@@ -656,7 +644,7 @@ export class CodexImageGenerator {
         reject: () => undefined,
       }
       const dispose = client.onNotification((notification) =>
-        this.#handleNotification(notification, context, requestId, directory),
+        this.#handleNotification(notification, context, requestId),
       )
       context.resolve = () => {
         if (context.settled) return
@@ -677,7 +665,6 @@ export class CodexImageGenerator {
     notification: CodexAppServerNotification,
     context: CompletionContext,
     requestId: string,
-    directory: string,
   ): void {
     if (!record(notification.params) || notification.params.threadId !== context.threadId) return
     const params = notification.params
@@ -702,7 +689,7 @@ export class CodexImageGenerator {
         if (context.imageCount !== 1) {
           return context.reject(new CodexImageError('IMAGE_OUTPUT_INVALID'))
         }
-        context.image = this.#readImageItem(params.item, requestId, directory)
+        context.image = this.#readImageItem(params.item, requestId)
         void context.image.catch((error) =>
           context.reject(
             error instanceof CodexImageError ? error : new CodexImageError('IMAGE_OUTPUT_INVALID'),
@@ -731,7 +718,6 @@ export class CodexImageGenerator {
   async #readImageItem(
     item: Record<string, unknown>,
     requestId: string,
-    directory: string,
   ): Promise<CodexImageResult> {
     if (
       !validIdentifier(item.id) ||
@@ -747,26 +733,16 @@ export class CodexImageGenerator {
     }
     const resultBytes = decodeBase64(item.result)
     if (typeof item.savedPath === 'string') {
-      if (!path.isAbsolute(item.savedPath)) throw new CodexImageError('IMAGE_PROTOCOL_INVALID')
-      const root = await this.#fs.realpath(directory)
-      const candidate = await this.#fs.realpath(item.savedPath).catch(() => {
-        throw new CodexImageError('IMAGE_PROTOCOL_INVALID')
-      })
-      if (!isPathInside(root, candidate)) throw new CodexImageError('IMAGE_PROTOCOL_INVALID')
-      const stat = await this.#fs.lstat(candidate)
       if (
-        !stat.isFile() ||
-        stat.isSymbolicLink() ||
-        stat.size <= 0 ||
-        stat.size > CODEX_IMAGE_MAX_BYTES ||
-        stat.size !== resultBytes.length
-      ) {
-        throw new CodexImageError('IMAGE_OUTPUT_INVALID')
-      }
+        !path.isAbsolute(item.savedPath) ||
+        item.savedPath.includes('\0') ||
+        Buffer.byteLength(item.savedPath, 'utf8') > CODEX_IMAGE_MAX_SAVED_PATH_BYTES
+      )
+        throw new CodexImageError('IMAGE_PROTOCOL_INVALID')
     }
-    // The bounded, validated protocol result is authoritative. The optional saved path is
-    // confinement-checked only; never reopen it after validation, avoiding path-swap races
-    // and unbounded reads if another process changes the file.
+    // The bounded protocol result is authoritative. savedPath is provider-managed metadata
+    // (Codex 0.146 may place it outside the per-turn cwd), so validate its shape but never
+    // dereference, read, delete, or retain it. This avoids path traversal and path-swap races.
     const metadata = validateImage(resultBytes)
     return {
       requestId,
