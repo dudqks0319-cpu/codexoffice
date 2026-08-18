@@ -24,7 +24,10 @@ function normalizeUpdateUrl(value) {
   return parsed.toString().replace(/\/+$/, '')
 }
 
-function createBuilderConfig(environment = process.env) {
+function createBuilderConfig(
+  environment = process.env,
+  { resolveCodexExtraResource = codexExtraResource } = {},
+) {
   const updateUrl = normalizeUpdateUrl(environment.GENOFFICE_UPDATE_URL)
   const identity = typeof environment.CSC_NAME === 'string' ? environment.CSC_NAME.trim() : ''
   const timestampMode = environment.GENOFFICE_SIGNING_TIMESTAMP_MODE
@@ -79,7 +82,7 @@ function createBuilderConfig(environment = process.env) {
         from: '../pdf/out',
         to: 'modules/pdf',
       },
-      codexExtraResource(),
+      resolveCodexExtraResource(),
     ],
     fileAssociations: [
       { ext: 'docx', name: 'Word Document', role: 'Editor' },

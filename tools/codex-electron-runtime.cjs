@@ -19,11 +19,53 @@ const CODEX_TARGETS = {
   },
 }
 
+function resolveCodexBuildRuntimeForTarget(
+  platform,
+  architecture,
+  { repoRoot = REPO_ROOT, exists = existsSync, readFile = readFileSync, stat = statSync } = {},
+) {
+  if (platform === 'win32' && architecture !== 'x64') {
+    throw new Error('The Windows installer currently supports x64 only')
+  }
+
+  const target = CODEX_TARGETS[`${platform}-${architecture}`]
+  if (!target) {
+    throw new Error(`Unsupported Codex packaging target: ${platform}-${architecture}`)
+  }
+  const packageRoot = join(repoRoot, 'node_modules', target.packageName)
+  const packageJsonPath = join(packageRoot, 'package.json')
+  const vendorSource = join(packageRoot, 'vendor')
+  const executable = join(
+    vendorSource,
+    target.triple,
+    'bin',
+    platform === 'win32' ? 'codex.exe' : 'codex',
+  )
+  let validRuntime
+  try {
+    const packageJson = JSON.parse(readFile(packageJsonPath, 'utf8'))
+    const executableStat = stat(executable)
+    validRuntime =
+      packageJson.version === `${CODEX_VERSION}-${platform}-${architecture}` &&
+      executableStat.isFile() &&
+      (platform === 'win32' || (executableStat.mode & 0o111) !== 0)
+  } catch {
+    validRuntime = false
+  }
+  if (!validRuntime || !exists(vendorSource)) {
+    throw new Error(
+      `electron-builder Codex ${CODEX_VERSION} runtime missing or invalid: ${packageRoot} (run npm ci on the target platform)`,
+    )
+  }
+  return { packageName: target.packageName, vendorSource, executable }
+}
+
 function resolveCodexBuildRuntime({
   argv = process.argv,
   lifecycle = process.env.npm_lifecycle_event,
   platform = process.platform,
   architecture = process.arch,
+  runtimeDependencies,
 } = {}) {
   const requestedPlatforms = new Set()
   if (argv.includes('--mac') || lifecycle === 'dist:mac') requestedPlatforms.add('darwin')
@@ -48,42 +90,11 @@ function resolveCodexBuildRuntime({
       `Codex installers must be built on their target host/architecture (host ${platform}-${architecture}, requested ${requestedPlatform}-${requestedArchitecture})`,
     )
   }
-  if (requestedPlatform === 'win32' && requestedArchitecture !== 'x64') {
-    throw new Error('The Windows installer currently supports x64 only')
-  }
-
-  const target = CODEX_TARGETS[`${requestedPlatform}-${requestedArchitecture}`]
-  if (!target) {
-    throw new Error(
-      `Unsupported Codex packaging target: ${requestedPlatform}-${requestedArchitecture}`,
-    )
-  }
-  const packageRoot = join(REPO_ROOT, 'node_modules', target.packageName)
-  const packageJsonPath = join(packageRoot, 'package.json')
-  const vendorSource = join(packageRoot, 'vendor')
-  const executable = join(
-    vendorSource,
-    target.triple,
-    'bin',
-    requestedPlatform === 'win32' ? 'codex.exe' : 'codex',
+  return resolveCodexBuildRuntimeForTarget(
+    requestedPlatform,
+    requestedArchitecture,
+    runtimeDependencies,
   )
-  let validRuntime
-  try {
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
-    const executableStat = statSync(executable)
-    validRuntime =
-      packageJson.version === `${CODEX_VERSION}-${requestedPlatform}-${requestedArchitecture}` &&
-      executableStat.isFile() &&
-      (requestedPlatform === 'win32' || (executableStat.mode & 0o111) !== 0)
-  } catch {
-    validRuntime = false
-  }
-  if (!validRuntime || !existsSync(vendorSource)) {
-    throw new Error(
-      `electron-builder Codex ${CODEX_VERSION} runtime missing or invalid: ${packageRoot} (run npm ci on the target platform)`,
-    )
-  }
-  return { packageName: target.packageName, vendorSource, executable }
 }
 
 function codexExtraResource(options) {
@@ -93,4 +104,8 @@ function codexExtraResource(options) {
   }
 }
 
-module.exports = { codexExtraResource, resolveCodexBuildRuntime }
+module.exports = {
+  codexExtraResource,
+  resolveCodexBuildRuntime,
+  resolveCodexBuildRuntimeForTarget,
+}

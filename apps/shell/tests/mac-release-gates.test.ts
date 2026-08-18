@@ -21,9 +21,11 @@ const repairModule = require('../build/repair-mac-signature.js') as {
 const notarizeModule = require('../build/notarize-dmg.js') as {
   createNotarizeDmg?: (dependencies: Record<string, unknown>) => (result: unknown) => string[]
 }
-const builderConfig = require('../electron-builder.cjs') as Record<string, unknown>
 const builderModule = require('../build/electron-builder-config.js') as {
-  createBuilderConfig?: (env: Record<string, string>) => {
+  createBuilderConfig?: (
+    env: Record<string, string>,
+    dependencies?: { resolveCodexExtraResource: () => { from: string; to: string } },
+  ) => {
     mac: { identity?: string | null; notarize?: boolean }
     dmg: { sign?: boolean }
     electronDist?: string
@@ -31,6 +33,34 @@ const builderModule = require('../build/electron-builder-config.js') as {
     publish?: Array<{ provider: string; url: string; channel: string }>
   }
 }
+const codexRuntimeModule = require('../../../tools/codex-electron-runtime.cjs') as {
+  resolveCodexBuildRuntime?: (options: Record<string, unknown>) => {
+    packageName: string
+    vendorSource: string
+    executable: string
+  }
+  resolveCodexBuildRuntimeForTarget?: (
+    platform: string,
+    architecture: string,
+    dependencies?: Record<string, unknown>,
+  ) => { packageName: string; vendorSource: string; executable: string }
+}
+const builderEntrypointSource = readFileSync(
+  new URL('../electron-builder.cjs', import.meta.url),
+  'utf8',
+)
+const codexResourceFixture = { from: '/fixture/codex/vendor', to: 'codex/vendor' }
+const createBuilderConfig = (environment: Record<string, string>) =>
+  builderModule.createBuilderConfig!(environment, {
+    resolveCodexExtraResource: () => codexResourceFixture,
+  })
+
+const runtimeDependencies = (platform: string, architecture: string) => ({
+  repoRoot: '/fixture',
+  exists: () => true,
+  readFile: () => JSON.stringify({ version: `0.146.0-${platform}-${architecture}` }),
+  stat: () => ({ isFile: () => true, mode: 0o755 }),
+})
 const releaseIdentityModule = (() => {
   try {
     return require('../build/release-identity.js') as {
@@ -252,11 +282,12 @@ describe('macOS notarization side-effect gate', () => {
 
 describe('electron-builder signing defaults', () => {
   it('does not expose test helpers on the electron-builder schema object', () => {
-    expect(Object.getOwnPropertyNames(builderConfig)).not.toContain('createBuilderConfig')
+    expect(builderEntrypointSource).toContain('module.exports = createBuilderConfig()')
+    expect(builderEntrypointSource).not.toContain('module.exports.createBuilderConfig')
   })
 
   it('uses the installed pinned Electron distribution for offline packaging', () => {
-    const config = builderModule.createBuilderConfig!({})
+    const config = createBuilderConfig({})
 
     expect(config.electronDist).toBe('../../node_modules/electron/dist')
   })
@@ -264,7 +295,7 @@ describe('electron-builder signing defaults', () => {
   it('forces unsigned and non-notarized packaging when signing is not authorized', () => {
     expect(builderModule.createBuilderConfig).toBeTypeOf('function')
 
-    const config = builderModule.createBuilderConfig!({
+    const config = createBuilderConfig({
       CSC_NAME: 'Developer ID Application: Must Not Be Used (SECRETTEAM)',
       APPLE_KEYCHAIN_PROFILE: 'must-not-be-used',
     })
@@ -276,7 +307,7 @@ describe('electron-builder signing defaults', () => {
   })
 
   it('keeps identity null when electron-builder autodiscovery is disabled', () => {
-    const config = builderModule.createBuilderConfig!({
+    const config = createBuilderConfig({
       CSC_IDENTITY_AUTO_DISCOVERY: 'false',
       CSC_NAME: 'Developer ID Application: Must Not Be Used (SECRETTEAM)',
       GENOFFICE_SIGNING_AUTHORIZED: '1',
@@ -289,7 +320,7 @@ describe('electron-builder signing defaults', () => {
 
   it('enables signing config only with explicit authorization identity and timestamp mode', () => {
     const identity = 'Developer ID Application: Fixture (FIXTURETEAM)'
-    const config = builderModule.createBuilderConfig!({
+    const config = createBuilderConfig({
       CSC_NAME: identity,
       GENOFFICE_SIGNING_AUTHORIZED: '1',
       GENOFFICE_SIGNING_TIMESTAMP_MODE: 'secure',
@@ -301,7 +332,7 @@ describe('electron-builder signing defaults', () => {
   })
 
   it('keeps the builder unsigned for the explicit local no-timestamp mode', () => {
-    const config = builderModule.createBuilderConfig!({
+    const config = createBuilderConfig({
       CSC_NAME: 'Developer ID Application: Fixture (FIXTURETEAM)',
       GENOFFICE_SIGNING_AUTHORIZED: '1',
       GENOFFICE_SIGNING_TIMESTAMP_MODE: 'none',
@@ -315,7 +346,7 @@ describe('electron-builder signing defaults', () => {
 
   it('fails config creation when notarization authorization has incomplete credentials', () => {
     expect(() =>
-      builderModule.createBuilderConfig!({
+      createBuilderConfig({
         CSC_NAME: 'Developer ID Application: Fixture (FIXTURETEAM)',
         GENOFFICE_SIGNING_AUTHORIZED: '1',
         GENOFFICE_SIGNING_TIMESTAMP_MODE: 'secure',
@@ -326,7 +357,7 @@ describe('electron-builder signing defaults', () => {
   })
 
   it('enables built-in app notarization only with complete explicit authorization', () => {
-    const config = builderModule.createBuilderConfig!({
+    const config = createBuilderConfig({
       CSC_NAME: 'Developer ID Application: Fixture (FIXTURETEAM)',
       GENOFFICE_SIGNING_AUTHORIZED: '1',
       GENOFFICE_SIGNING_TIMESTAMP_MODE: 'secure',
@@ -338,7 +369,7 @@ describe('electron-builder signing defaults', () => {
   })
 
   it('normalizes an approved HTTPS update channel without embedding credentials', () => {
-    const config = builderModule.createBuilderConfig!({
+    const config = createBuilderConfig({
       GENOFFICE_UPDATE_URL: 'https://updates.example.com/codexoffice///',
     })
 
@@ -359,9 +390,65 @@ describe('electron-builder signing defaults', () => {
     ' https://updates.example.com/codexoffice',
     'not-a-url',
   ])('rejects an unsafe update channel before packaging: %s', (updateUrl) => {
-    expect(() => builderModule.createBuilderConfig!({ GENOFFICE_UPDATE_URL: updateUrl })).toThrow(
+    expect(() => createBuilderConfig({ GENOFFICE_UPDATE_URL: updateUrl })).toThrow(
       '[update] invalid update channel URL',
     )
+  })
+})
+
+describe('Codex packaging runtime targets', () => {
+  it.each([
+    ['arm64', '@openai/codex-darwin-arm64', 'aarch64-apple-darwin'],
+    ['x64', '@openai/codex-darwin-x64', 'x86_64-apple-darwin'],
+  ])('resolves the approved darwin-%s runtime contract', (architecture, packageName, triple) => {
+    expect(codexRuntimeModule.resolveCodexBuildRuntimeForTarget).toBeTypeOf('function')
+
+    expect(
+      codexRuntimeModule.resolveCodexBuildRuntimeForTarget!(
+        'darwin',
+        architecture,
+        runtimeDependencies('darwin', architecture),
+      ),
+    ).toEqual({
+      packageName,
+      vendorSource: join('/fixture', 'node_modules', packageName, 'vendor'),
+      executable: join('/fixture', 'node_modules', packageName, 'vendor', triple, 'bin', 'codex'),
+    })
+  })
+
+  it('keeps linux-x64 explicitly unsupported without consulting runtime files', () => {
+    const dependencies = {
+      repoRoot: '/fixture',
+      exists: vi.fn(),
+      readFile: vi.fn(),
+      stat: vi.fn(),
+    }
+
+    expect(() =>
+      codexRuntimeModule.resolveCodexBuildRuntimeForTarget!('linux', 'x64', dependencies),
+    ).toThrow('Unsupported Codex packaging target: linux-x64')
+    expect(dependencies.exists).not.toHaveBeenCalled()
+    expect(dependencies.readFile).not.toHaveBeenCalled()
+    expect(dependencies.stat).not.toHaveBeenCalled()
+  })
+
+  it('keeps the production wrapper equivalent to an explicit supported target', () => {
+    const dependencies = runtimeDependencies('darwin', 'arm64')
+    const explicit = codexRuntimeModule.resolveCodexBuildRuntimeForTarget!(
+      'darwin',
+      'arm64',
+      dependencies,
+    )
+
+    expect(
+      codexRuntimeModule.resolveCodexBuildRuntime!({
+        argv: [],
+        lifecycle: '',
+        platform: 'darwin',
+        architecture: 'arm64',
+        runtimeDependencies: dependencies,
+      }),
+    ).toEqual(explicit)
   })
 })
 
