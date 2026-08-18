@@ -265,6 +265,55 @@ describe('guarded PDF save', () => {
     })
   })
 
+  it('preserves the original and permits retry after a failure immediately before claim', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'genoffice-pdf-guard-pre-claim-'))
+    cleanups.push(directory)
+    const sourcePath = join(directory, 'source.pdf')
+    const recoveryPath = join(directory, 'recovery.pdf')
+    const journalPath = `${sourcePath}.genoffice-commit.json`
+    const lockPath = join(directory, '.genoffice-pdf-claim-budget.lock')
+    const original = await makePdf(333)
+    const editedBytes = await applySaveRequest(original, request(sourcePath))
+    await writeFile(sourcePath, original)
+    const diskState = await capturePdfDiskState(sourcePath, original)
+
+    await expect(
+      savePdfWithSourceGuard({
+        sourcePath,
+        targetPath: sourcePath,
+        recoveryPath,
+        diskState,
+        editedBytes,
+        hooks: {
+          afterJournalBeforeClaim: async () => {
+            throw new Error('fixture: interrupted immediately before claim')
+          },
+        },
+      }),
+    ).rejects.toThrow('fixture: interrupted immediately before claim')
+
+    expect(hash(await readFile(sourcePath))).toBe(hash(original))
+    await expect(readFile(recoveryPath)).rejects.toThrow()
+    await expect(readFile(journalPath)).rejects.toThrow()
+    await expect(readFile(lockPath)).rejects.toThrow()
+    expect(
+      (await readdir(directory)).filter(
+        (name) => name.includes('.genoffice-claim-') || name.endsWith('.tmp'),
+      ),
+    ).toEqual([])
+
+    await expect(
+      savePdfWithSourceGuard({
+        sourcePath,
+        targetPath: sourcePath,
+        recoveryPath,
+        diskState,
+        editedBytes,
+      }),
+    ).resolves.toEqual({ kind: 'saved' })
+    expect(await annotationCount(sourcePath)).toBe(1)
+  })
+
   it('fails closed when retained source-safety history reaches its directory cap', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'genoffice-pdf-guard-budget-'))
     cleanups.push(directory)
