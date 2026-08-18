@@ -9,7 +9,12 @@ import {
   type ToolDisplay,
 } from '@genoffice/agent-core'
 import type { RenderSlide } from '@genoffice/pptx-render'
-import type { AiSettings, AttachmentAddResult, AttachmentMeta } from '../../shared/ipc'
+import type {
+  AiJobBudgetTicket,
+  AiSettings,
+  AttachmentAddResult,
+  AttachmentMeta,
+} from '../../shared/ipc'
 import { ATTACHMENT_IMAGE_EXTS } from '../../shared/ipc'
 import {
   createSlidesSkill,
@@ -494,6 +499,12 @@ export function AiPanel({
   }
 
   const loopRef = useRef<AgentLoop | null>(null)
+  const aiJobTicketRef = useRef<AiJobBudgetTicket | null>(null)
+  const endAiJob = () => {
+    const ticket = aiJobTicketRef.current
+    aiJobTicketRef.current = null
+    if (ticket) void window.slidesApi.aiJobEnd(ticket).catch(() => {})
+  }
   if (!loopRef.current) {
     // The three slides generation steps (style/planning/per-page HTML) force the high-quality model (only with the anthropic provider;
     // other providers keep the user setting, avoiding passing nonexistent model names). Chat/fine-tuning still uses the user's configured model.
@@ -513,7 +524,7 @@ export function AiPanel({
         const readAttachments = attachmentsRef.current.filter((attachment) =>
           readAttachmentPathsRef.current.has(attachment.path),
         )
-        const refreshed = await window.desktop.addAttachmentPaths(
+        const refreshed = await window.desktop.refreshAttachments(
           readAttachments.map((attachment) => attachment.path),
         )
         const freshByPath = new Map(
@@ -541,7 +552,10 @@ export function AiPanel({
     }
     accessRef.current = access
     loopRef.current = new AgentLoop({
-      transport: createElectronTransport(() => settingsRef.current),
+      transport: createElectronTransport(
+        () => settingsRef.current,
+        () => aiJobTicketRef.current,
+      ),
       systemSuffix: aiLangDirective,
       skill: composeSkills('slides+files', '', [
         createSlidesSkill(access),
@@ -599,6 +613,7 @@ export function AiPanel({
           setChat((prev) => [...prev, { role: 'assistant', text: '', streaming: true }])
         },
         onDone: ({ text, cancelled, turnLimit }) => {
+          endAiJob()
           const lifecycle = jobLifecycleRef.current
           const cancelledRun = cancelled || cancellationRequestedRef.current || !callbackIsCurrent()
           const finalText = turnLimit
@@ -637,7 +652,8 @@ export function AiPanel({
             persistMessage('assistant', finalText, runToolsRef.current)
           }
         },
-        onError: (error) => {
+        onError: (error, code) => {
+          endAiJob()
           const lifecycle = jobLifecycleRef.current
           const current = callbackIsCurrent()
           qcPagesRef.current = []
@@ -661,7 +677,7 @@ export function AiPanel({
             })()
             return
           }
-          transitionJob('FAILED')
+          transitionJob(code === 'budget' ? 'BUDGET_BLOCKED' : 'FAILED')
           setChat((prev) => {
             const next = [...prev]
             // the loop rolled this run's user message out of the model context — surface that
@@ -848,16 +864,21 @@ export function AiPanel({
     setBusy(true)
     // Persist the user message (store display text + attachment metadata; loop.restore rebuilds model context on file reopen)
     persistMessage('user', shown, undefined, attachmentsRef.current)
-    void collectImageAttachments()
-      .then(async (images) => {
+    void Promise.all([
+      collectImageAttachments(),
+      window.slidesApi.aiJobBegin(lifecycle.snapshot.metadata.jobId),
+    ])
+      .then(async ([images, ticket]) => {
         if (
           !acceptsSlidesJobCallback(lifecycle, generation, currentGenerationRef.current, [
             'PREPARING',
           ])
         ) {
           runStartingRef.current = false
+          void window.slidesApi.aiJobEnd(ticket).catch(() => {})
           return
         }
+        aiJobTicketRef.current = ticket
         // AI Beautify sends the current slide's rendering along, so the model sees what it edits;
         // the note rides on the model instruction only — the chat bubble stays the localized preset text
         let modelInstruction = instruction
@@ -875,6 +896,7 @@ export function AiPanel({
         loop.run(modelInstruction, images)
       })
       .catch(() => {
+        endAiJob()
         runStartingRef.current = false
         if (lifecycle.snapshot.state === 'PREPARING') transitionJob('FAILED')
         void finishHistoryBatch().finally(() => setBusy(false))
@@ -916,7 +938,6 @@ export function AiPanel({
     const controller = new AbortController()
     qcAbortRef.current = controller
     const capped = pages.slice(0, QC_MAX_PAGES)
-    const transport = createElectronTransport(() => settingsRef.current)
     const header = tGlobal('aiQcStart', { count: capped.length })
     const lines: string[] = []
     const renderEntry = () => [header, ...lines].join('\n')
@@ -924,6 +945,12 @@ export function AiPanel({
     stickToBottomRef.current = true
     setChat((prev) => [...prev, { role: 'assistant', text: header, streaming: true }])
     try {
+      const ticket = await window.slidesApi.aiJobBegin(`qc-${crypto.randomUUID()}`)
+      aiJobTicketRef.current = ticket
+      const transport = createElectronTransport(
+        () => settingsRef.current,
+        () => aiJobTicketRef.current,
+      )
       for (const page of capped) {
         if (controller.signal.aborted) break
         const shot = await captureSlideShot(page)
@@ -975,6 +1002,7 @@ export function AiPanel({
       }
       if (controller.signal.aborted) lines.push(tGlobal('aiQcStopped'))
     } finally {
+      endAiJob()
       qcRunningRef.current = false
       qcAbortRef.current = null
       const finalText = renderEntry()
@@ -999,6 +1027,7 @@ export function AiPanel({
     currentGenerationRef.current += 1
     if (jobLifecycleRef.current?.snapshot.state === 'PREPARING') transitionJob('CANCELLED')
     loopRef.current?.cancel()
+    endAiJob()
     if (!loopRef.current?.busy && !historyBatchActiveRef.current) {
       cancellationRequestedRef.current = false
       setBusy(false)
@@ -1049,25 +1078,21 @@ export function AiPanel({
     e.preventDefault()
     e.stopPropagation()
     setDragOver(false)
-    const paths = Array.from(e.dataTransfer.files)
-      .map((f) => window.desktop.getPathForFile(f))
-      .filter(Boolean)
-    if (paths.length > 0) mergeAttachments(await window.desktop.addAttachmentPaths(paths))
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length > 0) mergeAttachments(await window.desktop.addAttachmentFiles(files))
   }
 
   /** Files pasted into the input box: those with local paths go the regular attachment route; pure bitmaps like screenshots land in a temp file first */
   const onPasteFiles = async (files: File[]) => {
-    const paths: string[] = []
     for (const f of files) {
-      const p = window.desktop.getPathForFile(f)
-      if (p) {
-        paths.push(p)
+      const local = await window.desktop.addAttachmentFiles([f])
+      if (local.accepted.length > 0 || local.rejected.length > 0) {
+        mergeAttachments(local)
         continue
       }
       const ext = PASTE_MIME_EXT[f.type] ?? f.name.split('.').pop()?.toLowerCase() ?? 'bin'
       mergeAttachments(await window.desktop.addPastedImage(await f.arrayBuffer(), ext))
     }
-    if (paths.length > 0) mergeAttachments(await window.desktop.addAttachmentPaths(paths))
   }
 
   const removeAttachment = (path: string) =>

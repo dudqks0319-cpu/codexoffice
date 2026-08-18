@@ -9,6 +9,7 @@ import {
 
 const valid = () => ({
   requestId: 'req-1',
+  job: { jobId: 'job-1', capability: 'main-issued-secret', maximumOutputTokens: 8192 },
   settings: { attacker: 'ignored' },
   system: 'system',
   messages: [{ role: 'user', text: 'hello' }],
@@ -52,5 +53,18 @@ describe('AI IPC validation', () => {
     })
     expect(parseAiRequestId('req:1')).toBe('req:1')
     expect(() => parseAiRequestId('../bad')).toThrow()
+  })
+
+  it('requires an exact main-issued job ticket shape', () => {
+    expect(() => parseAiStreamRequest({ ...valid(), job: undefined })).toThrow()
+    expect(() =>
+      parseAiStreamRequest({
+        ...valid(),
+        job: { ...valid().job, maximumOutputTokens: 8193 },
+      }),
+    ).toThrow()
+    expect(() =>
+      parseAiStreamRequest({ ...valid(), job: { ...valid().job, hidden: true } }),
+    ).toThrow()
   })
 })

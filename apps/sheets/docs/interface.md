@@ -23,7 +23,7 @@ The AI panel is secondary to the worksheet and can be collapsed to maximize work
 - explicit apply or discard;
 - revisioned undo.
 
-External XLSX files support direct cell value/formula editing and ribbon style edits, saved back with preservation checks. AI editing remains demo-only: the panel's AI inputs are disabled for imported files and display the save/streaming state.
+External XLSX files support direct cell value/formula editing and ribbon style edits, saved back with preservation checks. The AI panel can inspect imported workbooks and preview/apply up to 2,000 cell-only changes on one sheet; structural, formatting, rename, and cross-sheet AI proposals remain fail-closed until they have an atomic rollback adapter.
 
 ## Large workbooks
 
@@ -31,20 +31,23 @@ Opening an XLSX creates only worksheet skeletons in Univer. The visible range an
 
 The UI therefore keeps the same worksheet, formula-bar, and tab navigation model for small and large files without loading every cell into the renderer.
 
+Small workbooks preload for live formula calculation. Large workbooks calculate a bounded dependency closure while the rest streams on demand; if that closure cannot be represented, the sidecar calculation engine overlays supported formula results and leaves unsupported functions at their file-cached values. Editing and preservation-checked save remain available in both modes.
+
 ## Workbook visuals
 
 Streamed cells display their source font, fill, alignment, and number format where those values can be resolved directly from `styles.xml`.
 
-Images and charts remain anchored to worksheet ranges while the user scrolls. Embedded images load on demand. Column, horizontal bar, line, pie, and bar-line combination charts render from the cached series stored in the XLSX package. This is a read-only compatibility view, not an editable native chart designer.
+Images and charts remain anchored to worksheet ranges while the user scrolls. Embedded images load on demand. Column, horizontal bar, line, area, scatter, pie, doughnut, and combination charts render from cached XLSX series. Supported charts expose bounded title, type, series-color, label, axis, and data-range edits; file visuals support the documented move/resize/delete subset. This is still a compatibility renderer, not a pixel-identical native Excel chart designer.
 
 ## Current limitations
 
 The main interface-level gaps:
 
-- row/column inserts/deletions and merge/unmerge save on fully-loaded workbooks (≤50k cells) only; sheets with tables or anchored charts fail closed at save time (cross-sheet references are rewritten automatically);
-- sheet rename/add/delete save on any external workbook; range moves and sheet reorder/duplicate/hide remain blocked;
-- complete Excel chart themes, effects, 3D variants, and chart/image editing panels;
+- range moves remain blocked; row/column inserts/deletions and merge/unmerge save in every load mode, but unsupported table/drawing interactions fail closed;
+- sheet rename/add/delete/hide/reorder save on streamed files; duplication requires a fully loaded source (or a sheet created in the current session) and rejects unsupported related parts;
+- complete Excel chart themes, secondary axes, trendlines, effects, 3D variants, scatter-series range editing, and absolute-anchor moves;
 - pattern-fill editing and diagonal-border controls (edge borders, full color pickers, and fill clearing shipped);
-- page layout and printing configuration.
+- editing/deleting tables that came from the file and structured-reference formula evaluation;
+- pixel-identical print pagination (orientation, paper, margins, scaling/fit, gridlines/headings, print areas/titles, header/footer, freeze, and bounded PDF export are implemented).
 
 Unsupported drawing shapes are surfaced as placeholders. The corresponding editing controls remain reserved for later compatibility milestones.

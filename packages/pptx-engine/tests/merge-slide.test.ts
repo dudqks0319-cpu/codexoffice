@@ -6,23 +6,8 @@
  * openPptx → mergeSlideFromPptx → savePptx → openPptx chain with no mocks.
  */
 import { describe, it, expect } from 'vitest'
-import PptxGenJS from 'pptxgenjs'
 import { openPptx, savePptx, mergeSlideFromPptx } from '../src/index'
-
-// 1x1 red-dot PNG (base64)
-const RED_DOT =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
-
-async function onePagePptx(text: string, withImage = false): Promise<Uint8Array> {
-  const p = new PptxGenJS()
-  p.defineLayout({ name: 'W', width: 13.333, height: 7.5 })
-  p.layout = 'W'
-  const s = p.addSlide()
-  s.addText(text, { x: 1, y: 1, w: 8, h: 1, fontSize: 32 })
-  if (withImage) s.addImage({ data: 'image/png;base64,' + RED_DOT, x: 1, y: 3, w: 2, h: 2 })
-  const buf = (await p.write({ outputType: 'nodebuffer' })) as Buffer
-  return new Uint8Array(buf)
-}
+import { pptxGenJsTextFixture as onePagePptx } from './pptxgenjs-fixture'
 
 describe('mergeSlideFromPptx', () => {
   it('merges a single-slide pptx into an existing deck, slide count grows and content is kept', async () => {

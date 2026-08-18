@@ -7,6 +7,12 @@ import type {
   CodexAccountStatus,
   CodexModelSummary,
 } from '@genoffice/ai-provider'
+import {
+  parseAiJobBudgetTicket,
+  parseAiJobId,
+  parseAiRequestId,
+  parseAiStreamRequest,
+} from '@genoffice/ai-provider'
 import type { ProjectApi } from '@genoffice/project-store'
 import type {
   AttachmentAddResult,
@@ -228,12 +234,18 @@ const desktopApi: DesktopApi = {
     }
     return result as unknown as AiChatResponse
   },
+  async aiJobBegin(jobId) {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiJobBegin, parseAiJobId(jobId))
+    return parseAiJobBudgetTicket(result)
+  },
+  async aiJobEnd(ticket) {
+    await ipcRenderer.invoke(IPC_CHANNELS.aiJobEnd, parseAiJobBudgetTicket(ticket))
+  },
   async aiStream(request) {
-    await ipcRenderer.invoke(IPC_CHANNELS.aiStream, request)
+    await ipcRenderer.invoke(IPC_CHANNELS.aiStream, parseAiStreamRequest(request))
   },
   async aiStreamCancel(requestId) {
-    if (!requestId) throw new Error('Invalid AI stream request id.')
-    await ipcRenderer.invoke(IPC_CHANNELS.aiStreamCancel, requestId)
+    await ipcRenderer.invoke(IPC_CHANNELS.aiStreamCancel, parseAiRequestId(requestId))
   },
   async aiCodexStatus() {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiCodexStatus)
@@ -287,15 +299,11 @@ const desktopApi: DesktopApi = {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.filesPick)
     return result === null ? null : parseAttachmentAddResult(result)
   },
-  async addAttachmentPaths(paths) {
-    if (
-      !Array.isArray(paths) ||
-      paths.length === 0 ||
-      paths.length > 50 ||
-      paths.some((p) => typeof p !== 'string' || p.length === 0 || p.length > 1024)
-    ) {
-      throw new Error('Invalid attachment paths.')
+  async addAttachmentFiles(files) {
+    if (!Array.isArray(files) || files.length === 0 || files.length > 50) {
+      throw new Error('Invalid attachment files.')
     }
+    const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.filesAdd, paths)
     return parseAttachmentAddResult(result)
   },
@@ -356,9 +364,6 @@ const desktopApi: DesktopApi = {
     if (result.mime !== undefined) image.mime = result.mime
     if (result.error !== undefined) image.error = result.error
     return image
-  },
-  getPathForFile(file) {
-    return webUtils.getPathForFile(file)
   },
 }
 

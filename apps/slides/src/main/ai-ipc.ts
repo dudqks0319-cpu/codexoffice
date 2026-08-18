@@ -4,7 +4,7 @@
  * to avoid renderer CORS), search tools, and slides-only provider-independent tools.
  */
 import { app, BrowserWindow, dialog, ipcMain, nativeImage } from 'electron'
-import type { IpcMainInvokeEvent, MessageBoxOptions } from 'electron'
+import type { IpcMainInvokeEvent, MessageBoxOptions, WebContents } from 'electron'
 import {
   existsSync,
   mkdirSync,
@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import {
   acquireAiRequest,
+  AiJobBudgetError,
   AiCreditsError,
   CodexImageError,
   CodexImageGenerator,
@@ -25,9 +26,14 @@ import {
   CODEX_IMAGE_MAX_DIMENSION,
   defaultAiSettings,
   createAiTurnController,
+  estimateAiStreamInputTokens,
+  estimateAiStreamOutputTokens,
+  globalAiJobBudgetGate,
   aiTurnTimeoutMsForReasoning,
   getCodexAccountStatus,
   loginCodex,
+  parseAiJobBudgetTicket,
+  parseAiJobId,
   parseAiRequestId,
   parseAiStreamRequest,
   runIfAiTurnActive,
@@ -75,6 +81,7 @@ function writeJson(path: string, value: unknown): void {
 }
 
 const activeAiStreams = new Map<string, AbortController>()
+const aiBudgetOwners = new Set<number>()
 const codexImages = new CodexImageGenerator()
 const CODEX_ACCOUNT_CHECK_ERROR = "Unable to verify this app's Codex account. Try again."
 
@@ -83,6 +90,16 @@ const IMAGE_SESSION_WATCH_MS = 100
 const IMAGE_MIN_FIT_WIDTH_PX = 100
 const IMAGE_MAX_EMU = 2_147_483_647
 const IMAGE_SUBJECT_ID = 'slides:local-app'
+
+function bindAiBudgetOwner(sender: WebContents): void {
+  const senderId = sender.id
+  if (aiBudgetOwners.has(senderId)) return
+  aiBudgetOwners.add(senderId)
+  sender.once('destroyed', () => {
+    aiBudgetOwners.delete(senderId)
+    globalAiJobBudgetGate.clearOwner(String(senderId))
+  })
+}
 
 /** Strictly validate the renderer boundary before showing a cost confirmation dialog. */
 export function parseGenerateSlideImageOp(input: unknown): GenerateSlideImageOp | null {
@@ -443,17 +460,53 @@ export function registerAiIpc(): void {
 
   ipcMain.handle('ai:set-settings', () => undefined)
 
+  ipcMain.handle('ai:job-begin', (event, input: unknown) => {
+    bindAiBudgetOwner(event.sender)
+    return globalAiJobBudgetGate.begin(String(event.sender.id), parseAiJobId(input))
+  })
+
+  ipcMain.handle('ai:job-end', (event, input: unknown) => {
+    globalAiJobBudgetGate.end(String(event.sender.id), parseAiJobBudgetTicket(input))
+  })
+
   ipcMain.handle('ai:stream', async (event, input: unknown) => {
     const request = parseAiStreamRequest(input)
     const { requestId, system, messages } = request
     const tools = request.tools ?? []
-    const maxTokens = request.maxTokens ?? 8192
     const provider = 'codex' as const
     const config = defaultAiSettings().providers.codex
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send('ai:stream-chunk', chunk)
     }
-    const lease = acquireAiRequest(requestId, maxTokens)
+    const owner = String(event.sender.id)
+    const inputTokens = estimateAiStreamInputTokens(request)
+    let budgetLease: ReturnType<typeof globalAiJobBudgetGate.acquireTurn>
+    try {
+      budgetLease = globalAiJobBudgetGate.acquireTurn(
+        owner,
+        request.job,
+        requestId,
+        inputTokens,
+        request.maxTokens ?? 2_048,
+      )
+    } catch (err) {
+      if (err instanceof AiJobBudgetError) {
+        send({
+          requestId,
+          type: 'error',
+          error: 'This AI task reached its 8,192-token budget. Start a new request to continue.',
+          errorCode: 'budget',
+        })
+        return
+      }
+      throw err
+    }
+    const maxTokens = budgetLease.maxTokens
+    let requestLease: ReturnType<typeof acquireAiRequest> | undefined
+    let providerStarted = false
+    let completed = false
+    let outputText = ''
+    const outputToolCalls: NonNullable<AiStreamChunk['toolCall']>[] = []
     const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
     const controller = deadline.controller
     const streamKey = `${event.sender.id}:${requestId}`
@@ -474,18 +527,28 @@ export function registerAiIpc(): void {
         send({ requestId, type: 'error', error: account.error ?? tm('errCodexNotLoggedIn') })
         return
       }
+      requestLease = acquireAiRequest(requestId, inputTokens + maxTokens)
       const started = await runIfAiTurnActive(
         controller.signal,
         () => event.sender.isDestroyed(),
-        () =>
-          streamForProvider(provider, config, system, messages, tools, maxTokens, {
+        () => {
+          providerStarted = true
+          return streamForProvider(provider, config, system, messages, tools, maxTokens, {
             signal: controller.signal,
-            onDelta: (text) => send({ requestId, type: 'delta', text }),
-            onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
+            onDelta: (text) => {
+              outputText += text
+              send({ requestId, type: 'delta', text })
+            },
+            onToolCall: (toolCall) => {
+              outputToolCalls.push(toolCall)
+              send({ requestId, type: 'tool-call', toolCall })
+            },
             onActivity: ping,
-          }),
+          })
+        },
       )
       if (!started) return
+      completed = true
       send({ requestId, type: 'done' })
     } catch (err) {
       if (controller.signal.aborted) {
@@ -515,7 +578,15 @@ export function registerAiIpc(): void {
       activeAiStreams.delete(streamKey)
       event.sender.removeListener('destroyed', abortOnDestroyed)
       deadline.release()
-      lease.release()
+      if (providerStarted) requestLease?.release()
+      else requestLease?.rollback()
+      budgetLease.settle({
+        providerStarted,
+        completed,
+        ...(completed
+          ? { outputTokens: estimateAiStreamOutputTokens(outputText, outputToolCalls) }
+          : {}),
+      })
     }
   })
 

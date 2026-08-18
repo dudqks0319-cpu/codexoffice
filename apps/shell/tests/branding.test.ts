@@ -18,7 +18,7 @@ describe('Codexoffice product metadata', () => {
 
   it.each([
     [
-      'apps/shell/electron-builder.cjs',
+      'apps/shell/build/electron-builder-config.js',
       'com.genoffice.app',
       'Codexoffice-${version}-${arch}.${ext}',
     ],
@@ -54,20 +54,37 @@ describe('Codexoffice product metadata', () => {
 
   it('preserves installed identities and existing user data paths', () => {
     const shellMain = read('apps/shell/src/main/index.ts')
-    expect(shellMain).toContain("const userData = userDataOverride ?? join(appData, 'GenOffice')")
+    expect(shellMain).toContain("const userData = join(appData, 'GenOffice')")
     expect(shellMain).toMatch(
-      /const userDataOverride\s*=\s*requestedUserData && allowPackagedUserDataOverride && isAbsolute\(requestedUserData\)\s*\?/,
+      /const userDataOverride\s*=\s*!app\.isPackaged && requestedUserData && isAbsolute\(requestedUserData\)\s*\?/,
     )
-    expect(shellMain).toContain("process.env.GENOFFICE_PACKAGED_SMOKE === '1'")
+    expect(shellMain).not.toContain('GENOFFICE_PACKAGED_SMOKE')
     expect(shellMain).toContain("const olderUserData = join(appData, 'AI Office')")
     expect(shellMain).toContain("app.setPath('userData', userData)")
     expect(shellMain).toContain('readdirSync(userData).length === 0')
     expect(shellMain).toContain('cpSync(olderUserData, userData, { recursive: true })')
-    expect(shellMain).toContain('if (!userDataOverride)')
     expect(read('apps/docs/src/main/docs-main.ts')).toContain("'GenOffice Docs'")
     expect(read('apps/sheets/src/main/sheets-main.ts')).toContain("'GenOffice Sheets'")
     expect(read('apps/slides/src/main/slides-main.ts')).toContain("'GenOffice Slides'")
     expect(read('apps/pdf/src/main/pdf-main.ts')).toContain("'GenOffice PDF'")
+  })
+
+  it('blocks packaged AI smoke before spawning without a compile-time scratch profile', () => {
+    const guardCall = 'assertPackagedSmokeIsolation()'
+    const guard = read('scripts/drivers/packaged-smoke-isolation.mjs')
+    expect(guard).toContain('throw new Error(')
+    expect(guard).toContain('no compile-time scratch-profile contract is configured')
+
+    for (const driverPath of [
+      'scripts/drivers/driver.packaged-smoke.mjs',
+      'scripts/drivers/driver.authenticated-image-smoke.mjs',
+      'scripts/drivers/driver.luna-max-evidence-smoke.mjs',
+    ]) {
+      const driver = read(driverPath)
+      expect(driver).toContain("from './packaged-smoke-isolation.mjs'")
+      expect(driver.indexOf(guardCall)).toBeGreaterThanOrEqual(0)
+      expect(driver.indexOf(guardCall)).toBeLessThan(driver.indexOf('spawn('))
+    }
   })
 
   it('uses Codexoffice names for every File > New product label', () => {

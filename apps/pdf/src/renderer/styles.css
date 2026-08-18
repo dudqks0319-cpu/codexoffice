@@ -307,9 +307,13 @@ button {
 }
 
 .tb-save-error {
+  max-width: 45%;
   color: #c0392b;
   font-size: 12px;
   margin-right: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tb-save-ok {

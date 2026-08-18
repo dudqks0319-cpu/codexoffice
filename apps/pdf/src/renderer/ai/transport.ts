@@ -3,16 +3,20 @@ import {
   IPC_STREAM_SILENCE_TIMEOUT_MS,
   type AgentTransport,
 } from '@genoffice/agent-core'
-import type { AiSettings } from '@genoffice/ai-provider'
+import type { AiJobBudgetTicket, AiSettings } from '@genoffice/ai-provider'
 import { t } from '../i18n/locale'
 
 /** The shared IPC transport wired to the pdf preload bridge (window.pdfApi). */
-export function createElectronTransport(getSettings: () => AiSettings): AgentTransport {
+export function createElectronTransport(
+  getSettings: () => AiSettings,
+  getJobTicket: () => AiJobBudgetTicket | null,
+): AgentTransport {
   return createIpcTransport<AiSettings>({
     onStream: (listener) => window.pdfApi.onAiStream(listener),
     start: (request) => window.pdfApi.aiStream(request),
     cancel: (requestId) => void window.pdfApi.aiStreamCancel(requestId),
     getSettings,
+    getJobTicket,
     silenceTimeoutMs: (settings) => {
       const effort = settings.providers.codex.reasoningEffort
       return effort === 'max'

@@ -1,10 +1,16 @@
 import type { Lang } from '@genoffice/i18n'
-import type { AiSettings, AiStreamChunk, AiStreamRequest } from '@genoffice/ai-provider'
+import type {
+  AiJobBudgetTicket,
+  AiSettings,
+  AiStreamChunk,
+  AiStreamRequest,
+} from '@genoffice/ai-provider'
 
 export const PDF_CHANNELS = {
   consumePending: 'pdf:consume-pending',
   readFile: 'pdf:read-file',
   save: 'pdf:save',
+  writeRecovery: 'pdf:write-recovery',
   extractPages: 'pdf:extract-pages',
   insertPdf: 'pdf:insert-pdf',
   exportImages: 'pdf:export-images',
@@ -17,6 +23,9 @@ export const PDF_CHANNELS = {
   getLanguage: 'app:get-language',
   languageChanged: 'app:language-changed',
 } as const
+
+/** Shared renderer/main safety ceiling for documents and page-indexed IPC payloads. */
+export const PDF_MAX_PAGES = 20_000
 
 export type MarkupType = 'highlight' | 'underline' | 'strikeout'
 
@@ -93,6 +102,8 @@ export interface SavePdfRequest {
    * Must match the target granted to the view by the main process (save dialog pick).
    */
   targetPath?: string
+  /** Background autosave must never prompt or overwrite an externally changed source. */
+  auto?: boolean
   markups: MarkupInput[]
   drawings: DrawingInput[]
   formValues: FormValueInput[]
@@ -106,7 +117,17 @@ export interface SavePdfRequest {
   metadata?: MetadataInput
 }
 
-export type SavePdfResult = { ok: true } | { ok: false; error: string }
+export type SavePdfResult =
+  | { ok: true }
+  | {
+      ok: false
+      error: string
+      code?: 'source-changed'
+      /** Complete edited PDF written from the session's original bytes. */
+      recoveryPath?: string
+    }
+
+export type WritePdfRecoveryResult = { ok: true } | { ok: false; error?: string }
 
 /** Extract pages into a new PDF: main process shows a save dialog; cancel returns canceled */
 export interface ExtractPagesRequest {
@@ -146,6 +167,8 @@ export type ExportImagesResult =
 /** AI channels are app-wide shared ipcMain handlers (shell registers via docs-main registerAiIpc); pass-through only */
 export const AI_CHANNELS = {
   getSettings: 'ai:get-settings',
+  jobBegin: 'ai:job-begin',
+  jobEnd: 'ai:job-end',
   stream: 'ai:stream',
   streamChunk: 'ai:stream-chunk',
   streamCancel: 'ai:stream-cancel',
@@ -159,6 +182,8 @@ export interface PdfApi {
   readFile(path: string): Promise<ArrayBuffer>
   /** Write markups/form values/page ops back to the original file (pdf-lib, content streams untouched); path grants same as readFile. With targetPath set (Save As), the original is only read and the result goes to targetPath */
   save(request: SavePdfRequest): Promise<SavePdfResult>
+  /** Write a complete dirty recovery PDF under userData without touching the source. */
+  writeRecovery(request: SavePdfRequest): Promise<WritePdfRecoveryResult>
   extractPages(request: ExtractPagesRequest): Promise<ExtractPagesResult>
   insertPdf(request: InsertPdfRequest): Promise<InsertPdfResult>
   exportImages(request: ExportImagesRequest): Promise<ExportImagesResult>
@@ -175,6 +200,8 @@ export interface PdfApi {
   getLanguage(): Promise<Lang>
   onLanguageChanged(handler: (lang: Lang) => void): () => void
   getAiSettings(): Promise<AiSettings>
+  aiJobBegin(jobId: string): Promise<AiJobBudgetTicket>
+  aiJobEnd(ticket: AiJobBudgetTicket): Promise<void>
   aiStream(request: AiStreamRequest): Promise<void>
   aiStreamCancel(requestId: string): Promise<void>
   onAiStream(handler: (chunk: AiStreamChunk) => void): () => void

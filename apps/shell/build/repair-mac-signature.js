@@ -3,81 +3,88 @@ const { existsSync, statSync } = require('node:fs')
 const { join } = require('node:path')
 const { signAsync } = require('@electron/osx-sign')
 
-function verify(appPath) {
-  try {
-    execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', appPath], {
-      stdio: 'ignore',
+function createRepairMacSignature(dependencies = {}) {
+  const environment = dependencies.env ?? process.env
+  const currentPlatform = dependencies.platform ?? process.platform
+  const fileExists = dependencies.existsSync ?? existsSync
+  const fileStat = dependencies.statSync ?? statSync
+  const runFile = dependencies.execFileSync ?? execFileSync
+  const signer = dependencies.signAsync ?? signAsync
+  const warn = dependencies.warn ?? console.warn
+  const log = dependencies.log ?? console.log
+
+  function verify(appPath) {
+    try {
+      runFile('/usr/bin/codesign', ['--verify', '--deep', '--strict', appPath], {
+        stdio: 'ignore',
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  function isCodePath(filePath) {
+    if (/\.(?:app|framework|xpc|dylib|node)$/i.test(filePath)) return true
+    try {
+      return fileStat(filePath).isFile() && (fileStat(filePath).mode & 0o111) !== 0
+    } catch {
+      return false
+    }
+  }
+
+  return async function repairMacSignature(context) {
+    if (currentPlatform !== 'darwin') return
+    const appName = context.packager.appInfo.productFilename
+    const appPath = join(context.appOutDir, `${appName}.app`)
+    if (!fileExists(appPath)) return
+    const builderIdentity = context.packager.platformSpecificBuildOptions?.identity
+    if (
+      environment.CSC_IDENTITY_AUTO_DISCOVERY === 'false' ||
+      builderIdentity === null ||
+      environment.GENOFFICE_SIGNING_AUTHORIZED !== '1'
+    ) {
+      warn('[mac-sign] signing not authorized; leaving local package unsigned')
+      return
+    }
+    const identity =
+      (typeof builderIdentity === 'string' && builderIdentity.trim()) ||
+      (typeof environment.CSC_NAME === 'string' && environment.CSC_NAME.trim())
+    const timestampMode = environment.GENOFFICE_SIGNING_TIMESTAMP_MODE
+    const forceUntimestampedLocalSign =
+      timestampMode === 'none' && environment.GENOFFICE_LOCAL_UNTIMESTAMPED_SIGN === '1'
+    if (
+      !identity ||
+      (timestampMode !== 'secure' && timestampMode !== 'none') ||
+      (timestampMode === 'none' && !forceUntimestampedLocalSign)
+    ) {
+      warn('[mac-sign] signing prerequisites unavailable; leaving local package unsigned')
+      return
+    }
+    if (!forceUntimestampedLocalSign && verify(appPath)) return
+
+    warn(
+      forceUntimestampedLocalSign
+        ? `[mac-sign] applying local untimestamped signature for ${appName}`
+        : `[mac-sign] repairing embedded signature for ${appName}`,
+    )
+    await signer({
+      app: appPath,
+      identity,
+      platform: 'darwin',
+      type: 'distribution',
+      hardenedRuntime: true,
+      optionsForFile: () => ({
+        timestamp: forceUntimestampedLocalSign ? 'none' : true,
+        hardenedRuntime: true,
+      }),
+      strictVerify: true,
+      ignore: (filePath) => !isCodePath(filePath),
     })
-    return true
-  } catch {
-    return false
+    if (!verify(appPath)) throw new Error(`[mac-sign] repaired signature still fails: ${appPath}`)
+    log('[mac-sign] embedded signature verified')
   }
 }
 
-function discoverIdentity() {
-  if (process.env.CSC_NAME) return process.env.CSC_NAME
-  try {
-    const output = execFileSync('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], {
-      encoding: 'utf8',
-    })
-    const match = output.match(/"([^"]*Developer ID Application[^"]*)"/)
-    return match?.[1] ?? null
-  } catch {
-    return null
-  }
-}
-
-function isCodePath(filePath) {
-  if (/\.(?:app|framework|xpc|dylib|node)$/i.test(filePath)) return true
-  try {
-    return statSync(filePath).isFile() && (statSync(filePath).mode & 0o111) !== 0
-  } catch {
-    return false
-  }
-}
-
-exports.default = async function repairMacSignature(context) {
-  if (process.platform !== 'darwin') return
-  const appName = context.packager.appInfo.productFilename
-  const appPath = join(context.appOutDir, `${appName}.app`)
-  const forceUntimestampedLocalSign = process.env.GENOFFICE_LOCAL_UNTIMESTAMPED_SIGN === '1'
-  if (!existsSync(appPath) || (!forceUntimestampedLocalSign && verify(appPath))) return
-
-  const identity = discoverIdentity()
-  if (!identity) {
-    console.warn('[mac-sign] embedded signature failed verification; no Developer ID identity found')
-    return
-  }
-
-  console.warn(
-    forceUntimestampedLocalSign
-      ? `[mac-sign] applying local untimestamped Developer ID signature for ${appName}`
-      : `[mac-sign] repairing embedded signature for ${appName}`,
-  )
-  // `codesign --deep` can report success while preserving ad-hoc signatures
-  // on Electron's dylibs. macOS then refuses to map them into the Developer-ID
-  // process because their Team IDs differ. electron-osx-sign walks children
-  // deepest-first and explicitly re-signs every framework/helper/dylib.
-  await signAsync({
-    app: appPath,
-    identity,
-    platform: 'darwin',
-    type: 'distribution',
-    hardenedRuntime: true,
-    // osx-sign 1.3.x reads per-file signing options only through
-    // `optionsForFile`. Its top-level `timestamp` option is ignored, and a
-    // boolean false still falls back to `--timestamp`. The literal `none`
-    // below emits `--timestamp=none` for every nested code object.
-    optionsForFile: forceUntimestampedLocalSign
-      ? () => ({ timestamp: 'none', hardenedRuntime: true })
-      : undefined,
-    strictVerify: true,
-    // osx-sign's binary detector also classifies fonts and Office fixtures as
-    // binary. Signing those wastes one timestamp request per asset and can
-    // stall packaging for minutes. Keep only bundles, Mach-O libraries/native
-    // modules, and executable sidecars.
-    ignore: (filePath) => !isCodePath(filePath),
-  })
-  if (!verify(appPath)) throw new Error(`[mac-sign] repaired signature still fails: ${appPath}`)
-  console.log('[mac-sign] embedded signature verified')
-}
+exports.createRepairMacSignature = createRepairMacSignature
+exports.default = createRepairMacSignature()

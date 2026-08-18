@@ -1,5 +1,5 @@
 import type { AgentMessage, AgentToolDef } from '@genoffice/agent-core'
-import type { AiChatRequest, AiStreamRequest } from './types'
+import type { AiChatRequest, AiJobBudgetTicket, AiStreamRequest } from './types'
 
 export const AI_DEFAULT_MAX_TOKENS = 8192
 export const AI_MAX_TOKENS = 32_768
@@ -7,6 +7,8 @@ export const AI_MAX_TOKENS = 32_768
 export const AI_MAX_REQUEST_BYTES = 30 * 1024 * 1024
 
 const MAX_REQUEST_ID = 128
+const MAX_JOB_ID = 128
+const MAX_JOB_CAPABILITY = 128
 const MAX_SYSTEM_CHARS = 65_536
 const MAX_USER_CHARS = 262_144
 const MAX_MESSAGES = 128
@@ -234,7 +236,7 @@ function enforceSerializedSize(value: unknown): void {
 export function parseAiStreamRequest(value: unknown): AiStreamRequest {
   if (!record(value)) invalid()
   // settings is accepted only for wire compatibility; it is deliberately discarded.
-  exactKeys(value, ['requestId', 'settings', 'system', 'messages', 'tools', 'maxTokens'])
+  exactKeys(value, ['requestId', 'job', 'settings', 'system', 'messages', 'tools', 'maxTokens'])
   const requestId = boundedString(value.requestId, MAX_REQUEST_ID, false)
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(requestId)) invalid()
   const maxTokens = value.maxTokens === undefined ? AI_DEFAULT_MAX_TOKENS : value.maxTokens
@@ -246,6 +248,7 @@ export function parseAiStreamRequest(value: unknown): AiStreamRequest {
     invalid()
   const parsed: AiStreamRequest = {
     requestId,
+    job: parseAiJobBudgetTicket(value.job),
     settings: value.settings as AiStreamRequest['settings'],
     system: boundedString(value.system, MAX_SYSTEM_CHARS),
     messages: parseMessages(value.messages),
@@ -254,6 +257,25 @@ export function parseAiStreamRequest(value: unknown): AiStreamRequest {
   }
   enforceSerializedSize(parsed)
   return parsed
+}
+
+export function parseAiJobId(value: unknown): string {
+  const jobId = boundedString(value, MAX_JOB_ID, false)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(jobId)) invalid()
+  return jobId
+}
+
+export function parseAiJobBudgetTicket(value: unknown): AiJobBudgetTicket {
+  if (!record(value)) invalid()
+  exactKeys(value, ['jobId', 'capability', 'maximumOutputTokens'])
+  const capability = boundedString(value.capability, MAX_JOB_CAPABILITY, false)
+  if (!/^[A-Za-z0-9_-]+$/.test(capability)) invalid()
+  if (!Number.isInteger(value.maximumOutputTokens) || value.maximumOutputTokens !== 8_192) invalid()
+  return {
+    jobId: parseAiJobId(value.jobId),
+    capability,
+    maximumOutputTokens: 8_192,
+  }
 }
 
 /** Browser-safe runtime validation for the untrusted renderer-to-main one-shot payload. */

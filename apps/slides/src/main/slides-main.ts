@@ -23,7 +23,7 @@ import { readFile, writeFile, rm, stat, mkdir, open } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync } from 'node:fs'
 import { userInfo } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
   appMenuLabels,
   contextMenuLabels,
@@ -35,6 +35,7 @@ import { getUiLang, normalizeLang, setUiLang } from '@genoffice/i18n'
 import {
   configureCodexExecutable,
   configureCodexHome,
+  configureAiRequestGateStorage,
   packagedCodexExecutablePath,
 } from '@genoffice/ai-provider/node'
 import { ProjectStore } from '@genoffice/project-store'
@@ -47,8 +48,6 @@ import {
   addSlideComment,
   addSmartArt,
   applyHeaderFooter,
-  applyThemeToArchive,
-  remapDeckColors,
   addTable,
   copyElementData,
   editPictureSrcRect,
@@ -105,7 +104,6 @@ import {
   parseTheme,
   pasteElements,
   reorderElement,
-  reparseDeck,
   savePptxToFile,
   commitSaved,
   setElementFont,
@@ -163,6 +161,7 @@ import type {
   AddSmartArtOp,
   AddTableOp,
   ApplyThemeOp,
+  ApplyImportedThemeOp,
   HeaderFooterOp,
   SetLinkOp,
   CopyElementsOp,
@@ -227,6 +226,7 @@ import { tiffToPng } from './tiff-decode'
 import {
   beginHistoryBatch,
   buildAllRenderSlides,
+  applyThemeToSession,
   dialogParent,
   endHistoryBatch,
   getFontMetrics,
@@ -237,6 +237,11 @@ import {
   registerAiSnapshot,
   restoreAiSnapshot,
   restoreSnapshot,
+  markHistoryDirtyAfterSave,
+  bumpSessionRevision,
+  sessionHasDirtyState,
+  sessionIsCurrent,
+  sessionRevision,
   settleStaleHistoryBatch,
   runtime,
   sessions,
@@ -252,8 +257,21 @@ let slideClipboard: { bundle: SlideBundle; png?: string } | null = null
 /** The immediately preceding slide paste per webContents, so the paste-options floater can redo it with another mode. */
 const lastSlidePaste = new Map<number, { afterIndex: number; undoLen: number }>()
 
+const THEME_IMPORT_MAX_BYTES = 100 * 1024 * 1024
+const pendingThemeImports = new ThemeImportTokenStore<
+  Session,
+  Awaited<ReturnType<typeof inspectPptxDesignIsolated>>['candidates'][number]
+>()
+const themeImportGenerations = new Map<number, number>()
+const invalidateThemeImport = (webContentsId: number): void => {
+  pendingThemeImports.invalidate(webContentsId)
+  themeImportGenerations.set(webContentsId, (themeImportGenerations.get(webContentsId) ?? 0) + 1)
+}
+
 import { registerPresenterIpc } from './presenter-show'
 import { registerAttachmentIpc } from './attachments-ipc'
+import { ThemeImportTokenStore } from './theme-import-token'
+import { inspectPptxDesignIsolated } from './design-inspect-client'
 
 export {
   configureSlidesRuntime,
@@ -357,6 +375,8 @@ function trackSlidesWebContents(wc: WebContents): void {
     if (s && !sessionDirty(s)) dropUntitledRecovery(wc.id)
     else untitledRecovery.delete(wc.id)
     sessions.delete(wc.id)
+    invalidateThemeImport(wc.id)
+    themeImportGenerations.delete(wc.id)
     pendingByWc.delete(wc.id)
     clipboards.delete(wc.id)
     lastSlidePaste.delete(wc.id)
@@ -436,12 +456,7 @@ const autosavePathFor = (filePath: string) =>
   join(autosaveDir(), `${createHash('sha1').update(filePath).digest('hex').slice(0, 16)}.pptx`)
 
 function sessionDirty(session: Session): boolean {
-  return (
-    !!session.metaDirty ||
-    session.opened.deck.slides.some(
-      (s) => s.structureDirty || s.elements.some((el) => el.dirty || el.dirtyTransform),
-    )
-  )
+  return sessionHasDirtyState(session)
 }
 
 /**
@@ -657,6 +672,7 @@ async function openAndBuild(
   path: string,
   fitWidthPx: number,
 ): Promise<OpenResult> {
+  invalidateThemeImport(wc.id)
   const raw = await readFile(path)
   const { bytes, recovered } = await maybeRecoverBytes(path, new Uint8Array(raw))
   await shapedMetricsReady() // Lay out only after complex-script shaped metrics are ready, avoiding an init race falling back to estimation
@@ -944,6 +960,7 @@ export function registerSlidesIpc(): void {
   })
 
   ipcMain.handle('slides:consume-pending-open', async (e, fitWidthPx: number) => {
+    invalidateThemeImport(e.sender.id)
     // renderer app just mounted: safe to reveal the vibrancy material behind
     // the (now painted) page without flashing raw desktop during load
     vibFlip.get(e.sender.id)?.('#00000000')
@@ -1154,6 +1171,7 @@ export function registerSlidesIpc(): void {
         session.undoStack.pop() // Slice not located: model untouched, pop the just-pushed history
         return null
       }
+      bumpSessionRevision(session)
       return rebuildSlide(session, op.slideIndex)
     }
     // Tables: redistribute gridCol widths / tr heights so the file matches the
@@ -1173,6 +1191,9 @@ export function registerSlidesIpc(): void {
     }
     el!.dirtyTransform = true
     updateConnectorsForMoved(slide, [op.sourceId])
+    // Later preview frames in the same drag do not push history, but they are still
+    // real mutations and must invalidate an in-flight save's clean-point decision.
+    bumpSessionRevision(session)
     return rebuildSlide(session, op.slideIndex)
   })
 
@@ -1261,6 +1282,7 @@ export function registerSlidesIpc(): void {
     return rebuildSlide(session, op.slideIndex)
   })
   ipcMain.handle('slides:new-blank', async (e, fitWidthPx: number): Promise<OpenResult> => {
+    invalidateThemeImport(e.sender.id)
     const opened = await openPptx(await createBlankPptx())
     sessions.set(e.sender.id, { path: '', opened, fitWidthPx, undoStack: [], redoStack: [] })
     return {
@@ -1751,6 +1773,9 @@ export function registerSlidesIpc(): void {
     session.opened.archive.entries.set(me.partPath, Buffer.from(patchSlideXml(me.slide), 'utf8'))
     for (let i = 0; i < session.opened.deck.slides.length; i++) materializeSlide(session.opened, i)
     session.metaDirty = true
+    // A final master-view commit can land while a save is awaiting disk I/O.
+    // Count it independently of the gesture's first history snapshot.
+    bumpSessionRevision(session)
   }
 
   ipcMain.handle('slides:master-enter', (e, fitWidthPx: number): MasterEnterResult | null => {
@@ -2709,46 +2734,96 @@ export function registerSlidesIpc(): void {
   // (real-world decks have almost entirely explicit colors, so swapping only the theme changes
   // nothing visually). Element resolved colors come from the parse-time inheritance chain, so
   // after the surgery the deck reparses in memory; undo snapshots roll back as usual.
-  ipcMain.handle('slides:apply-theme', async (e, op: ApplyThemeOp) => {
+  ipcMain.handle('slides:apply-theme', (e, op: ApplyThemeOp) => {
     const session = sessions.get(e.sender.id)
-    if (!session) return null
-    pushHistory(session)
+    if (!session || session.masterEdit || session.historyBatch) return null
     const spec = {
       name: op.name,
       colors: op.colors,
       ...(op.majorFont ? { majorFont: op.majorFont } : {}),
       ...(op.minorFont ? { minorFont: op.minorFont } : {}),
     }
+    return applyThemeToSession(session, spec, op.fitWidthPx)
+  })
+
+  ipcMain.handle('slides:preview-theme-import', async (e) => {
+    const session = sessions.get(e.sender.id)
+    invalidateThemeImport(e.sender.id)
+    const requestGeneration = themeImportGenerations.get(e.sender.id)!
+    if (!session || session.masterEdit || session.historyBatch)
+      return { error: 'unavailable' as const }
+    const parent = dialogParent()
+    const options = {
+      filters: [{ name: 'PowerPoint', extensions: ['pptx'] }],
+      properties: ['openFile', 'dontAddToRecent'] as Array<'openFile' | 'dontAddToRecent'>,
+    }
+    const picked = parent
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    if (picked.canceled || !picked.filePaths[0]) return null
+    const sourcePath = picked.filePaths[0]
+    if (session.path && resolve(sourcePath) === resolve(session.path))
+      return { error: 'same-file' as const }
+    let sourceHandle: Awaited<ReturnType<typeof open>> | null = null
     try {
-      // 1) Bake unsaved edits into the entries first: the color surgery edits entries
-      //    directly, and dirty elements left for a later save would overwrite the surgery
-      //    result with stale slices. In-memory (commitSaved/reparseDeck) instead of
-      //    savePptx -> openPptx: the zip roundtrip's contiguous buffer fails on large decks
-      commitSaved(session.opened)
-      // 2) Pure entry surgery: theme parts + explicit color remapping
-      const patched = applyThemeToArchive(session.opened, spec)
-      const remapped = remapDeckColors(session.opened, spec)
-      if (patched === 0 && remapped === 0) {
-        session.undoStack.pop()
-        return null
+      if (!/\.pptx$/iu.test(sourcePath)) return { error: 'invalid-file' as const }
+      sourceHandle = await open(sourcePath, 'r')
+      const sourceStat = await sourceHandle.stat()
+      if (!sourceStat.isFile() || sourceStat.size <= 0) return { error: 'invalid-file' as const }
+      if (sourceStat.size > THEME_IMPORT_MAX_BYTES) return { error: 'too-large' as const }
+      if (session.path) {
+        const destinationStat = await stat(session.path).catch(() => null)
+        if (
+          destinationStat &&
+          sourceStat.dev === destinationStat.dev &&
+          sourceStat.ino === destinationStat.ino
+        ) {
+          return { error: 'same-file' as const }
+        }
       }
-      // 3) Reparse so every element's resolved colors/fonts refresh
-      session.opened = reparseDeck(session.opened)
-    } catch (err) {
-      restoreSnapshot(session, session.undoStack.pop()!)
-      return { error: err instanceof Error ? err.message : String(err) }
-    }
-    // Pages without any background definition fall back to the theme base color (so dark themes don't leave a white background)
-    const lt1 = op.colors.lt1
-    if (lt1) {
-      for (const s of session.opened.deck.slides) {
-        if (!s.background) setSlideBackground(s, `#${lt1.replace(/^#/, '')}`)
+      const raw = await sourceHandle.readFile()
+      const afterRead = await sourceHandle.stat()
+      if (
+        raw.byteLength <= 0 ||
+        raw.byteLength > THEME_IMPORT_MAX_BYTES ||
+        afterRead.size !== raw.byteLength ||
+        afterRead.mtimeMs !== sourceStat.mtimeMs
+      ) {
+        return { error: 'invalid-file' as const }
       }
+      if (isCfbHeader(raw.subarray(0, 8)) || cfbKind(raw) != null)
+        return { error: 'unsupported-file' as const }
+      const inspection = await inspectPptxDesignIsolated(new Uint8Array(raw), sourcePath)
+      if (
+        themeImportGenerations.get(e.sender.id) !== requestGeneration ||
+        sessions.get(e.sender.id) !== session
+      ) {
+        return { error: 'expired' as const }
+      }
+      const pending = pendingThemeImports.create(e.sender.id, session, inspection.candidates)
+      return { token: pending.token, ...inspection }
+    } catch {
+      return { error: 'inspection-failed' as const }
+    } finally {
+      await sourceHandle?.close().catch(() => {})
     }
-    // Reopening cleared element-level dirty; the session-level flag preserves the "unsaved" state (reset on save)
-    session.metaDirty = true
-    session.fitWidthPx = op.fitWidthPx
-    return buildAllRenderSlides(session.opened, op.fitWidthPx)
+  })
+
+  ipcMain.handle('slides:cancel-theme-import', (e, token: string) => {
+    const session = sessions.get(e.sender.id)
+    if (session) pendingThemeImports.consume(e.sender.id, token, session)
+  })
+
+  ipcMain.handle('slides:apply-imported-theme', (e, op: ApplyImportedThemeOp) => {
+    const session = sessions.get(e.sender.id)
+    const pending = session ? pendingThemeImports.consume(e.sender.id, op.token, session) : null
+    if (!pending || !session || session.masterEdit || session.historyBatch)
+      return { error: 'expired' as const }
+    const candidate = pending.candidates.find((item) => item.id === op.candidateId)
+    if (!candidate) return { error: 'invalid-selection' as const }
+    const { id: _id, slideCount: _slideCount, ...spec } = candidate
+    const result = applyThemeToSession(session, spec, session.fitWidthPx)
+    return result && !Array.isArray(result) ? { error: 'apply-failed' as const } : result
   })
 
   ipcMain.handle('slides:set-transition', (e, op: SetTransitionOp) => {
@@ -3039,6 +3114,7 @@ export function registerSlidesIpc(): void {
     if (session.undoStack.length === 0) return null
     session.redoStack.push(takeSnapshot(session))
     restoreSnapshot(session, session.undoStack.pop()!)
+    bumpSessionRevision(session)
     return buildAllRenderSlides(session.opened, session.fitWidthPx)
   })
 
@@ -3049,18 +3125,14 @@ export function registerSlidesIpc(): void {
     if (session.redoStack.length === 0) return null
     session.undoStack.push(takeSnapshot(session))
     restoreSnapshot(session, session.redoStack.pop()!)
+    bumpSessionRevision(session)
     return buildAllRenderSlides(session.opened, session.fitWidthPx)
   })
 
   ipcMain.handle('slides:is-dirty', (e) => {
     const session = sessions.get(e.sender.id)
     if (!session) return false
-    return (
-      !!session.metaDirty ||
-      session.opened.deck.slides.some(
-        (s) => s.structureDirty || s.elements.some((el) => el.dirty || el.dirtyTransform),
-      )
-    )
+    return sessionHasDirtyState(session)
   })
 
   ipcMain.handle('slides:save', async (e) => {
@@ -3075,7 +3147,9 @@ export function registerSlidesIpc(): void {
       slidesOpenedHook?.(e.sender, session.path)
     }
     try {
+      const saveRevision = sessionRevision(session)
       await savePptxToFile(session.opened, session.path)
+      if (!sessionIsCurrent(e.sender.id, session)) return { ok: true, superseded: true }
       autosaveBackoff.delete(session.path)
       void rm(autosavePathFor(session.path), { force: true }).catch(() => {})
       dropUntitledRecovery(e.sender.id)
@@ -3083,12 +3157,17 @@ export function registerSlidesIpc(): void {
       // anchor.originalXml with disk) — a full reopen would re-read and unzip the
       // whole package, doubling save latency on large decks. Element ids survive,
       // but the renderer still expects the render tree in the response.
-      commitSaved(session.opened)
-      session.metaDirty = false
+      const changedDuringSave = sessionRevision(session) !== saveRevision
+      if (!changedDuringSave) {
+        commitSaved(session.opened)
+        markHistoryDirtyAfterSave(session)
+        session.metaDirty = false
+      }
       return {
         ok: true,
         path: session.path,
         slides: buildAllRenderSlides(session.opened, session.fitWidthPx),
+        dirty: changedDuringSave || sessionHasDirtyState(session),
       }
     } catch (err) {
       return { ok: false, error: String(err) }
@@ -3108,18 +3187,25 @@ export function registerSlidesIpc(): void {
       : await dialog.showSaveDialog(options)
     if (r.canceled || !r.filePath) return { ok: false }
     try {
+      const saveRevision = sessionRevision(session)
       await savePptxToFile(session.opened, r.filePath)
+      if (!sessionIsCurrent(e.sender.id, session)) return { ok: true, superseded: true }
       session.path = r.filePath
       autosaveBackoff.delete(r.filePath)
       dropUntitledRecovery(e.sender.id)
       await pushRecent(r.filePath)
       slidesOpenedHook?.(e.sender, r.filePath)
-      commitSaved(session.opened)
-      session.metaDirty = false
+      const changedDuringSave = sessionRevision(session) !== saveRevision
+      if (!changedDuringSave) {
+        commitSaved(session.opened)
+        markHistoryDirtyAfterSave(session)
+        session.metaDirty = false
+      }
       return {
         ok: true,
         path: r.filePath,
         slides: buildAllRenderSlides(session.opened, session.fitWidthPx),
+        dirty: changedDuringSave || sessionHasDirtyState(session),
       }
     } catch (err) {
       return { ok: false, error: String(err) }
@@ -3625,6 +3711,9 @@ export function startSlidesStandalone(): void {
   } else {
     app.setPath('userData', join(app.getPath('appData'), 'GenOffice Slides'))
   }
+  configureAiRequestGateStorage(
+    app.isPackaged ? join(app.getPath('appData'), 'GenOffice') : app.getPath('userData'),
+  )
   configureCodexHome(join(app.getPath('userData'), 'codex'))
   configureCodexExecutable(
     app.isPackaged ? packagedCodexExecutablePath(process.resourcesPath) : undefined,

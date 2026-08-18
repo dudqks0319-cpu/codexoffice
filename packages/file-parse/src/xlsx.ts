@@ -1,5 +1,6 @@
 import JSZip from 'jszip'
 import { XMLParser } from 'fast-xml-parser'
+import { assertSafeArchive, readSafeZipText, TextBudget } from './limits'
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' })
 
@@ -50,22 +51,18 @@ function cellText(cell: Cell, shared: string[]): string {
   return textOf(cell.v)
 }
 
-async function zipText(zip: JSZip, path: string): Promise<string | undefined> {
-  const file = zip.file(path)
-  return file ? file.async('text') : undefined
-}
-
 /** extract sheet text from an xlsx: one "# SheetName" section per sheet, cells joined with " | " */
 export async function xlsxToText(bytes: Uint8Array): Promise<string> {
   const zip = await JSZip.loadAsync(bytes)
-  const workbookXml = await zipText(zip, 'xl/workbook.xml')
+  assertSafeArchive(zip, 'xlsx')
+  const workbookXml = await readSafeZipText(zip, 'xl/workbook.xml', 'xlsx')
   if (!workbookXml) throw new Error('Invalid xlsx: missing xl/workbook.xml')
 
   // Sheet order and names come from workbook.xml; r:id maps to the actual sheet path via the workbook rels
   const workbook = parser.parse(workbookXml) as Record<string, any>
   const sheets = asArray(workbook.workbook?.sheets?.sheet) as Array<Record<string, unknown>>
 
-  const relsXml = await zipText(zip, 'xl/_rels/workbook.xml.rels')
+  const relsXml = await readSafeZipText(zip, 'xl/_rels/workbook.xml.rels', 'xlsx')
   const relTargets = new Map<string, string>()
   if (relsXml) {
     const rels = parser.parse(relsXml) as Record<string, any>
@@ -79,7 +76,7 @@ export async function xlsxToText(bytes: Uint8Array): Promise<string> {
   }
 
   const shared: string[] = []
-  const sharedXml = await zipText(zip, 'xl/sharedStrings.xml')
+  const sharedXml = await readSafeZipText(zip, 'xl/sharedStrings.xml', 'xlsx')
   if (sharedXml) {
     const sst = parser.parse(sharedXml) as Record<string, any>
     for (const si of asArray(sst.sst?.si) as Array<Record<string, unknown>>) {
@@ -88,13 +85,16 @@ export async function xlsxToText(bytes: Uint8Array): Promise<string> {
   }
 
   const sections: string[] = []
+  const budget = new TextBudget()
   for (const sheet of sheets) {
     const path = relTargets.get(String(sheet['@_r:id'] ?? ''))
-    const sheetXml = path ? await zipText(zip, path) : undefined
+    const sheetXml = path ? await readSafeZipText(zip, path, 'xlsx') : undefined
     if (!sheetXml) continue
     const worksheet = parser.parse(sheetXml) as Record<string, any>
     const lines: string[] = [`# ${String(sheet['@_name'] ?? '')}`]
-    for (const row of asArray(worksheet.worksheet?.sheetData?.row) as Array<Record<string, unknown>>) {
+    for (const row of asArray(worksheet.worksheet?.sheetData?.row) as Array<
+      Record<string, unknown>
+    >) {
       const cells: string[] = []
       for (const cell of asArray(row.c as Cell | Cell[])) {
         const text = cellText(cell, shared)
@@ -104,7 +104,9 @@ export async function xlsxToText(bytes: Uint8Array): Promise<string> {
       }
       lines.push(cells.join(' | '))
     }
-    sections.push(lines.join('\n'))
+    const section = lines.join('\n')
+    budget.add(section, sections.length ? '\n\n' : '')
+    sections.push(section)
   }
   return sections.join('\n\n')
 }

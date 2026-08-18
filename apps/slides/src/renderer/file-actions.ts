@@ -55,13 +55,15 @@ export async function save(ctx: ActionCtx): Promise<boolean> {
     return false
   }
   const r = await window.slidesApi.save()
+  if (r.superseded) return false
   if (r.ok) {
     if (r.slides) adoptSavedSlides(ctx, r.slides)
     if (r.path) ctx.setPath(r.path)
-    ctx.setDirty(false)
+    const dirtyAfterSave = r.dirty === true
+    ctx.setDirty(dirtyAfterSave)
     ctx.setStatus(t('appStatusSaved', { name: r.path?.split('/').pop() ?? '' }))
   } else ctx.setStatus(t('appStatusSaveFailed', { error: r.error ?? t('appErrorCanceled') }))
-  return r.ok
+  return r.ok && r.dirty !== true
 }
 
 export async function saveAs(ctx: ActionCtx): Promise<void> {
@@ -82,10 +84,11 @@ export async function saveAs(ctx: ActionCtx): Promise<void> {
   }
   const name = ctx.path?.split('/').pop() ?? 'presentation.pptx'
   const r = await window.slidesApi.saveAs(name)
+  if (r.superseded) return
   if (r.ok) {
     if (r.slides) adoptSavedSlides(ctx, r.slides)
     ctx.setPath(r.path ?? ctx.path)
-    ctx.setDirty(false)
+    ctx.setDirty(r.dirty === true)
     ctx.setStatus(t('appStatusSavedAs', { name: r.path?.split('/').pop() ?? '' }))
   }
 }

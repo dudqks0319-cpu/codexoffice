@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "sourceSha": "0000000000000000000000000000000000000000",
+  "testedAt": "2026-08-13T00:00:00.000Z",
+  "macosVersion": "replace-with-tested-macos-version",
+  "releaseArtifact": {
+    "path": "Codexoffice-release.dmg",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "office": {
+    "word": {
+      "status": "PASS",
+      "version": "replace-with-full-version-and-build",
+      "fixture": {
+        "path": "word-input.docx",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "savedDocument": {
+        "path": "word-roundtrip.docx",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "screenshots": [
+        { "path": "word-before.png", "sha256": "replace-with-sha256" },
+        { "path": "word-office.png", "sha256": "replace-with-sha256" },
+        { "path": "word-reopen.png", "sha256": "replace-with-sha256" }
+      ],
+      "assertions": {
+        "noRepairPrompt": true,
+        "referencesPreserved": true,
+        "bidirectionalEditsPreserved": true,
+        "layoutReviewed": true
+      }
+    },
+    "excel": {
+      "status": "PASS",
+      "version": "replace-with-full-version-and-build",
+      "fixture": {
+        "path": "excel-input.xlsx",
+        "sha256": "replace-with-sha256"
+      },
+      "savedDocument": {
+        "path": "excel-roundtrip.xlsx",
+        "sha256": "replace-with-sha256"
+      },
+      "screenshots": [
+        { "path": "excel-before.png", "sha256": "replace-with-sha256" },
+        { "path": "excel-office.png", "sha256": "replace-with-sha256" },
+        { "path": "excel-reopen.png", "sha256": "replace-with-sha256" }
+      ],
+      "assertions": {
+        "noRepairPrompt": true,
+        "formulasPreserved": true,
+        "chartsPreserved": true,
+        "stylesReviewed": true
+      }
+    },
+    "powerpoint": {
+      "status": "PASS",
+      "version": "replace-with-full-version-and-build",
+      "fixture": {
+        "path": "powerpoint-input.pptx",
+        "sha256": "replace-with-sha256"
+      },
+      "savedDocument": {
+        "path": "powerpoint-roundtrip.pptx",
+        "sha256": "replace-with-sha256"
+      },
+      "screenshots": [
+        { "path": "powerpoint-before.png", "sha256": "replace-with-sha256" },
+        { "path": "powerpoint-office.png", "sha256": "replace-with-sha256" },
+        { "path": "powerpoint-reopen.png", "sha256": "replace-with-sha256" }
+      ],
+      "assertions": {
+        "noRepairPrompt": true,
+        "mastersPreserved": true,
+        "mediaPreserved": true,
+        "visualLayoutReviewed": true
+      }
+    }
+  }
+}

@@ -64,11 +64,20 @@ export interface AiChatResponse {
 
 export interface AiStreamRequest {
   requestId: string
+  /** Main-issued, sender-bound budget ticket shared by every provider turn in one UI job. */
+  job: AiJobBudgetTicket
   settings: AiSettings
   system: string
   messages: AgentMessage[]
   tools?: AgentToolDef[]
   maxTokens?: number
+}
+
+export interface AiJobBudgetTicket {
+  jobId: string
+  capability: string
+  /** Hard server-side ceiling for cumulative model output in this job. */
+  maximumOutputTokens: number
 }
 
 export interface AiStreamChunk {
@@ -79,8 +88,8 @@ export interface AiStreamChunk {
   /** complete parsed tool call (emitted once its arguments finish streaming) */
   toolCall?: AgentToolCall
   error?: string
-  /** machine-readable error cause ('timeout', exhausted 'credits'); lets the renderer localize the message */
-  errorCode?: 'timeout' | 'credits'
+  /** machine-readable safe error cause; lets the renderer localize the message */
+  errorCode?: 'timeout' | 'credits' | 'budget'
   /** normalized stop reason carried on 'done' ('max_tokens' = output cut off by the token limit) */
   stopReason?: string
 }

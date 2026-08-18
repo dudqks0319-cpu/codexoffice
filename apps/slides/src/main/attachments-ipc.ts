@@ -6,10 +6,10 @@
  * channels via docs.
  */
 import { app, dialog, ipcMain } from 'electron'
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { parseFileToText } from '@genoffice/file-parse'
+import { AttachmentPathGrants, parseFileToText } from '@genoffice/file-parse'
 import type {
   AttachmentAddResult,
   AttachmentImageResult,
@@ -75,13 +75,30 @@ const ATTACHMENT_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 
 /** Extracted-text cache keyed by path; invalidated when mtime+size change */
 const attachmentTextCache = new Map<string, { stamp: string; text: string }>()
+const attachmentPathGrants = new AttachmentPathGrants()
+const attachmentGrantOwners = new Set<number>()
+
+function attachmentOwner(event: Electron.IpcMainInvokeEvent): number {
+  const ownerId = event.sender.id
+  if (!attachmentGrantOwners.has(ownerId)) {
+    attachmentGrantOwners.add(ownerId)
+    event.sender.once('destroyed', () => {
+      attachmentGrantOwners.delete(ownerId)
+      attachmentPathGrants.clear(ownerId)
+    })
+  }
+  return ownerId
+}
 
 function statAttachment(filePath: string): { meta?: AttachmentMeta; error?: string } {
-  const name = basename(filePath)
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  if (!ATTACHMENT_EXTS.has(ext)) return { error: `${name}: ${tm('errUnsupportedExt', { ext })}` }
   try {
-    const stat = statSync(filePath)
+    const canonicalPath = realpathSync.native(filePath)
+    const name = basename(canonicalPath)
+    const ext = name.split('.').pop()?.toLowerCase() ?? ''
+    if (!ATTACHMENT_EXTS.has(ext)) {
+      return { error: `${name}: ${tm('errUnsupportedExt', { ext })}` }
+    }
+    const stat = statSync(canonicalPath)
     if (!stat.isFile()) return { error: `${name}: ${tm('errNotFile')}` }
     if (stat.size > ATTACHMENT_MAX_BYTES) {
       return {
@@ -91,10 +108,10 @@ function statAttachment(filePath: string): { meta?: AttachmentMeta; error?: stri
     if (ATTACHMENT_IMAGE_EXTS.has(ext) && stat.size > ATTACHMENT_IMAGE_MAX_BYTES) {
       return { error: `${name}: ${tm('errImageTooLarge')}` }
     }
-    const sha256 = createHash('sha256').update(readFileSync(filePath)).digest('hex')
-    return { meta: { path: filePath, name, ext, sizeBytes: stat.size, sha256 } }
+    const sha256 = createHash('sha256').update(readFileSync(canonicalPath)).digest('hex')
+    return { meta: { path: canonicalPath, name, ext, sizeBytes: stat.size, sha256 } }
   } catch {
-    return { error: `${name}: ${tm('errUnreadable')}` }
+    return { error: `${basename(filePath)}: ${tm('errUnreadable')}` }
   }
 }
 
@@ -109,6 +126,51 @@ function collectAttachments(paths: string[]): AttachmentAddResult {
   return { accepted, rejected }
 }
 
+function collectAndGrantAttachments(ownerId: number, paths: string[]): AttachmentAddResult {
+  const result = collectAttachments(paths)
+  const granted = new Set(
+    attachmentPathGrants.grant(
+      ownerId,
+      result.accepted.map((attachment) => attachment.path),
+    ),
+  )
+  const disappeared = result.accepted.filter((attachment) => !granted.has(attachment.path))
+  return {
+    accepted: result.accepted.filter((attachment) => granted.has(attachment.path)),
+    rejected: [
+      ...result.rejected,
+      ...disappeared.map((attachment) => `${attachment.name}: ${tm('errUnreadable')}`),
+    ],
+  }
+}
+
+function collectGrantedAttachments(ownerId: number, paths: string[]): AttachmentAddResult {
+  const accepted: AttachmentMeta[] = []
+  const rejected: string[] = []
+  for (const path of paths) {
+    const grantedPath = attachmentPathGrants.resolve(ownerId, path)
+    if (!grantedPath) {
+      rejected.push(`${basename(path)}: attachment path is not authorized`)
+      continue
+    }
+    const { meta, error } = statAttachment(grantedPath)
+    if (meta) accepted.push(meta)
+    else if (error) rejected.push(error)
+  }
+  return { accepted, rejected }
+}
+
+function attachmentPaths(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > 50 ||
+    value.some((path) => typeof path !== 'string' || path.length === 0 || path.length > 4096)
+  ) {
+    return []
+  }
+  return value
+}
+
 /** Save clipboard-pasted image bytes to a temp file (screenshots/bitmaps without a local path); null for non-images or empty data */
 let pastedImageSeq = 0
 function savePastedImage(data: unknown, ext: unknown): string | null {
@@ -120,7 +182,7 @@ function savePastedImage(data: unknown, ext: unknown): string | null {
       : ArrayBuffer.isView(data)
         ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
         : null
-  if (!bytes || bytes.byteLength === 0) return null
+  if (!bytes || bytes.byteLength === 0 || bytes.byteLength > ATTACHMENT_IMAGE_MAX_BYTES) return null
   const dir = join(app.getPath('temp'), 'genoffice-pasted')
   mkdirSync(dir, { recursive: true })
   const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
@@ -151,7 +213,8 @@ async function extractAttachmentText(filePath: string): Promise<string> {
 
 /** Register the slides:files-* attachment channels (called from registerSlidesIpc). */
 export function registerAttachmentIpc(): void {
-  ipcMain.handle('slides:files-pick', async (): Promise<AttachmentAddResult | null> => {
+  ipcMain.handle('slides:files-pick', async (event): Promise<AttachmentAddResult | null> => {
+    const ownerId = attachmentOwner(event)
     const parent = dialogParent()
     const options = {
       title: tm('dlgAddAttachment'),
@@ -165,27 +228,35 @@ export function registerAttachmentIpc(): void {
       ? await dialog.showOpenDialog(parent, options)
       : await dialog.showOpenDialog(options)
     if (r.canceled || r.filePaths.length === 0) return null
-    return collectAttachments(r.filePaths)
+    return collectAndGrantAttachments(ownerId, r.filePaths)
   })
 
-  ipcMain.handle('slides:files-add', (_e, paths: string[]) => collectAttachments(paths))
+  ipcMain.handle('slides:files-add', (event, paths: unknown) =>
+    collectAndGrantAttachments(attachmentOwner(event), attachmentPaths(paths)),
+  )
+
+  ipcMain.handle('slides:files-refresh', (event, paths: unknown) =>
+    collectGrantedAttachments(attachmentOwner(event), attachmentPaths(paths)),
+  )
 
   ipcMain.handle(
     'slides:files-read',
     async (
-      _e,
+      event,
       filePath: string,
       offset: number,
       maxChars: number,
     ): Promise<AttachmentReadResult> => {
-      const name = basename(filePath)
+      const authorizedPath = attachmentPathGrants.resolve(attachmentOwner(event), filePath)
+      if (!authorizedPath) return { ok: false, error: 'Attachment path is not authorized.' }
+      const name = basename(authorizedPath)
       const ext = name.split('.').pop()?.toLowerCase() ?? ''
       if (!ATTACHMENT_EXTS.has(ext)) return { ok: false, error: tm('errUnsupportedExt', { ext }) }
       if (ATTACHMENT_IMAGE_EXTS.has(ext)) {
         return { ok: false, error: tm('errImageNoText') }
       }
       try {
-        const text = await extractAttachmentText(filePath)
+        const text = await extractAttachmentText(authorizedPath)
         const start = Math.max(0, Math.floor(offset) || 0)
         const size = Math.min(Math.max(1, Math.floor(maxChars) || 1), 48_000)
         return {
@@ -202,17 +273,19 @@ export function registerAttachmentIpc(): void {
   )
 
   // Image attachments read raw bytes -> base64; AiPanel puts them into the user message's images for multimodal
-  ipcMain.handle('slides:files-read-image', (_e, filePath: string): AttachmentImageResult => {
-    const name = basename(filePath)
+  ipcMain.handle('slides:files-read-image', (event, filePath: string): AttachmentImageResult => {
+    const authorizedPath = attachmentPathGrants.resolve(attachmentOwner(event), filePath)
+    if (!authorizedPath) return { ok: false, error: 'Attachment path is not authorized.' }
+    const name = basename(authorizedPath)
     const ext = name.split('.').pop()?.toLowerCase() ?? ''
     const mime = ATTACHMENT_IMAGE_MIME[ext]
     if (!mime) return { ok: false, error: `${name}: ${tm('errNotImage')}` }
     try {
-      const stat = statSync(filePath)
+      const stat = statSync(authorizedPath)
       if (stat.size > ATTACHMENT_IMAGE_MAX_BYTES) {
         return { ok: false, error: `${name}: ${tm('errImageTooLarge')}` }
       }
-      return { ok: true, base64: readFileSync(filePath).toString('base64'), mime }
+      return { ok: true, base64: readFileSync(authorizedPath).toString('base64'), mime }
     } catch {
       return { ok: false, error: `${name}: ${tm('errUnreadable')}` }
     }
@@ -221,10 +294,10 @@ export function registerAttachmentIpc(): void {
   // Clipboard-pasted images (screenshots and other bitmaps without a local path): saved to a temp file then take the regular attachment chain
   ipcMain.handle(
     'slides:files-add-pasted-image',
-    (_e, data: unknown, ext: unknown): AttachmentAddResult => {
+    (event, data: unknown, ext: unknown): AttachmentAddResult => {
       const filePath = savePastedImage(data, ext)
       return filePath
-        ? collectAttachments([filePath])
+        ? collectAndGrantAttachments(attachmentOwner(event), [filePath])
         : { accepted: [], rejected: [tm('errNotImage')] }
     },
   )

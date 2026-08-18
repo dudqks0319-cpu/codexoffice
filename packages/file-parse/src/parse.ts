@@ -1,9 +1,10 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { extname } from 'node:path'
 import { docxToText } from './docx'
 import { pdfToText } from './pdf'
 import { pptxToText } from './pptx'
 import { xlsxToText } from './xlsx'
+import { assertParseInputSize, assertSafeText } from './limits'
 
 export type ParsedFileKind = 'text' | 'image' | 'unsupported'
 
@@ -42,22 +43,42 @@ export async function parseFileToText(filePath: string): Promise<ParsedFile> {
   const ext = extname(filePath).slice(1).toLowerCase()
   const imageMime = IMAGE_MIMES[ext]
   if (imageMime) return { ok: true, kind: 'image', mime: imageMime }
+  if (!TEXT_EXTS.has(ext) && !['docx', 'pptx', 'xlsx', 'pdf'].includes(ext)) {
+    return { ok: false, kind: 'unsupported', error: `Unsupported file type: .${ext || 'unknown'}` }
+  }
   try {
+    const before = await stat(filePath)
+    assertParseInputSize(before.size)
+    const bytes = await readFile(filePath)
+    // Recheck after the read so a file that grows between stat and read still
+    // fails closed instead of bypassing the input budget.
+    assertParseInputSize(bytes.byteLength)
+
+    let text: string
     if (TEXT_EXTS.has(ext)) {
-      return { ok: true, kind: 'text', text: await readFile(filePath, 'utf-8') }
+      text = bytes.toString('utf8')
+      assertSafeText(text)
+      return { ok: true, kind: 'text', text }
     }
     switch (ext) {
       case 'docx':
-        return { ok: true, kind: 'text', text: await docxToText(await readFile(filePath)) }
+        text = await docxToText(bytes)
+        break
       case 'pptx':
-        return { ok: true, kind: 'text', text: await pptxToText(await readFile(filePath)) }
+        text = await pptxToText(bytes)
+        break
       case 'xlsx':
-        return { ok: true, kind: 'text', text: await xlsxToText(await readFile(filePath)) }
+        text = await xlsxToText(bytes)
+        break
       case 'pdf':
-        return { ok: true, kind: 'text', text: await pdfToText(await readFile(filePath)) }
+        text = await pdfToText(bytes)
+        break
+      default:
+        throw new Error('Unsupported parser state')
     }
+    assertSafeText(text)
+    return { ok: true, kind: 'text', text }
   } catch (e) {
     return { ok: false, kind: 'text', error: e instanceof Error ? e.message : String(e) }
   }
-  return { ok: false, kind: 'unsupported', error: `Unsupported file type: .${ext || 'unknown'}` }
 }

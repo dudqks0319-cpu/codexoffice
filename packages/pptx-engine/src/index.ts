@@ -141,8 +141,15 @@ export {
   patchThemeXml,
   recolorXml,
   remapDeckColors,
+  validateThemeSpec,
   type ThemeSpec,
 } from './theme-apply'
+export {
+  inspectPptxDesign,
+  type InspectPptxDesignOptions,
+  type PptxDesignCandidate,
+  type PptxDesignInspection,
+} from './design-inspect'
 export { escapeXmlText, escapeXmlAttr } from './xml-utils'
 export {
   extractFormat,

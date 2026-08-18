@@ -6,6 +6,7 @@ describe('Docs AI IPC schema integration', () => {
   it('accepts the complete shipped tool set', () => {
     const request = parseAiStreamRequest({
       requestId: 'docs-test',
+      job: { jobId: 'docs-job', capability: 'main-issued-secret', maximumOutputTokens: 8_192 },
       settings: {},
       system: '',
       messages: [],

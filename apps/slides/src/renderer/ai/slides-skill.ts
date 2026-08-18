@@ -1122,7 +1122,7 @@ export function registerRuntimeEvidencePath(locator: string, path: string): void
 export async function refreshRuntimeEvidenceHashes(): Promise<ReadonlyMap<string, string>> {
   const entries = [...runtimeEvidencePaths.entries()]
   if (entries.length === 0) return new Map()
-  const refreshed = await window.desktop.addAttachmentPaths(entries.map(([, path]) => path))
+  const refreshed = await window.desktop.refreshAttachments(entries.map(([, path]) => path))
   const byPath = new Map(refreshed.accepted.map((attachment) => [attachment.path, attachment]))
   return new Map(
     entries.flatMap(([locator, path]) => {

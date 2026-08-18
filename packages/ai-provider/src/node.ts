@@ -4,6 +4,18 @@
  * node:fs/node:child_process authentication helpers.
  */
 export * from './index'
+export {
+  AI_JOB_MAX_INPUT_TOKENS,
+  AI_JOB_MAX_OUTPUT_TOKENS,
+  AI_JOB_MAX_PROVIDER_TURNS,
+  AI_TURN_MAX_OUTPUT_TOKENS,
+  AiJobBudgetError,
+  createAiJobBudgetGate,
+  estimateAiStreamInputTokens,
+  estimateAiStreamOutputTokens,
+  globalAiJobBudgetGate,
+} from './ai-job-budget'
+export type { AiJobBudgetGateOptions, AiJobTurnLease } from './ai-job-budget'
 export { chatForProvider } from './chat'
 export { AiCreditsError, sseLines, streamForProvider } from './stream'
 export type { StreamCallbacks } from './stream'
@@ -69,6 +81,7 @@ export type { StreamWatchdog } from './watchdog'
 export {
   acquireAiRequest,
   AiRequestGateError,
+  configureAiRequestGateStorage,
   createAiRequestGate,
   createAiTurnController,
   runIfAiTurnActive,

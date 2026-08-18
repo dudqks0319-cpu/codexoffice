@@ -66,7 +66,7 @@ export function createDocsJobMetadata(args: {
     sources: [
       { locator: args.sessionId ? 'document:open' : 'document:unsaved', hash: args.sourceHash },
     ],
-    maximumBudget: { amount: DOCS_AI_MAXIMUM_BUDGET, unit: 'tokens' },
+    maximumBudget: { amount: DOCS_AI_MAXIMUM_BUDGET, unit: 'output tokens' },
   }
 }
 

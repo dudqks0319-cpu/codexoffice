@@ -20,9 +20,11 @@ export default defineConfig({
       }),
     ],
   },
+  // Keep the sandboxed preload self-contained. The AI request validators are
+  // runtime imports, so they must be bundled instead of emitted as a bare
+  // workspace-package require that a sandboxed preload cannot resolve.
   preload: {
-    // Sandboxed preload scripts cannot require arbitrary npm packages at runtime.
-    plugins: [],
+    plugins: [externalizeDepsPlugin({ exclude: ['@genoffice/ai-provider'] })],
   },
   renderer: {
     plugins: [react()],

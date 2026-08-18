@@ -1,6 +1,7 @@
-import { existsSync } from 'node:fs'
-import { readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { existsSync, realpathSync } from 'node:fs'
+import { chmod, mkdir, readFile, readdir, rm } from 'node:fs/promises'
+import { basename, dirname, extname, join } from 'node:path'
 import { BrowserWindow, WebContentsView, app, dialog, ipcMain, shell } from 'electron'
 import type { WebContents } from 'electron'
 import {
@@ -20,8 +21,35 @@ import type {
   InsertPdfResult,
   SavePdfRequest,
   SavePdfResult,
+  WritePdfRecoveryResult,
 } from '../shared/ipc'
-import { extractPagesBytes, insertPdfBytes, savePdfToPath } from './save-pdf'
+import { PDF_MAX_EDIT_SOURCE_BYTES } from '../shared/limits'
+import { atomicWrite } from './atomic-write'
+import { repairInterruptedPdfCommitSync, replacePdfIfUnchanged } from './conditional-write'
+import {
+  capturePdfDiskState,
+  pdfSourceChanged,
+  readPdfWithState,
+  type PdfDiskState,
+} from './pdf-file-state'
+import { savePdfWithSourceGuard } from './guarded-save'
+import { cancelPdfJobs, configurePdfJobPreload, runPdfJob } from './pdf-job-client'
+import { prunePrivateArtifacts } from './private-artifacts'
+import {
+  clearPdfRecovery,
+  inspectPdfRecovery,
+  restorePdfRecovery,
+  writePdfRecovery,
+  type PdfRecoveryCandidate,
+} from './pdf-recovery'
+import {
+  parseExportImagesRequest,
+  parseExtractPagesRequest,
+  parseInsertPdfRequest,
+  parseSavePdfRequest,
+} from './save-validation'
+
+export { repairInterruptedPdfCommitSync } from './conditional-write'
 
 const tDlg = createI18n({
   zh: {
@@ -248,14 +276,16 @@ const tm = (key: DlgKey) => tDlg(getUiLang(), key)
 
 interface RuntimePaths {
   preloadPath: string
+  jobPreloadPath: string
   rendererUrl?: string
   rendererFile?: string
 }
 
-let runtime: RuntimePaths = { preloadPath: '' }
+let runtime: RuntimePaths = { preloadPath: '', jobPreloadPath: '' }
 
 export function configurePdfRuntime(paths: RuntimePaths): void {
   runtime = paths
+  configurePdfJobPreload(paths.jobPreloadPath)
 }
 
 /** Open paths queued at tab creation; the renderer consumes them after mount (avoids did-finish-load races) */
@@ -268,6 +298,250 @@ const closeSaveWaiters = new Map<number, (ok: boolean) => void>()
 const saveAsWaiters = new Map<number, (ok: boolean) => void>()
 /** Save As destination granted per view (main-process dialog pick); the save handler refuses any other non-source target */
 const saveAsTargetByWc = new Map<number, string>()
+
+interface PdfSourceSession {
+  readonly sourcePath: string
+  readonly snapshotPath: string
+  readonly diskState: PdfDiskState
+}
+
+/** Exact bytes the renderer loaded, isolated from later external writes. */
+const sourceSessionByWc = new Map<number, PdfSourceSession>()
+const snapshotReservationByWc = new Map<number, number>()
+const MAX_ACTIVE_PDF_SNAPSHOTS = 32
+const MAX_ACTIVE_PDF_SNAPSHOT_BYTES = 512 * 1024 * 1024
+
+const sessionInstanceId = `${process.pid}-${randomUUID()}`
+const sessionSourceRoot = () => join(app.getPath('userData'), 'pdf-session-sources')
+const sessionSourceDir = () => join(sessionSourceRoot(), sessionInstanceId)
+const conflictRecoveryDir = () => join(app.getPath('userData'), 'pdf-conflict-recovery')
+const crashRecoveryDir = () => join(app.getPath('userData'), 'pdf-autosave')
+const pathKey = (filePath: string) =>
+  createHash('sha256').update(filePath).digest('hex').slice(0, 20)
+const snapshotPathFor = (wcId: number, filePath: string) =>
+  join(sessionSourceDir(), `${wcId}-${pathKey(filePath)}.pdf`)
+const conflictRecoveryPathFor = (filePath: string) => {
+  const extension = extname(filePath)
+  const stem = basename(filePath, extension)
+    .replace(/[^A-Za-z0-9._ -]/g, '_')
+    .slice(0, 80)
+  return join(conflictRecoveryDir(), `${stem || 'document'}-${pathKey(filePath)}-recovery.pdf`)
+}
+
+async function pruneOrphanPdfSessions(): Promise<void> {
+  const root = sessionSourceRoot()
+  await mkdir(root, { recursive: true, mode: 0o700 })
+  await chmod(root, 0o700)
+  const entries = await readdir(root, { withFileTypes: true })
+  for (const entry of entries) {
+    if (entry.name !== sessionInstanceId) {
+      await rm(join(root, entry.name), { recursive: true, force: true })
+    }
+  }
+}
+
+async function refreshSourceSession(
+  wcId: number,
+  sourcePath: string,
+  provided?: { bytes: Buffer; state: PdfDiskState },
+): Promise<PdfSourceSession> {
+  const loaded = provided ?? (await readPdfWithState(sourcePath))
+  const previousReservation = snapshotReservationByWc.get(wcId) ?? 0
+  const reservedBytes =
+    [...snapshotReservationByWc.entries()].reduce((total, [id, size]) => {
+      return id === wcId ? total : total + size
+    }, 0) + loaded.state.size
+  const reservedFiles = snapshotReservationByWc.has(wcId)
+    ? snapshotReservationByWc.size
+    : snapshotReservationByWc.size + 1
+  if (reservedFiles > MAX_ACTIVE_PDF_SNAPSHOTS || reservedBytes > MAX_ACTIVE_PDF_SNAPSHOT_BYTES) {
+    throw new Error('pdf: active document snapshot budget exceeded')
+  }
+  snapshotReservationByWc.set(wcId, loaded.state.size)
+  const snapshotPath = snapshotPathFor(wcId, sourcePath)
+  try {
+    await atomicWrite(snapshotPath, loaded.bytes, { private: true })
+  } catch (error) {
+    if (previousReservation > 0) snapshotReservationByWc.set(wcId, previousReservation)
+    else snapshotReservationByWc.delete(wcId)
+    throw error
+  }
+  const previous = sourceSessionByWc.get(wcId)
+  if (previous && previous.snapshotPath !== snapshotPath)
+    void rm(previous.snapshotPath, { force: true })
+  const session = { sourcePath, snapshotPath, diskState: loaded.state }
+  sourceSessionByWc.set(wcId, session)
+  return session
+}
+
+const recoveryEpochByPath = new Map<string, number>()
+const recoverySerialByPath = new Map<string, Promise<void>>()
+const mutationSerialByPath = new Map<string, Promise<void>>()
+
+const nextRecoveryEpoch = (sourcePath: string): number => {
+  const next = (recoveryEpochByPath.get(sourcePath) ?? 0) + 1
+  recoveryEpochByPath.set(sourcePath, next)
+  return next
+}
+
+function runRecoverySerial<T>(sourcePath: string, task: () => Promise<T>): Promise<T> {
+  const previous = recoverySerialByPath.get(sourcePath) ?? Promise.resolve()
+  const run = previous.catch(() => undefined).then(task)
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  recoverySerialByPath.set(sourcePath, tail)
+  void tail.finally(() => {
+    if (recoverySerialByPath.get(sourcePath) === tail) recoverySerialByPath.delete(sourcePath)
+  })
+  return run
+}
+
+function runPdfMutationSerial<T>(sourcePath: string, task: () => Promise<T>): Promise<T> {
+  const previous = mutationSerialByPath.get(sourcePath) ?? Promise.resolve()
+  const run = previous.catch(() => undefined).then(task)
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  mutationSerialByPath.set(sourcePath, tail)
+  void tail.finally(() => {
+    if (mutationSerialByPath.get(sourcePath) === tail) mutationSerialByPath.delete(sourcePath)
+  })
+  return run
+}
+
+async function clearCrashRecovery(sourcePath: string): Promise<void> {
+  nextRecoveryEpoch(sourcePath)
+  await runRecoverySerial(sourcePath, () => clearPdfRecovery(crashRecoveryDir(), sourcePath))
+}
+
+const recoveryCopyText = () => {
+  switch (getUiLang()) {
+    case 'ko':
+      return {
+        found: '저장하지 못한 PDF 편집본을 찾았습니다.',
+        foundDetail: '원본은 마지막 복구 이후 변경되지 않았습니다. 편집본을 복원하시겠습니까?',
+        restore: '복원',
+        notNow: '나중에',
+        discard: '복구본 삭제',
+        changed: '원본 PDF가 복구본 생성 후 변경되었습니다.',
+        changedDetail: (path: string) =>
+          `원본은 덮어쓰지 않았습니다. 별도 복구본을 확인하세요.\n${path}`,
+        reveal: '복구본 보기',
+        openOriginal: '원본 열기',
+      }
+    case 'ja':
+      return {
+        found: '保存されなかった PDF 編集内容が見つかりました。',
+        foundDetail: '元の PDF は変更されていません。編集内容を復元しますか？',
+        restore: '復元',
+        notNow: '後で',
+        discard: '復旧版を削除',
+        changed: '復旧版の作成後に元の PDF が変更されました。',
+        changedDetail: (path: string) =>
+          `元のファイルは上書きされていません。別の復旧版を確認してください。\n${path}`,
+        reveal: '復旧版を表示',
+        openOriginal: '元の PDF を開く',
+      }
+    case 'zh':
+    case 'zh-TW':
+      return {
+        found: '发现未保存的 PDF 编辑恢复副本。',
+        foundDetail: '原始 PDF 尚未更改。是否恢复这些编辑？',
+        restore: '恢复',
+        notNow: '稍后',
+        discard: '删除恢复副本',
+        changed: '原始 PDF 在恢复副本创建后已更改。',
+        changedDetail: (path: string) => `原始文件未被覆盖。请查看单独的恢复副本。\n${path}`,
+        reveal: '显示恢复副本',
+        openOriginal: '打开原始 PDF',
+      }
+    default:
+      return {
+        found: 'Unsaved PDF edits were found.',
+        foundDetail: 'The original PDF is unchanged. Restore the recovered edits?',
+        restore: 'Restore',
+        notNow: 'Not Now',
+        discard: 'Delete Recovery',
+        changed: 'The original PDF changed after the recovery copy was created.',
+        changedDetail: (path: string) =>
+          `The original was not overwritten. Review the separate recovery copy.\n${path}`,
+        reveal: 'Show Recovery',
+        openOriginal: 'Open Original',
+      }
+  }
+}
+
+async function showChangedRecovery(candidate: PdfRecoveryCandidate): Promise<'keep' | 'discard'> {
+  const text = recoveryCopyText()
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    message: text.changed,
+    detail: text.changedDetail(candidate.recoveryPath),
+    buttons: [text.reveal, text.openOriginal, text.discard],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  })
+  if (response === 0) shell.showItemInFolder(candidate.recoveryPath)
+  return response === 2 ? 'discard' : 'keep'
+}
+
+async function maybeRestoreCrashRecovery(
+  sourcePath: string,
+  loaded: { bytes: Buffer; state: PdfDiskState },
+): Promise<{ bytes: Buffer; state: PdfDiskState }> {
+  const inspection = await inspectPdfRecovery(crashRecoveryDir(), sourcePath, loaded.state)
+  if (inspection.kind === 'none') return loaded
+  if (inspection.kind === 'source-changed') {
+    if ((await showChangedRecovery(inspection.candidate)) === 'discard') {
+      await clearCrashRecovery(sourcePath).catch(() => undefined)
+    }
+    return loaded
+  }
+
+  const text = recoveryCopyText()
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    message: text.found,
+    detail: text.foundDetail,
+    buttons: [text.restore, text.notNow, text.discard],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  })
+  if (response === 2) {
+    await clearCrashRecovery(sourcePath).catch(() => undefined)
+    return loaded
+  }
+  if (response !== 0) return loaded
+  try {
+    await runPdfMutationSerial(sourcePath, () =>
+      restorePdfRecovery(sourcePath, inspection.candidate),
+    )
+  } catch {
+    const latest = await readPdfWithState(sourcePath)
+    if ((await showChangedRecovery(inspection.candidate)) === 'discard') {
+      await clearCrashRecovery(sourcePath).catch(() => undefined)
+    }
+    return latest
+  }
+  await clearCrashRecovery(sourcePath).catch(() => undefined)
+  return readPdfWithState(sourcePath)
+}
+
+async function sourceSession(wcId: number, sourcePath: string): Promise<PdfSourceSession> {
+  const current = sourceSessionByWc.get(wcId)
+  if (current?.sourcePath === sourcePath) return current
+  const sourceIsAlreadyOpen = [...sourceSessionByWc].some(
+    ([otherWcId, session]) => otherWcId !== wcId && session.sourcePath === sourcePath,
+  )
+  const disk = await readPdfWithState(sourcePath)
+  const loaded = sourceIsAlreadyOpen ? disk : await maybeRestoreCrashRecovery(sourcePath, disk)
+  return refreshSourceSession(wcId, sourcePath, loaded)
+}
 
 export function pdfIsDirty(webContentsId: number): boolean {
   return dirtyByWc.has(webContentsId)
@@ -298,7 +572,11 @@ export async function requestPdfClose(
       ? await dialog.showMessageBox(parent, options)
       : await dialog.showMessageBox(options)
   if (response === 2) return false
-  if (response === 1) return true
+  if (response === 1) {
+    const source = sourceSessionByWc.get(contents.id)
+    if (source) await clearCrashRecovery(source.sourcePath).catch(() => undefined)
+    return true
+  }
   return await requestRendererSave(contents)
 }
 
@@ -362,6 +640,20 @@ let ipcRegistered = false
 function registerPdfIpc(): void {
   if (ipcRegistered) return
   ipcRegistered = true
+  void pruneOrphanPdfSessions().catch(() => undefined)
+  void prunePrivateArtifacts(conflictRecoveryDir(), {
+    maxFiles: 32,
+    maxBytes: 512 * 1024 * 1024,
+    maxAgeMs: 30 * 24 * 60 * 60 * 1_000,
+  }).catch(() => undefined)
+  void prunePrivateArtifacts(crashRecoveryDir(), {
+    maxFiles: 96,
+    maxBytes: 512 * 1024 * 1024,
+    maxAgeMs: 30 * 24 * 60 * 60 * 1_000,
+  }).catch(() => undefined)
+  app.once('will-quit', () => {
+    void rm(sessionSourceDir(), { recursive: true, force: true })
+  })
 
   ipcMain.handle(PDF_CHANNELS.consumePending, (e) => {
     const path = pendingByWc.get(e.sender.id) ?? null
@@ -373,11 +665,18 @@ function registerPdfIpc(): void {
     if (typeof path !== 'string' || !allowedByWc.get(e.sender.id)?.has(path)) {
       throw new Error('pdf: path not granted to this view')
     }
-    const buf = await readFile(path)
+    const session = await sourceSession(e.sender.id, path)
+    const buf = await readFile(session.snapshotPath)
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
   })
 
-  ipcMain.handle(PDF_CHANNELS.save, async (e, request: SavePdfRequest): Promise<SavePdfResult> => {
+  ipcMain.handle(PDF_CHANNELS.save, async (e, raw: unknown): Promise<SavePdfResult> => {
+    let request: SavePdfRequest
+    try {
+      request = parseSavePdfRequest(raw)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
     const path = request?.path
     if (typeof path !== 'string' || !allowedByWc.get(e.sender.id)?.has(path)) {
       return { ok: false, error: 'pdf: path not granted to this view' }
@@ -388,22 +687,122 @@ function registerPdfIpc(): void {
       return { ok: false, error: 'pdf: target path not granted to this view' }
     }
     try {
-      await savePdfToPath(path, target, request)
-      return { ok: true }
+      const wcId = e.sender.id
+      const session = await sourceSession(wcId, path)
+      const transformed = await runPdfJob(wcId, () => ({
+        kind: 'save',
+        source: {
+          path: session.snapshotPath,
+          byteLength: session.diskState.size,
+          sha256: session.diskState.sha256,
+        },
+        request,
+      }))
+      return await runPdfMutationSerial(target, async (): Promise<SavePdfResult> => {
+        if (
+          sourceSessionByWc.get(wcId) !== session ||
+          !allowedByWc.get(wcId)?.has(path) ||
+          (target !== path && saveAsTargetByWc.get(wcId) !== target)
+        ) {
+          throw new Error('pdf: save superseded')
+        }
+        const guarded = await savePdfWithSourceGuard({
+          sourcePath: path,
+          targetPath: target,
+          recoveryPath: conflictRecoveryPathFor(path),
+          diskState: session.diskState,
+          editedBytes: transformed.bytes,
+        })
+        if (guarded.kind === 'source-changed') {
+          await clearCrashRecovery(path).catch(() => undefined)
+          const preserved = guarded.preservedPath
+            ? ` A concurrently displaced source was preserved at ${guarded.preservedPath}.`
+            : ''
+          return {
+            ok: false,
+            code: 'source-changed',
+            recoveryPath: guarded.recoveryPath,
+            error: `The PDF changed in another app. The original was not overwritten. Your edited recovery copy is at ${guarded.recoveryPath}.${preserved}`,
+          }
+        }
+        if (target === path) {
+          await refreshSourceSession(wcId, path)
+          await clearCrashRecovery(path).catch(() => undefined)
+        }
+        return { ok: true }
+      })
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
 
   ipcMain.handle(
+    PDF_CHANNELS.writeRecovery,
+    async (e, raw: unknown): Promise<WritePdfRecoveryResult> => {
+      let request: SavePdfRequest
+      try {
+        request = parseSavePdfRequest(raw)
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+      const path = request.path
+      if (!allowedByWc.get(e.sender.id)?.has(path) || request.targetPath !== undefined) {
+        return { ok: false, error: 'pdf: path not granted to this view' }
+      }
+      try {
+        const wcId = e.sender.id
+        const session = await sourceSession(wcId, path)
+        const epoch = nextRecoveryEpoch(path)
+        const transformed = await runPdfJob(wcId, () => ({
+          kind: 'save',
+          source: {
+            path: session.snapshotPath,
+            byteLength: session.diskState.size,
+            sha256: session.diskState.sha256,
+          },
+          request,
+        }))
+        return await runRecoverySerial(path, async () => {
+          if (
+            recoveryEpochByPath.get(path) !== epoch ||
+            sourceSessionByWc.get(wcId) !== session ||
+            !allowedByWc.get(wcId)?.has(path)
+          ) {
+            return { ok: false, error: 'pdf: recovery superseded' }
+          }
+          await writePdfRecovery({
+            recoveryRoot: crashRecoveryDir(),
+            sourcePath: path,
+            baseState: session.diskState,
+            editedBytes: transformed.bytes,
+          })
+          if (
+            recoveryEpochByPath.get(path) !== epoch ||
+            sourceSessionByWc.get(wcId) !== session ||
+            !allowedByWc.get(wcId)?.has(path)
+          ) {
+            await clearPdfRecovery(crashRecoveryDir(), path)
+            return { ok: false, error: 'pdf: recovery superseded' }
+          }
+          return { ok: true }
+        })
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    },
+  )
+
+  ipcMain.handle(
     PDF_CHANNELS.extractPages,
-    async (e, request: ExtractPagesRequest): Promise<ExtractPagesResult> => {
-      const { path, pages, suggestedName } = request ?? {}
-      if (
-        typeof path !== 'string' ||
-        !allowedByWc.get(e.sender.id)?.has(path) ||
-        !Array.isArray(pages)
-      ) {
+    async (e, raw: unknown): Promise<ExtractPagesResult> => {
+      let request: ExtractPagesRequest
+      try {
+        request = parseExtractPagesRequest(raw)
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+      const { path, pages, suggestedName } = request
+      if (!allowedByWc.get(e.sender.id)?.has(path)) {
         return { ok: false, error: 'pdf: path not granted to this view' }
       }
       const win =
@@ -415,8 +814,21 @@ function registerPdfIpc(): void {
       })
       if (picked.canceled || !picked.filePath) return { ok: true, canceled: true }
       try {
-        const bytes = await extractPagesBytes(new Uint8Array(await readFile(path)), pages)
-        await writeFile(picked.filePath, bytes)
+        const wcId = e.sender.id
+        const session = await sourceSession(wcId, path)
+        const transformed = await runPdfJob(wcId, () => ({
+          kind: 'extract',
+          source: {
+            path: session.snapshotPath,
+            byteLength: session.diskState.size,
+            sha256: session.diskState.sha256,
+          },
+          pages,
+        }))
+        if (sourceSessionByWc.get(wcId) !== session || !allowedByWc.get(wcId)?.has(path)) {
+          throw new Error('pdf: extract superseded')
+        }
+        await atomicWrite(picked.filePath, transformed.bytes)
         return { ok: true, savedPath: picked.filePath }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -424,44 +836,97 @@ function registerPdfIpc(): void {
     },
   )
 
-  ipcMain.handle(
-    PDF_CHANNELS.insertPdf,
-    async (e, request: InsertPdfRequest): Promise<InsertPdfResult> => {
-      const { path, afterPageIndex } = request ?? {}
-      if (typeof path !== 'string' || !allowedByWc.get(e.sender.id)?.has(path)) {
-        return { ok: false, error: 'pdf: path not granted to this view' }
+  ipcMain.handle(PDF_CHANNELS.insertPdf, async (e, raw: unknown): Promise<InsertPdfResult> => {
+    let request: InsertPdfRequest
+    try {
+      request = parseInsertPdfRequest(raw)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+    const { path, afterPageIndex } = request
+    if (!allowedByWc.get(e.sender.id)?.has(path)) {
+      return { ok: false, error: 'pdf: path not granted to this view' }
+    }
+    const win =
+      BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getFocusedWindow() ?? undefined
+    const picked = await dialog.showOpenDialog(win!, {
+      title: tm('dlgInsert'),
+      filters: [{ name: tm('filterPdf'), extensions: ['pdf'] }],
+      properties: ['openFile'],
+    })
+    const other = picked.filePaths[0]
+    if (picked.canceled || !other) return { ok: true, canceled: true }
+    try {
+      const wcId = e.sender.id
+      const session = await sourceSession(wcId, path)
+      if (await pdfSourceChanged(session.diskState, path)) {
+        return {
+          ok: false,
+          error: 'The PDF changed in another app. Reopen it before inserting pages.',
+        }
       }
-      const win =
-        BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getFocusedWindow() ?? undefined
-      const picked = await dialog.showOpenDialog(win!, {
-        title: tm('dlgInsert'),
-        filters: [{ name: tm('filterPdf'), extensions: ['pdf'] }],
-        properties: ['openFile'],
+      const transformed = await runPdfJob(wcId, async () => {
+        const otherState = await capturePdfDiskState(other)
+        if (otherState.size > PDF_MAX_EDIT_SOURCE_BYTES) {
+          throw new Error('pdf: files over 64MB are view-only for memory safety')
+        }
+        return {
+          kind: 'insert',
+          source: {
+            path: session.snapshotPath,
+            byteLength: session.diskState.size,
+            sha256: session.diskState.sha256,
+          },
+          other: { path: other, byteLength: otherState.size, sha256: otherState.sha256 },
+          afterPageIndex,
+        }
       })
-      const other = picked.filePaths[0]
-      if (picked.canceled || !other) return { ok: true, canceled: true }
-      try {
-        const { merged, count } = await insertPdfBytes(
-          new Uint8Array(await readFile(path)),
-          new Uint8Array(await readFile(other)),
-          typeof afterPageIndex === 'number' ? afterPageIndex : -1,
-        )
-        const tmp = `${path}.gensave-${process.pid}.tmp`
-        await writeFile(tmp, merged)
-        await rename(tmp, path)
-        return { ok: true, insertedCount: count }
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
-    },
-  )
+      return await runPdfMutationSerial(path, async (): Promise<InsertPdfResult> => {
+        if (sourceSessionByWc.get(wcId) !== session || !allowedByWc.get(wcId)?.has(path)) {
+          return {
+            ok: false,
+            error: 'The PDF changed in another app. Reopen it before inserting pages.',
+          }
+        }
+        const committed = await replacePdfIfUnchanged({
+          sourcePath: path,
+          expectedState: session.diskState,
+          replacementBytes: transformed.bytes,
+        })
+        if (committed.kind === 'changed') {
+          const recoveryPath = conflictRecoveryPathFor(path)
+          await prunePrivateArtifacts(dirname(recoveryPath), {
+            keepPaths: [recoveryPath],
+            maxFiles: 32,
+            maxBytes: 512 * 1024 * 1024,
+            maxAgeMs: 30 * 24 * 60 * 60 * 1_000,
+            reserveBytes: transformed.bytes.byteLength,
+          })
+          await atomicWrite(recoveryPath, transformed.bytes, { private: true })
+          return {
+            ok: false,
+            error: `The PDF changed in another app. The original was not overwritten. Your merged recovery copy is at ${recoveryPath}.`,
+          }
+        }
+        await refreshSourceSession(wcId, path)
+        await clearCrashRecovery(path).catch(() => undefined)
+        return { ok: true, insertedCount: transformed.insertedCount ?? 0 }
+      })
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
 
   ipcMain.handle(
     PDF_CHANNELS.exportImages,
-    async (e, request: ExportImagesRequest): Promise<ExportImagesResult> => {
-      const { images, pageNumbers, baseName } = request ?? {}
-      if (!Array.isArray(images) || images.length === 0)
-        return { ok: false, error: 'pdf: no images' }
+    async (e, raw: unknown): Promise<ExportImagesResult> => {
+      let request: ExportImagesRequest
+      try {
+        request = parseExportImagesRequest(raw)
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+      const { images, pageNumbers, baseName } = request
       const win =
         BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getFocusedWindow() ?? undefined
       const picked = await dialog.showOpenDialog(win!, {
@@ -474,7 +939,7 @@ function registerPdfIpc(): void {
         const safeBase = String(baseName || 'page').replace(/[/\\:*?"<>|]/g, '_')
         for (const [i, b64] of images.entries()) {
           const no = pageNumbers?.[i] ?? i + 1
-          await writeFile(join(dir, `${safeBase}-p${no}.png`), Buffer.from(b64, 'base64'))
+          await atomicWrite(join(dir, `${safeBase}-p${no}.png`), Buffer.from(b64, 'base64'))
         }
         return { ok: true, savedDir: dir, count: images.length }
       } catch (err) {
@@ -507,9 +972,17 @@ function registerPdfIpc(): void {
 
 function grantAndTrack(wc: WebContents, openPath?: string | null): void {
   const wcId = wc.id
-  if (openPath && existsSync(openPath)) {
-    pendingByWc.set(wcId, openPath)
-    allowedByWc.set(wcId, new Set([openPath]))
+  if (openPath) repairInterruptedPdfCommitSync(openPath)
+  const canonicalOpenPath = (() => {
+    try {
+      return openPath && existsSync(openPath) ? realpathSync(openPath) : null
+    } catch {
+      return null
+    }
+  })()
+  if (canonicalOpenPath) {
+    pendingByWc.set(wcId, canonicalOpenPath)
+    allowedByWc.set(wcId, new Set([canonicalOpenPath]))
   }
   // External links inside the PDF (Link annots with target=_blank) go to the system browser
   wc.setWindowOpenHandler(({ url }) => {
@@ -518,6 +991,7 @@ function grantAndTrack(wc: WebContents, openPath?: string | null): void {
     return { action: 'deny' }
   })
   wc.once('destroyed', () => {
+    cancelPdfJobs(wcId)
     pendingByWc.delete(wcId)
     allowedByWc.delete(wcId)
     dirtyByWc.delete(wcId)
@@ -526,6 +1000,10 @@ function grantAndTrack(wc: WebContents, openPath?: string | null): void {
     closeSaveWaiters.delete(wcId)
     saveAsWaiters.get(wcId)?.(false)
     saveAsWaiters.delete(wcId)
+    const source = sourceSessionByWc.get(wcId)
+    sourceSessionByWc.delete(wcId)
+    snapshotReservationByWc.delete(wcId)
+    if (source) void rm(source.snapshotPath, { force: true })
   })
 }
 
@@ -552,6 +1030,7 @@ export function startPdfStandalone(): void {
   app.setPath('userData', join(app.getPath('appData'), 'GenOffice PDF'))
   configurePdfRuntime({
     preloadPath: join(__dirname, '../preload/index.js'),
+    jobPreloadPath: join(__dirname, '../preload/job.js'),
     rendererUrl: process.env.ELECTRON_RENDERER_URL,
     rendererFile: join(__dirname, '../renderer/index.html'),
   })
@@ -567,7 +1046,11 @@ export function startPdfStandalone(): void {
         sandbox: true,
       },
     })
-    const argPath = process.argv.slice(1).find((a) => /\.pdf$/i.test(a) && existsSync(a))
+    const argPath = process.argv.slice(1).find((candidate) => {
+      if (!/\.pdf$/i.test(candidate)) return false
+      repairInterruptedPdfCommitSync(candidate)
+      return existsSync(candidate)
+    })
     grantAndTrack(win.webContents, argPath)
     if (runtime.rendererUrl) void win.loadURL(runtime.rendererUrl)
     else if (runtime.rendererFile) void win.loadFile(runtime.rendererFile)

@@ -4,7 +4,7 @@ const { codexExtraResource } = require('../../tools/codex-electron-runtime.cjs')
 module.exports = {
   appId: 'com.genoffice.docs',
   productName: 'Codexoffice Docs',
-  electronVersion: '41.7.1',
+  electronVersion: '41.10.3',
   artifactName: 'Codexoffice-Docs-${version}-${arch}.${ext}',
   directories: { output: 'release' },
   files: ['out/**'],

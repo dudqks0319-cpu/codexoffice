@@ -2,6 +2,7 @@ export type {
   AgentImage,
   AgentMessage,
   AgentStreamCallbacks,
+  AgentStreamErrorCode,
   AgentStreamHandle,
   AgentStreamRequest,
   AgentToolCall,
@@ -22,7 +23,12 @@ export type {
   ToolExecutedEvent,
 } from './loop'
 export { createIpcTransport, IPC_STREAM_SILENCE_TIMEOUT_MS } from './electron-transport'
-export type { IpcStreamChunk, IpcStreamStart, IpcTransportOptions } from './electron-transport'
+export type {
+  IpcJobBudgetTicket,
+  IpcStreamChunk,
+  IpcStreamStart,
+  IpcTransportOptions,
+} from './electron-transport'
 export {
   canTransitionJob,
   INTERRUPTED_JOB_STATES,

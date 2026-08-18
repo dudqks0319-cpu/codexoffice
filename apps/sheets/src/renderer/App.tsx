@@ -106,7 +106,7 @@ import {
   type JobSnapshot,
   type JobState,
 } from '@genoffice/agent-core'
-import type { AiSettings } from '@genoffice/ai-provider'
+import type { AiJobBudgetTicket, AiSettings } from '@genoffice/ai-provider'
 import { type WorkbookOperation } from '../domain/workbook-dsl'
 import { columnIndex, columnLabel, parseAddress, parseRange } from '../domain/cell-address'
 import {
@@ -584,7 +584,14 @@ export function App(): React.JSX.Element {
 
   /** App-scope refs/state bundle for the extracted data-tool actions (data-tools-actions.ts). */
   function dataToolsContext(): DataToolsContext {
-    return { univerRef, lazyWorkbookRef, setMessage, setPendingEdits, setAdvancedFilterColumns }
+    return {
+      univerRef,
+      lazyWorkbookRef,
+      setMessage,
+      setPendingEdits,
+      setAdvancedFilterColumns,
+      refreshSelection: () => refreshSelectionFormatRef.current(),
+    }
   }
 
   function pageLayoutContext(): PageLayoutContext {
@@ -663,7 +670,7 @@ export function App(): React.JSX.Element {
       sources: lazy
         ? [{ locator: `workbook:${lazy.file.name}`, hash: `sha256:${lazy.file.sha256}` }]
         : [{ locator: 'workbook:unsaved', hash: `revision:${demo.revision}` }],
-      maximumBudget: { amount: 8_192, unit: 'tokens' },
+      maximumBudget: { amount: 8_192, unit: 'output tokens' },
     })
     jobLifecycleRef.current = lifecycle
     setJobSnapshot(lifecycle.snapshot)
@@ -878,9 +885,18 @@ export function App(): React.JSX.Element {
   const runMutatedRef = useRef(false)
 
   const agentLoopRef = useRef<AgentLoop | null>(null)
+  const aiJobTicketRef = useRef<AiJobBudgetTicket | null>(null)
+  function endAiJob(): void {
+    const ticket = aiJobTicketRef.current
+    aiJobTicketRef.current = null
+    if (ticket) void window.desktopApi.aiJobEnd(ticket).catch(() => {})
+  }
   if (!agentLoopRef.current) {
     agentLoopRef.current = new AgentLoop({
-      transport: createElectronTransport(() => aiSettingsRef.current!),
+      transport: createElectronTransport(
+        () => aiSettingsRef.current!,
+        () => aiJobTicketRef.current,
+      ),
       systemSuffix: aiLangDirective,
       skill: composeSkills('sheets+files', '', [
         createWorkbookSkill(sheetsSkillDeps()),
@@ -942,6 +958,7 @@ export function App(): React.JSX.Element {
           })
         },
         onDone: ({ text, cancelled, turnLimit }) => {
+          endAiJob()
           const current = callbackIsCurrent()
           const state = jobLifecycleRef.current?.snapshot.state
           if (
@@ -979,14 +996,15 @@ export function App(): React.JSX.Element {
           }
           setAiBusy(false)
         },
-        onError: (error) => {
+        onError: (error, code) => {
+          endAiJob()
           if (!callbackIsCurrent()) {
             setAiBusy(false)
             return
           }
           const state = jobLifecycleRef.current?.snapshot.state
           if (state && !['FAILED', 'CANCELLED', 'COMMITTED', 'COMPLETED'].includes(state)) {
-            transitionJob('FAILED')
+            transitionJob(code === 'budget' ? 'BUDGET_BLOCKED' : 'FAILED')
           }
           setMessage(error)
           setChat((previous) => {
@@ -1073,25 +1091,39 @@ export function App(): React.JSX.Element {
     const generation = currentGenerationRef.current + 1
     currentGenerationRef.current = generation
     activeGenerationRef.current = generation
-    beginJob()
+    const job = beginJob()
     transitionJob('PREPARING')
     runLastTextRef.current = ''
     runMutatedRef.current = false
     setAiBusy(true)
     setMessage(t('appAiThinking'))
     appendChat({ role: 'assistant', text: '', tools: [], streaming: true })
-    void collectImageAttachments()
-      .then((images) => {
+    void Promise.all([
+      collectImageAttachments().catch((): AgentImage[] => []),
+      window.desktopApi.aiJobBegin(job.metadata.jobId),
+    ])
+      .then(([images, ticket]) => {
         runStartingRef.current = false
-        if (generation !== currentGenerationRef.current) return
+        if (generation !== currentGenerationRef.current) {
+          void window.desktopApi.aiJobEnd(ticket).catch(() => {})
+          return
+        }
+        aiJobTicketRef.current = ticket
         transitionJob('RUNNING')
         loop.run(instruction, images)
       })
       .catch(() => {
         runStartingRef.current = false
         if (generation !== currentGenerationRef.current) return
-        transitionJob('RUNNING')
-        loop.run(instruction)
+        transitionJob('FAILED')
+        setMessage(t('aiUnknownError'))
+        patchLastAssistant((entry) => ({
+          ...entry,
+          text: t('aiUnknownError'),
+          isError: true,
+          streaming: false,
+        }))
+        setAiBusy(false)
       })
   }
 
@@ -1113,9 +1145,11 @@ export function App(): React.JSX.Element {
     mergeAttachments(await window.desktopApi.pickAttachments())
   }
 
-  async function handleAddAttachmentPaths(paths: readonly string[]): Promise<void> {
-    if (paths.length === 0) return
-    mergeAttachments(await window.desktopApi.addAttachmentPaths([...paths]))
+  async function handleAddAttachmentFiles(files: readonly File[]): Promise<AttachmentAddResult> {
+    if (files.length === 0) return { accepted: [], rejected: [] }
+    const result = await window.desktopApi.addAttachmentFiles([...files])
+    mergeAttachments(result)
+    return result
   }
 
   async function handleAddPastedImage(data: ArrayBuffer, ext: string): Promise<void> {
@@ -1135,6 +1169,7 @@ export function App(): React.JSX.Element {
     lazyPreviewRef.current = null
     setPreview(null)
     agentLoopRef.current?.cancel()
+    endAiJob()
     setAiBusy(false)
   }
 
@@ -3260,7 +3295,7 @@ export function App(): React.JSX.Element {
         attachments={attachments}
         attachNotice={attachNotice}
         onPickAttachments={() => void handlePickAttachments()}
-        onAddAttachmentPaths={(paths) => void handleAddAttachmentPaths(paths)}
+        onAddAttachmentFiles={handleAddAttachmentFiles}
         onAddPastedImage={(data, ext) => void handleAddPastedImage(data, ext)}
         onRemoveAttachment={handleRemoveAttachment}
         onPromptChange={setPrompt}

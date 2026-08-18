@@ -73,6 +73,10 @@ describe('Codex provider', () => {
     const inspect = vi.fn((input, turnOptions, clientOptions, threadOptions) => {
       expect(typeof input).toBe('string')
       expect(turnOptions).toMatchObject({ outputSchema: { additionalProperties: false } })
+      expect(
+        (turnOptions as { outputSchema: { properties: { toolCalls: { maxItems: number } } } })
+          .outputSchema.properties.toolCalls.maxItems,
+      ).toBe(1)
       expect(clientOptions).toMatchObject({
         codexPathOverride: '/trusted/codex',
         config: {
@@ -193,7 +197,7 @@ describe('Codex provider', () => {
         'system',
         [],
         [{ name: 'allowed_tool', description: '', inputSchema: {} }],
-        100,
+        1_000,
         cb,
         dependencies(
           completedEnvelope({
@@ -213,7 +217,7 @@ describe('Codex provider', () => {
         'system',
         [],
         [{ name: 'allowed_tool', description: '', inputSchema: {} }],
-        100,
+        1_000,
         cb,
         dependencies(
           completedEnvelope({
@@ -251,7 +255,7 @@ describe('Codex provider', () => {
         'system',
         [],
         [{ name: 'edit', description: '', inputSchema: schema }],
-        100,
+        1_000,
         cb,
         dependencies(
           completedEnvelope({
@@ -265,23 +269,45 @@ describe('Codex provider', () => {
     ).rejects.toThrow('does not match its schema')
   })
 
-  it('allows repeated calls to one allowed tool up to the global tool-call cap', async () => {
-    const { cb, toolCalls } = callbacks()
+  it('rejects multiple tool calls because the provider envelope is capped per turn', async () => {
+    const { cb } = callbacks()
     const calls = Array.from({ length: 2 }, (_, index) => ({
       id: String(index),
       name: 'edit',
       inputJson: '{}',
     }))
-    await streamCodex(
-      CONFIG,
-      'system',
-      [],
-      [{ name: 'edit', description: '', inputSchema: { type: 'object' } }],
-      100,
-      cb,
-      dependencies(completedEnvelope({ text: '', toolCalls: calls })),
-    )
-    expect(toolCalls).toHaveLength(2)
+    await expect(
+      streamCodex(
+        CONFIG,
+        'system',
+        [],
+        [{ name: 'edit', description: '', inputSchema: { type: 'object' } }],
+        100,
+        cb,
+        dependencies(completedEnvelope({ text: '', toolCalls: calls })),
+      ),
+    ).rejects.toThrow('oversized structured response')
+  })
+
+  it('rejects a 128-call structured envelope before callbacks can execute it', async () => {
+    const { cb, toolCalls } = callbacks()
+    const calls = Array.from({ length: 128 }, (_, index) => ({
+      id: String(index).slice(0, 8),
+      name: 'edit',
+      inputJson: JSON.stringify({ payload: 'x'.repeat(100) }),
+    }))
+    await expect(
+      streamCodex(
+        CONFIG,
+        'system',
+        [],
+        [{ name: 'edit', description: '', inputSchema: { type: 'object' } }],
+        2_048,
+        cb,
+        dependencies(completedEnvelope({ text: '', toolCalls: calls })),
+      ),
+    ).rejects.toThrow('oversized structured response')
+    expect(toolCalls).toHaveLength(0)
   })
 
   it('propagates cancellation into runStreamed and returns a normalized cancellation error', async () => {

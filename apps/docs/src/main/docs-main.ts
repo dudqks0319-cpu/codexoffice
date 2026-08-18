@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   statSync,
   unlinkSync,
@@ -30,19 +31,26 @@ import type {
   SaveDialogOptions,
   WebContents,
 } from 'electron'
-import { parseFileToText } from '@genoffice/file-parse'
+import { AttachmentPathGrants, parseFileToText } from '@genoffice/file-parse'
 import {
   acquireAiRequest,
+  AiJobBudgetError,
   aiTurnTimeoutMsForReasoning,
   AiCreditsError,
   AiTimeoutError,
   chatForProvider,
+  configureAiRequestGateStorage,
   configureCodexExecutable,
   configureCodexHome,
   createAiTurnController,
+  estimateAiStreamInputTokens,
+  estimateAiStreamOutputTokens,
   getCodexAccountStatus,
   listCodexModels,
   loginCodex,
+  globalAiJobBudgetGate,
+  parseAiJobBudgetTicket,
+  parseAiJobId,
   parseCodexSettingsInput,
   packagedCodexExecutablePath,
   parseAiChatRequest,
@@ -2408,13 +2416,30 @@ const ATTACHMENT_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 
 /** extracted text cache keyed by path; invalidated by mtime+size */
 const attachmentTextCache = new Map<string, { stamp: string; text: string }>()
+const attachmentPathGrants = new AttachmentPathGrants()
+const attachmentGrantOwners = new Set<number>()
+
+function attachmentOwner(event: IpcMainInvokeEvent): number {
+  const ownerId = event.sender.id
+  if (!attachmentGrantOwners.has(ownerId)) {
+    attachmentGrantOwners.add(ownerId)
+    event.sender.once('destroyed', () => {
+      attachmentGrantOwners.delete(ownerId)
+      attachmentPathGrants.clear(ownerId)
+    })
+  }
+  return ownerId
+}
 
 function statAttachment(filePath: string): { meta?: AttachmentMeta; error?: string } {
-  const name = basename(filePath)
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  if (!ATTACHMENT_EXTS.has(ext)) return { error: `${name}: ${tm('errUnsupportedExt', { ext })}` }
   try {
-    const stat = statSync(filePath)
+    const canonicalPath = realpathSync.native(filePath)
+    const name = basename(canonicalPath)
+    const ext = name.split('.').pop()?.toLowerCase() ?? ''
+    if (!ATTACHMENT_EXTS.has(ext)) {
+      return { error: `${name}: ${tm('errUnsupportedExt', { ext })}` }
+    }
+    const stat = statSync(canonicalPath)
     if (!stat.isFile()) return { error: `${name}: ${tm('errNotFile')}` }
     if (stat.size > ATTACHMENT_MAX_BYTES) {
       return {
@@ -2424,9 +2449,9 @@ function statAttachment(filePath: string): { meta?: AttachmentMeta; error?: stri
     if (ATTACHMENT_IMAGE_EXTS.has(ext) && stat.size > ATTACHMENT_IMAGE_MAX_BYTES) {
       return { error: `${name}: ${tm('errImageTooLarge')}` }
     }
-    return { meta: { path: filePath, name, ext, sizeBytes: stat.size } }
+    return { meta: { path: canonicalPath, name, ext, sizeBytes: stat.size } }
   } catch {
-    return { error: `${name}: ${tm('errUnreadable')}` }
+    return { error: `${basename(filePath)}: ${tm('errUnreadable')}` }
   }
 }
 
@@ -2439,6 +2464,51 @@ function collectAttachments(paths: string[]): AttachmentAddResult {
     else if (error) rejected.push(error)
   }
   return { accepted, rejected }
+}
+
+function collectAndGrantAttachments(ownerId: number, paths: string[]): AttachmentAddResult {
+  const result = collectAttachments(paths)
+  const granted = new Set(
+    attachmentPathGrants.grant(
+      ownerId,
+      result.accepted.map((attachment) => attachment.path),
+    ),
+  )
+  const disappeared = result.accepted.filter((attachment) => !granted.has(attachment.path))
+  return {
+    accepted: result.accepted.filter((attachment) => granted.has(attachment.path)),
+    rejected: [
+      ...result.rejected,
+      ...disappeared.map((attachment) => `${attachment.name}: ${tm('errUnreadable')}`),
+    ],
+  }
+}
+
+function collectGrantedAttachments(ownerId: number, paths: string[]): AttachmentAddResult {
+  const accepted: AttachmentMeta[] = []
+  const rejected: string[] = []
+  for (const path of paths) {
+    const grantedPath = attachmentPathGrants.resolve(ownerId, path)
+    if (!grantedPath) {
+      rejected.push(`${basename(path)}: attachment path is not authorized`)
+      continue
+    }
+    const { meta, error } = statAttachment(grantedPath)
+    if (meta) accepted.push(meta)
+    else if (error) rejected.push(error)
+  }
+  return { accepted, rejected }
+}
+
+function attachmentPaths(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > 50 ||
+    value.some((path) => typeof path !== 'string' || path.length === 0 || path.length > 4096)
+  ) {
+    return []
+  }
+  return value
 }
 
 /** save clipboard-pasted image bytes to a temp file (screenshots/bitmaps with no local path); returns null for non-images or empty data */
@@ -2472,7 +2542,7 @@ function savePastedImage(data: unknown, ext: unknown): string | null {
       : ArrayBuffer.isView(data)
         ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
         : null
-  if (!bytes || bytes.byteLength === 0) return null
+  if (!bytes || bytes.byteLength === 0 || bytes.byteLength > ATTACHMENT_IMAGE_MAX_BYTES) return null
   const dir = join(app.getPath('temp'), 'genoffice-pasted')
   mkdirSync(dir, { recursive: true })
   prunePastedImages(dir)
@@ -2511,6 +2581,18 @@ const TWIPS_PER_INCH = 1440
 // implementations live in @genoffice/ai-provider, shared with apps/sheets.
 
 const activeAiStreams = new Map<string, AbortController>()
+const aiBudgetOwners = new Set<number>()
+
+function bindAiBudgetOwner(sender: WebContents): void {
+  const senderId = sender.id
+  if (aiBudgetOwners.has(senderId)) return
+  aiBudgetOwners.add(senderId)
+  const owner = String(senderId)
+  sender.once('destroyed', () => {
+    aiBudgetOwners.delete(senderId)
+    globalAiJobBudgetGate.clearOwner(owner)
+  })
+}
 let aiChatSequence = 0
 const SAFE_AI_ERROR = 'AI request unavailable. Try again.'
 const CODEX_ACCOUNT_CHECK_ERROR = "Unable to verify this app's Codex account. Try again."
@@ -2558,17 +2640,53 @@ export function registerAiIpc(): void {
 
   ipcMain.handle('ai:set-settings', (_event, input: unknown): AiSettings => setAiSettings(input))
 
+  ipcMain.handle('ai:job-begin', (event, input: unknown) => {
+    bindAiBudgetOwner(event.sender)
+    return globalAiJobBudgetGate.begin(String(event.sender.id), parseAiJobId(input))
+  })
+
+  ipcMain.handle('ai:job-end', (event, input: unknown) => {
+    globalAiJobBudgetGate.end(String(event.sender.id), parseAiJobBudgetTicket(input))
+  })
+
   ipcMain.handle('ai:stream', async (event, input: unknown) => {
     const request = parseAiStreamRequest(input)
     const { requestId, system, messages } = request
     const tools = request.tools ?? []
-    const maxTokens = request.maxTokens ?? 8192
     const provider = 'codex' as const
     const config = getAiSettings().providers.codex
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send('ai:stream-chunk', chunk)
     }
-    const lease = acquireAiRequest(requestId, maxTokens)
+    const owner = String(event.sender.id)
+    const inputTokens = estimateAiStreamInputTokens(request)
+    let budgetLease: ReturnType<typeof globalAiJobBudgetGate.acquireTurn>
+    try {
+      budgetLease = globalAiJobBudgetGate.acquireTurn(
+        owner,
+        request.job,
+        requestId,
+        inputTokens,
+        request.maxTokens ?? 2_048,
+      )
+    } catch (err) {
+      if (err instanceof AiJobBudgetError) {
+        send({
+          requestId,
+          type: 'error',
+          error: 'This AI task reached its 8,192-token budget. Start a new request to continue.',
+          errorCode: 'budget',
+        })
+        return
+      }
+      throw err
+    }
+    const maxTokens = budgetLease.maxTokens
+    let requestLease: ReturnType<typeof acquireAiRequest> | undefined
+    let providerStarted = false
+    let completed = false
+    let outputText = ''
+    const outputToolCalls: NonNullable<AiStreamChunk['toolCall']>[] = []
     const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
     const controller = deadline.controller
     const streamKey = `${event.sender.id}:${requestId}`
@@ -2589,22 +2707,32 @@ export function registerAiIpc(): void {
         send({ requestId, type: 'error', error: account.error ?? tm('errCodexNotLoggedIn') })
         return
       }
+      requestLease = acquireAiRequest(requestId, inputTokens + maxTokens)
       let stopReason: string | undefined
       const started = await runIfAiTurnActive(
         controller.signal,
         () => event.sender.isDestroyed(),
-        () =>
-          streamForProvider(provider, config, system, messages, tools, maxTokens, {
+        () => {
+          providerStarted = true
+          return streamForProvider(provider, config, system, messages, tools, maxTokens, {
             signal: controller.signal,
-            onDelta: (text) => send({ requestId, type: 'delta', text }),
-            onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
+            onDelta: (text) => {
+              outputText += text
+              send({ requestId, type: 'delta', text })
+            },
+            onToolCall: (toolCall) => {
+              outputToolCalls.push(toolCall)
+              send({ requestId, type: 'tool-call', toolCall })
+            },
             onActivity: ping,
             onStopReason: (reason) => {
               stopReason = reason
             },
-          }),
+          })
+        },
       )
       if (!started) return
+      completed = true
       send({ requestId, type: 'done', stopReason })
     } catch (err) {
       if (controller.signal.aborted) {
@@ -2629,7 +2757,15 @@ export function registerAiIpc(): void {
       activeAiStreams.delete(streamKey)
       event.sender.removeListener('destroyed', abortOnDestroyed)
       deadline.release()
-      lease.release()
+      if (providerStarted) requestLease?.release()
+      else requestLease?.rollback()
+      budgetLease.settle({
+        providerStarted,
+        completed,
+        ...(completed
+          ? { outputTokens: estimateAiStreamOutputTokens(outputText, outputToolCalls) }
+          : {}),
+      })
     }
   })
 
@@ -2680,20 +2816,24 @@ export function registerAiIpc(): void {
     const { system, user } = request
     const provider = 'codex' as const
     const config = getAiSettings().providers.codex
-    const lease = acquireAiRequest(`docs-chat-${++aiChatSequence}`, 8192)
+    let lease: ReturnType<typeof acquireAiRequest> | undefined
+    let providerStarted = false
     const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
     const abortOnDestroyed = () => deadline.controller.abort()
     event.sender.once('destroyed', abortOnDestroyed)
     try {
       const account = await checkCodexAccount()
       if (!account.loggedIn) return { ok: false, error: account.error ?? tm('errCodexNotLoggedIn') }
+      lease = acquireAiRequest(`docs-chat-${++aiChatSequence}`, 8192)
+      providerStarted = true
       return await chatForProvider(provider, config, system, user, deadline.controller.signal)
     } catch {
       return { ok: false, error: SAFE_AI_ERROR }
     } finally {
       event.sender.removeListener('destroyed', abortOnDestroyed)
       deadline.release()
-      lease.release()
+      if (providerStarted) lease?.release()
+      else lease?.rollback()
     }
   })
 }
@@ -3075,6 +3215,7 @@ export function registerDocsIpc(): void {
   })
 
   ipcMain.handle('files:pick', async (event): Promise<AttachmentAddResult | null> => {
+    const ownerId = attachmentOwner(event)
     const result = await openDialog(event, {
       title: tm('dlgAddAttachment'),
       filters: [
@@ -3084,27 +3225,37 @@ export function registerDocsIpc(): void {
       properties: ['openFile', 'multiSelections'],
     })
     if (result.canceled || result.filePaths.length === 0) return null
-    return collectAttachments(result.filePaths)
+    return collectAndGrantAttachments(ownerId, result.filePaths)
   })
 
-  ipcMain.handle('files:add', (_event, paths: string[]) => collectAttachments(paths))
+  // Only the context-isolated preload can turn genuine dropped File objects
+  // into OS paths before invoking this channel.
+  ipcMain.handle('files:add', (event, paths: unknown) =>
+    collectAndGrantAttachments(attachmentOwner(event), attachmentPaths(paths)),
+  )
+
+  ipcMain.handle('files:refresh', (event, paths: unknown) =>
+    collectGrantedAttachments(attachmentOwner(event), attachmentPaths(paths)),
+  )
 
   ipcMain.handle(
     'files:read',
     async (
-      _event,
+      event,
       filePath: string,
       offset: number,
       maxChars: number,
     ): Promise<AttachmentReadResult> => {
-      const name = basename(filePath)
+      const authorizedPath = attachmentPathGrants.resolve(attachmentOwner(event), filePath)
+      if (!authorizedPath) return { ok: false, error: 'Attachment path is not authorized.' }
+      const name = basename(authorizedPath)
       const ext = name.split('.').pop()?.toLowerCase() ?? ''
       if (!ATTACHMENT_EXTS.has(ext)) return { ok: false, error: tm('errUnsupportedExt', { ext }) }
       if (ATTACHMENT_IMAGE_EXTS.has(ext)) {
         return { ok: false, error: tm('errImageNoText') }
       }
       try {
-        const text = await extractAttachmentText(filePath)
+        const text = await extractAttachmentText(authorizedPath)
         const start = Math.max(0, Math.floor(offset) || 0)
         const size = Math.min(Math.max(1, Math.floor(maxChars) || 1), 48_000)
         return {
@@ -3121,17 +3272,19 @@ export function registerDocsIpc(): void {
   )
 
   // image attachments read raw bytes → base64; AiPanel puts them into the user message's images for multimodal
-  ipcMain.handle('files:read-image', (_event, filePath: string): AttachmentImageResult => {
-    const name = basename(filePath)
+  ipcMain.handle('files:read-image', (event, filePath: string): AttachmentImageResult => {
+    const authorizedPath = attachmentPathGrants.resolve(attachmentOwner(event), filePath)
+    if (!authorizedPath) return { ok: false, error: 'Attachment path is not authorized.' }
+    const name = basename(authorizedPath)
     const ext = name.split('.').pop()?.toLowerCase() ?? ''
     const mime = ATTACHMENT_IMAGE_MIME[ext]
     if (!mime) return { ok: false, error: `${name}: ${tm('errNotImage')}` }
     try {
-      const stat = statSync(filePath)
+      const stat = statSync(authorizedPath)
       if (stat.size > ATTACHMENT_IMAGE_MAX_BYTES) {
         return { ok: false, error: `${name}: ${tm('errImageTooLarge')}` }
       }
-      return { ok: true, base64: readFileSync(filePath).toString('base64'), mime }
+      return { ok: true, base64: readFileSync(authorizedPath).toString('base64'), mime }
     } catch {
       return { ok: false, error: `${name}: ${tm('errUnreadable')}` }
     }
@@ -3140,10 +3293,10 @@ export function registerDocsIpc(): void {
   // clipboard-pasted images (screenshots and other bitmaps with no local path): saved to a temp file then use the regular attachment path
   ipcMain.handle(
     'files:add-pasted-image',
-    (_event, data: unknown, ext: unknown): AttachmentAddResult => {
+    (event, data: unknown, ext: unknown): AttachmentAddResult => {
       const filePath = savePastedImage(data, ext)
       return filePath
-        ? collectAttachments([filePath])
+        ? collectAndGrantAttachments(attachmentOwner(event), [filePath])
         : { accepted: [], rejected: [tm('errNotImage')] }
     },
   )
@@ -3803,6 +3956,9 @@ export function startDocsStandalone(): void {
   app.setPath(
     'userData',
     join(app.getPath('appData'), isDev ? 'GenOffice Docs Dev' : 'GenOffice Docs'),
+  )
+  configureAiRequestGateStorage(
+    app.isPackaged ? join(app.getPath('appData'), 'GenOffice') : app.getPath('userData'),
   )
   configureCodexHome(join(app.getPath('userData'), 'codex'))
   configureCodexExecutable(

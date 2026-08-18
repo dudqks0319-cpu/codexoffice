@@ -17,3 +17,10 @@ export interface ParsedFile {
 
 /** parse an attachment into plain text (or flag it as image / unsupported) */
 export function parseFileToText(filePath: string): Promise<ParsedFile>
+
+/** main-process allowlist for canonical local attachment paths */
+export class AttachmentPathGrants {
+  grant(ownerId: number, paths: readonly string[]): string[]
+  resolve(ownerId: number, path: string): string | null
+  clear(ownerId: number): void
+}

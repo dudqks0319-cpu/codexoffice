@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   statSync,
   unlinkSync,
@@ -45,15 +46,22 @@ import { ProjectStore } from '@genoffice/project-store'
 
 import {
   acquireAiRequest,
+  AiJobBudgetError,
   aiTurnTimeoutMsForReasoning,
   AiCreditsError,
   AiTimeoutError,
   chatForProvider,
+  configureAiRequestGateStorage,
   configureCodexHome,
   createAiTurnController,
+  estimateAiStreamInputTokens,
+  estimateAiStreamOutputTokens,
   getCodexAccountStatus,
+  globalAiJobBudgetGate,
   listCodexModels,
   loginCodex,
+  parseAiJobBudgetTicket,
+  parseAiJobId,
   parseAiChatRequest,
   parseAiRequestId,
   parseAiStreamRequest,
@@ -66,7 +74,7 @@ import {
 } from '@genoffice/ai-provider/node'
 import { csvToXlsxBuffer, decodeCsvBuffer } from '../gateway/csv-import'
 import { webSearch, imageSearch } from '@genoffice/ai-search'
-import { parseFileToText } from '@genoffice/file-parse'
+import { AttachmentPathGrants, parseFileToText } from '@genoffice/file-parse'
 import type { CellEdit, SheetStructuralOps } from '../gateway/xlsx-gateway'
 import { readArchiveEntryText, saveWorkbookViaSidecar } from '../gateway/xlsx-package-io'
 import { parsePivotDefinition } from '../gateway/xlsx-pivot'
@@ -1078,6 +1086,7 @@ async function saveFileDialog(event: IpcMainInvokeEvent, options: SaveDialogOpti
 
 /** register a tab's webContents/client pair and wire up cleanup on teardown */
 function registerSheetsSession(webContents: WebContents, client: XlsxSidecarClient): void {
+  const budgetOwner = String(webContents.id)
   sheetsTabs.set(webContents.id, { webContents, client, sessions: new Map(), aiStreams: new Map() })
   activeSheetsWebContents = webContents
   webContents.once('destroyed', () => {
@@ -1089,6 +1098,7 @@ function registerSheetsSession(webContents: WebContents, client: XlsxSidecarClie
       void closeAllSessions(entry)
     }
     if (activeSheetsWebContents === webContents) activeSheetsWebContents = null
+    globalAiJobBudgetGate.clearOwner(budgetOwner)
   })
 }
 
@@ -1479,13 +1489,30 @@ const ATTACHMENT_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 
 /** Extracted-text cache keyed by path; invalidated when mtime+size change */
 const attachmentTextCache = new Map<string, { stamp: string; text: string }>()
+const attachmentPathGrants = new AttachmentPathGrants()
+const attachmentGrantOwners = new Set<number>()
+
+function attachmentOwner(event: IpcMainInvokeEvent): number {
+  const ownerId = event.sender.id
+  if (!attachmentGrantOwners.has(ownerId)) {
+    attachmentGrantOwners.add(ownerId)
+    event.sender.once('destroyed', () => {
+      attachmentGrantOwners.delete(ownerId)
+      attachmentPathGrants.clear(ownerId)
+    })
+  }
+  return ownerId
+}
 
 function statAttachment(filePath: string): { meta?: AttachmentMeta; error?: string } {
-  const name = basename(filePath)
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  if (!ATTACHMENT_EXTS.has(ext)) return { error: `${name}: ${tm('errUnsupportedExt', { ext })}` }
   try {
-    const stat = statSync(filePath)
+    const canonicalPath = realpathSync.native(filePath)
+    const name = basename(canonicalPath)
+    const ext = name.split('.').pop()?.toLowerCase() ?? ''
+    if (!ATTACHMENT_EXTS.has(ext)) {
+      return { error: `${name}: ${tm('errUnsupportedExt', { ext })}` }
+    }
+    const stat = statSync(canonicalPath)
     if (!stat.isFile()) return { error: `${name}: ${tm('errNotFile')}` }
     if (stat.size > ATTACHMENT_MAX_BYTES) {
       return {
@@ -1495,9 +1522,9 @@ function statAttachment(filePath: string): { meta?: AttachmentMeta; error?: stri
     if (ATTACHMENT_IMAGE_EXTS.has(ext) && stat.size > ATTACHMENT_IMAGE_MAX_BYTES) {
       return { error: `${name}: ${tm('errImageTooLarge')}` }
     }
-    return { meta: { path: filePath, name, ext, sizeBytes: stat.size } }
+    return { meta: { path: canonicalPath, name, ext, sizeBytes: stat.size } }
   } catch {
-    return { error: `${name}: ${tm('errUnreadable')}` }
+    return { error: `${basename(filePath)}: ${tm('errUnreadable')}` }
   }
 }
 
@@ -1512,6 +1539,24 @@ function collectAttachments(paths: string[]): AttachmentAddResult {
   return { accepted, rejected }
 }
 
+function collectAndGrantAttachments(ownerId: number, paths: string[]): AttachmentAddResult {
+  const result = collectAttachments(paths)
+  const granted = new Set(
+    attachmentPathGrants.grant(
+      ownerId,
+      result.accepted.map((attachment) => attachment.path),
+    ),
+  )
+  const disappeared = result.accepted.filter((attachment) => !granted.has(attachment.path))
+  return {
+    accepted: result.accepted.filter((attachment) => granted.has(attachment.path)),
+    rejected: [
+      ...result.rejected,
+      ...disappeared.map((attachment) => `${attachment.name}: ${tm('errUnreadable')}`),
+    ],
+  }
+}
+
 /** Persists clipboard-pasted image bytes to a temp file (screenshots/bitmaps
  * without a local path); returns null for non-images or empty data */
 let pastedImageSeq = 0
@@ -1524,7 +1569,7 @@ function savePastedImage(data: unknown, ext: unknown): string | null {
       : ArrayBuffer.isView(data)
         ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
         : null
-  if (!bytes || bytes.byteLength === 0) return null
+  if (!bytes || bytes.byteLength === 0 || bytes.byteLength > ATTACHMENT_IMAGE_MAX_BYTES) return null
   const dir = join(app.getPath('temp'), 'genoffice-pasted')
   mkdirSync(dir, { recursive: true })
   const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
@@ -1957,6 +2002,7 @@ export function registerSheetsIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.filesPick, async (event): Promise<AttachmentAddResult | null> => {
     sessionFor(event)
+    const ownerId = attachmentOwner(event)
     const selection = await openFileDialog(event, {
       title: tm('dlgAddAttachment'),
       filters: [
@@ -1966,12 +2012,15 @@ export function registerSheetsIpc(): void {
       properties: ['openFile', 'multiSelections'],
     })
     if (selection.canceled || selection.filePaths.length === 0) return null
-    return collectAttachments(selection.filePaths)
+    return collectAndGrantAttachments(ownerId, selection.filePaths)
   })
 
   ipcMain.handle(IPC_CHANNELS.filesAdd, (event, paths: unknown): AttachmentAddResult => {
     sessionFor(event)
-    return collectAttachments(z.array(z.string().min(1).max(1024)).max(50).parse(paths))
+    return collectAndGrantAttachments(
+      attachmentOwner(event),
+      z.array(z.string().min(1).max(4096)).max(50).parse(paths),
+    )
   })
 
   ipcMain.handle(
@@ -1984,14 +2033,16 @@ export function registerSheetsIpc(): void {
     ): Promise<AttachmentReadResult> => {
       sessionFor(event)
       const validatedPath = z.string().min(1).max(1024).parse(filePath)
-      const name = basename(validatedPath)
+      const authorizedPath = attachmentPathGrants.resolve(attachmentOwner(event), validatedPath)
+      if (!authorizedPath) return { ok: false, error: 'Attachment path is not authorized.' }
+      const name = basename(authorizedPath)
       const ext = name.split('.').pop()?.toLowerCase() ?? ''
       if (!ATTACHMENT_EXTS.has(ext)) return { ok: false, error: tm('errUnsupportedExt', { ext }) }
       if (ATTACHMENT_IMAGE_EXTS.has(ext)) {
         return { ok: false, error: tm('errImageNoText') }
       }
       try {
-        const text = await extractAttachmentText(validatedPath)
+        const text = await extractAttachmentText(authorizedPath)
         const start = Math.max(0, Math.floor(Number(offset)) || 0)
         const size = Math.min(Math.max(1, Math.floor(Number(maxChars)) || 1), 48_000)
         return {
@@ -2012,16 +2063,18 @@ export function registerSheetsIpc(): void {
   ipcMain.handle(IPC_CHANNELS.filesReadImage, (event, filePath: unknown): AttachmentImageResult => {
     sessionFor(event)
     const validatedPath = z.string().min(1).max(1024).parse(filePath)
-    const name = basename(validatedPath)
+    const authorizedPath = attachmentPathGrants.resolve(attachmentOwner(event), validatedPath)
+    if (!authorizedPath) return { ok: false, error: 'Attachment path is not authorized.' }
+    const name = basename(authorizedPath)
     const ext = name.split('.').pop()?.toLowerCase() ?? ''
     const mime = ATTACHMENT_IMAGE_MIME[ext]
     if (!mime) return { ok: false, error: `${name}: ${tm('errNotImage')}` }
     try {
-      const stat = statSync(validatedPath)
+      const stat = statSync(authorizedPath)
       if (stat.size > ATTACHMENT_IMAGE_MAX_BYTES) {
         return { ok: false, error: `${name}: ${tm('errImageTooLarge')}` }
       }
-      return { ok: true, base64: readFileSync(validatedPath).toString('base64'), mime }
+      return { ok: true, base64: readFileSync(authorizedPath).toString('base64'), mime }
     } catch {
       return { ok: false, error: `${name}: ${tm('errUnreadable')}` }
     }
@@ -2035,7 +2088,7 @@ export function registerSheetsIpc(): void {
       sessionFor(event)
       const filePath = savePastedImage(data, ext)
       return filePath
-        ? collectAttachments([filePath])
+        ? collectAndGrantAttachments(attachmentOwner(event), [filePath])
         : { accepted: [], rejected: [tm('errNotImage')] }
     },
   )
@@ -2094,13 +2147,16 @@ export function registerSheetsAiIpc(): void {
     const request = parseAiChatRequest(input)
     const provider = 'codex' as const
     const config = getSheetsAiSettings().providers.codex
-    const lease = acquireAiRequest(`sheets-chat-${randomUUID()}`, 8192)
+    let lease: ReturnType<typeof acquireAiRequest> | undefined
+    let providerStarted = false
     const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
     const abortOnDestroyed = () => deadline.controller.abort()
     event.sender.once('destroyed', abortOnDestroyed)
     try {
       const account = await checkCodexAccount()
       if (!account.loggedIn) return { ok: false, error: account.error ?? tm('errCodexNotLoggedIn') }
+      lease = acquireAiRequest(`sheets-chat-${randomUUID()}`, 8192)
+      providerStarted = true
       return await chatForProvider(
         provider,
         config,
@@ -2113,8 +2169,19 @@ export function registerSheetsAiIpc(): void {
     } finally {
       event.sender.removeListener('destroyed', abortOnDestroyed)
       deadline.release()
-      lease.release()
+      if (providerStarted) lease?.release()
+      else lease?.rollback()
     }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.aiJobBegin, (event, input: unknown) => {
+    sessionFor(event)
+    return globalAiJobBudgetGate.begin(String(event.sender.id), parseAiJobId(input))
+  })
+
+  ipcMain.handle(IPC_CHANNELS.aiJobEnd, (event, input: unknown) => {
+    sessionFor(event)
+    globalAiJobBudgetGate.end(String(event.sender.id), parseAiJobBudgetTicket(input))
   })
 
   ipcMain.handle(IPC_CHANNELS.aiStream, async (event, input: unknown) => {
@@ -2122,13 +2189,40 @@ export function registerSheetsAiIpc(): void {
     const request = parseAiStreamRequest(input)
     const { requestId, system, messages } = request
     const tools = request.tools ?? []
-    const maxTokens = request.maxTokens ?? 8192
     const provider = 'codex' as const
     const config = getSheetsAiSettings().providers.codex
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.aiStreamChunk, chunk)
     }
-    const lease = acquireAiRequest(requestId, maxTokens)
+    const owner = String(event.sender.id)
+    const inputTokens = estimateAiStreamInputTokens(request)
+    let budgetLease: ReturnType<typeof globalAiJobBudgetGate.acquireTurn>
+    try {
+      budgetLease = globalAiJobBudgetGate.acquireTurn(
+        owner,
+        request.job,
+        requestId,
+        inputTokens,
+        request.maxTokens ?? 2_048,
+      )
+    } catch (err) {
+      if (err instanceof AiJobBudgetError) {
+        send({
+          requestId,
+          type: 'error',
+          error: 'This AI task reached its 8,192-token budget. Start a new request to continue.',
+          errorCode: 'budget',
+        })
+        return
+      }
+      throw err
+    }
+    const maxTokens = budgetLease.maxTokens
+    let requestLease: ReturnType<typeof acquireAiRequest> | undefined
+    let providerStarted = false
+    let completed = false
+    let outputText = ''
+    const outputToolCalls: NonNullable<AiStreamChunk['toolCall']>[] = []
     const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
     const controller = deadline.controller
     const abortOnDestroyed = () => controller.abort()
@@ -2148,18 +2242,28 @@ export function registerSheetsAiIpc(): void {
         send({ requestId, type: 'error', error: account.error ?? tm('errCodexNotLoggedIn') })
         return
       }
+      requestLease = acquireAiRequest(requestId, inputTokens + maxTokens)
       const started = await runIfAiTurnActive(
         controller.signal,
         () => event.sender.isDestroyed(),
-        () =>
-          streamForProvider(provider, config, system, messages, tools, maxTokens, {
+        () => {
+          providerStarted = true
+          return streamForProvider(provider, config, system, messages, tools, maxTokens, {
             signal: controller.signal,
-            onDelta: (text) => send({ requestId, type: 'delta', text }),
-            onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
+            onDelta: (text) => {
+              outputText += text
+              send({ requestId, type: 'delta', text })
+            },
+            onToolCall: (toolCall) => {
+              outputToolCalls.push(toolCall)
+              send({ requestId, type: 'tool-call', toolCall })
+            },
             onActivity: ping,
-          }),
+          })
+        },
       )
       if (!started) return
+      completed = true
       send({ requestId, type: 'done' })
     } catch (err) {
       if (controller.signal.aborted) {
@@ -2189,7 +2293,15 @@ export function registerSheetsAiIpc(): void {
       entry.aiStreams.delete(requestId)
       event.sender.removeListener('destroyed', abortOnDestroyed)
       deadline.release()
-      lease.release()
+      if (providerStarted) requestLease?.release()
+      else requestLease?.rollback()
+      budgetLease.settle({
+        providerStarted,
+        completed,
+        ...(completed
+          ? { outputTokens: estimateAiStreamOutputTokens(outputText, outputToolCalls) }
+          : {}),
+      })
     }
   })
 
@@ -2819,6 +2931,9 @@ export function startSheetsStandalone(): void {
   } else {
     app.setPath('userData', join(app.getPath('appData'), 'GenOffice Sheets'))
   }
+  configureAiRequestGateStorage(
+    app.isPackaged ? join(app.getPath('appData'), 'GenOffice') : app.getPath('userData'),
+  )
   configureCodexHome(join(app.getPath('userData'), 'codex'))
   void applyMainProcessProxy()
   app.whenReady().then(() => {

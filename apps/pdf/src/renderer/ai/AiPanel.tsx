@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import { AgentLoop } from '@genoffice/agent-core'
-import type { AiSettings } from '@genoffice/ai-provider'
+import type { AiJobBudgetTicket, AiSettings } from '@genoffice/ai-provider'
 import { AiComposer, AiTypingIndicator } from '@genoffice/ui'
 import { aiLangDirective, t as tGlobal, useI18n } from '../i18n/locale'
 import { Markdown } from '@genoffice/ui'
@@ -73,6 +73,13 @@ export function AiPanel({
   langRef.current = lang
   const apiRef = useRef(api)
   apiRef.current = api
+  const aiJobTicketRef = useRef<AiJobBudgetTicket | null>(null)
+  const runStartingRef = useRef(false)
+  const endAiJob = (): void => {
+    const ticket = aiJobTicketRef.current
+    aiJobTicketRef.current = null
+    if (ticket) void window.pdfApi.aiJobEnd(ticket).catch(() => {})
+  }
 
   const patchLast = (patch: Partial<ChatEntry> | ((last: ChatEntry) => Partial<ChatEntry>)) => {
     setChat((prev) => {
@@ -104,7 +111,10 @@ export function AiPanel({
       deletePage: (idx) => apiRef.current.deletePage(idx),
     }
     loopRef.current = new AgentLoop({
-      transport: createElectronTransport(() => settingsRef.current!),
+      transport: createElectronTransport(
+        () => settingsRef.current!,
+        () => aiJobTicketRef.current,
+      ),
       skill: createPdfSkill(deps),
       systemSuffix: () => aiLangDirective(langRef.current),
       events: {
@@ -132,6 +142,7 @@ export function AiPanel({
           setChat((prev) => [...prev, { role: 'assistant', text: '', streaming: true }])
         },
         onDone: ({ text, cancelled, turnLimit }) => {
+          endAiJob()
           const final = turnLimit
             ? [text, tGlobal('aiTurnLimit')].filter(Boolean).join('\n\n')
             : text || (cancelled ? tGlobal('aiStopped') : '')
@@ -142,6 +153,7 @@ export function AiPanel({
           setBusy(false)
         },
         onError: (error) => {
+          endAiJob()
           setChat((prev) => {
             const next = [...prev]
             // the loop rolled this run's user message out of the model context — surface that
@@ -179,7 +191,8 @@ export function AiPanel({
   const send = (text: string): void => {
     const instruction = text.trim()
     const loop = loopRef.current
-    if (!instruction || !loop || loop.busy) return
+    if (!instruction || !loop || loop.busy || runStartingRef.current) return
+    runStartingRef.current = true
     stickToBottomRef.current = true
     setChat((prev) => [
       ...prev,
@@ -191,9 +204,17 @@ export function AiPanel({
     setPhase('thinking')
     void (async () => {
       try {
-        settingsRef.current = await window.pdfApi.getAiSettings()
-        await loop.run(instruction)
+        const [settings, ticket] = await Promise.all([
+          window.pdfApi.getAiSettings(),
+          window.pdfApi.aiJobBegin(crypto.randomUUID()),
+        ])
+        settingsRef.current = settings
+        aiJobTicketRef.current = ticket
+        runStartingRef.current = false
+        loop.run(instruction)
       } catch (err) {
+        runStartingRef.current = false
+        endAiJob()
         patchLast({
           streaming: false,
           text: err instanceof Error ? err.message : String(err),
@@ -204,7 +225,12 @@ export function AiPanel({
     })()
   }
 
-  const stop = (): void => loopRef.current?.cancel()
+  const stop = (): void => {
+    runStartingRef.current = false
+    loopRef.current?.cancel()
+    endAiJob()
+    setBusy(false)
+  }
 
   // Re-clamp the persisted width when the window shrinks (max is 60% of the window)
   useEffect(() => {

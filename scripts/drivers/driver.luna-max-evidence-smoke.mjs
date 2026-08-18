@@ -3,6 +3,9 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from '
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium } from 'playwright-core'
+import { assertPackagedSmokeIsolation } from './packaged-smoke-isolation.mjs'
+
+assertPackagedSmokeIsolation()
 
 const repoRoot = resolve(new URL('../..', import.meta.url).pathname)
 const appBundle = resolve(process.env.GENOFFICE_PACKAGED_APP ?? '')

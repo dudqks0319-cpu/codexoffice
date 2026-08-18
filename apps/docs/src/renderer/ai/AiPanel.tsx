@@ -9,7 +9,12 @@ import {
   type JobSnapshot,
   type JobState,
 } from '@genoffice/agent-core'
-import type { AiSettings, AttachmentAddResult, AttachmentMeta } from '../../shared/ipc'
+import type {
+  AiJobBudgetTicket,
+  AiSettings,
+  AttachmentAddResult,
+  AttachmentMeta,
+} from '../../shared/ipc'
 import { ATTACHMENT_IMAGE_EXTS } from '../../shared/ipc'
 import type { PmNode } from '../editor/convert'
 import { findNumId, type NumIds } from './protocol'
@@ -383,13 +388,22 @@ export function AiPanel({
   }
 
   const loopRef = useRef<AgentLoop<PmNode> | null>(null)
+  const aiJobTicketRef = useRef<AiJobBudgetTicket | null>(null)
+  const endAiJob = () => {
+    const ticket = aiJobTicketRef.current
+    aiJobTicketRef.current = null
+    if (ticket) void window.desktop.aiJobEnd(ticket).catch(() => {})
+  }
   if (!loopRef.current) {
     const numIds = (): NumIds => ({
       bullet: findNumId(blocksRef.current, 'bullet') ?? numIdFallbackRef.current?.bullet ?? null,
       ordered: findNumId(blocksRef.current, 'ordered') ?? numIdFallbackRef.current?.ordered ?? null,
     })
     loopRef.current = new AgentLoop<PmNode>({
-      transport: createElectronTransport(() => settingsRef.current),
+      transport: createElectronTransport(
+        () => settingsRef.current,
+        () => aiJobTicketRef.current,
+      ),
       systemSuffix: aiLangDirective,
       maxTurns: DOCS_AGENT_MAX_TURNS,
       skill: composeSkills('docs+files', '', [
@@ -460,6 +474,7 @@ export function AiPanel({
           setChat((prev) => [...prev, { role: 'assistant', text: '', streaming: true }])
         },
         onDone: ({ text, cancelled, turnLimit, truncated }) => {
+          endAiJob()
           const lifecycle = jobLifecycleRef.current
           const current = callbackIsCurrent()
           const stopped = cancelled || lifecycle?.snapshot.state === 'CANCELLED' || !current
@@ -512,12 +527,13 @@ export function AiPanel({
             persistMessage('assistant', finalText, persistedToolActivity(runToolsRef.current))
           }
         },
-        onError: (error) => {
+        onError: (error, code) => {
+          endAiJob()
           const lifecycle = jobLifecycleRef.current
           const current = callbackIsCurrent()
           disposeExecutionEditor()
           updateProposal(null)
-          if (current) transitionJob('FAILED')
+          if (current) transitionJob(code === 'budget' ? 'BUDGET_BLOCKED' : 'FAILED')
           if (!current || lifecycle?.snapshot.state === 'CANCELLED') {
             setBusy(false)
             return
@@ -673,20 +689,33 @@ export function AiPanel({
     setBusy(true)
     persistMessage('user', instruction, undefined, attachmentsRef.current)
     // a rejected image read must not strand the run (busy would stay true forever): degrade to a no-image send
-    void collectImageAttachments()
-      .catch((): AgentImage[] => {
+    void Promise.all([
+      collectImageAttachments().catch((): AgentImage[] => {
         setAttachNotice(t('aiImagesSendFailed'))
         window.setTimeout(() => setAttachNotice(null), 5000)
         return []
-      })
-      .then((images) => {
+      }),
+      window.desktop.aiJobBegin(jobId),
+    ])
+      .then(([images, ticket]) => {
         if (
           !acceptsJobCallback(lifecycle, generation, currentGenerationRef.current, ['PREPARING'])
         ) {
+          void window.desktop.aiJobEnd(ticket).catch(() => {})
           return
         }
+        aiJobTicketRef.current = ticket
         transitionJob('RUNNING')
         loop.run(instruction, images)
+      })
+      .catch(() => {
+        if (!acceptsJobCallback(lifecycle, generation, currentGenerationRef.current, ['PREPARING']))
+          return
+        disposeExecutionEditor()
+        updateProposal(null)
+        transitionJob('FAILED')
+        patchLastAssistant({ streaming: false, error: tModule('aiUnknownError') })
+        setBusy(false)
       })
   }
 
@@ -694,6 +723,7 @@ export function AiPanel({
     currentGenerationRef.current += 1
     transitionJob('CANCELLED')
     loopRef.current?.cancel()
+    endAiJob()
     if (!loopRef.current?.busy) disposeExecutionEditor()
     updateProposal(null)
     setBusy(false)
@@ -741,25 +771,21 @@ export function AiPanel({
     e.preventDefault()
     e.stopPropagation()
     setDragOver(false)
-    const paths = Array.from(e.dataTransfer.files)
-      .map((f) => window.desktop.getPathForFile(f))
-      .filter(Boolean)
-    if (paths.length > 0) mergeAttachments(await window.desktop.addAttachmentPaths(paths))
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length > 0) mergeAttachments(await window.desktop.addAttachmentFiles(files))
   }
 
   /** Files pasted into the input: ones with a local path go through regular attachments; pure bitmaps like screenshots hit a temp file first */
   const onPasteFiles = async (files: File[]) => {
-    const paths: string[] = []
     for (const f of files) {
-      const p = window.desktop.getPathForFile(f)
-      if (p) {
-        paths.push(p)
+      const local = await window.desktop.addAttachmentFiles([f])
+      if (local.accepted.length > 0 || local.rejected.length > 0) {
+        mergeAttachments(local)
         continue
       }
       const ext = PASTE_MIME_EXT[f.type] ?? f.name.split('.').pop()?.toLowerCase() ?? 'bin'
       mergeAttachments(await window.desktop.addPastedImage(await f.arrayBuffer(), ext))
     }
-    if (paths.length > 0) mergeAttachments(await window.desktop.addAttachmentPaths(paths))
   }
 
   const removeAttachment = (path: string) =>

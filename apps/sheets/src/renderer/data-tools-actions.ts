@@ -39,6 +39,7 @@ export interface DataToolsContext {
   setMessage: (message: string) => void
   setPendingEdits: (count: number) => void
   setAdvancedFilterColumns: (columns: readonly AdvancedFilterColumn[] | null) => void
+  refreshSelection: () => void
 }
 
 export function activeCellLabel(ctx: DataToolsContext): string {
@@ -74,6 +75,10 @@ export function goToReference(ctx: DataToolsContext, ref: string): string | null
     const range = worksheet.getRange(resolved)
     const target = workbook.getSheetBySheetId(range.getSheetId()) ?? worksheet
     workbook.setActiveRange(range)
+    // Programmatic selection does not emit SelectionChanged in Univer 0.25.1.
+    // Refresh the app-owned Name Box and ribbon echo immediately so the
+    // address the user typed does not snap back to the previous cell.
+    ctx.refreshSelection()
     target.scrollToCell(range.getRow(), range.getColumn())
     // Hand keyboard focus back to the grid (Univer's hidden editor host, the
     // same handoff its own name box does); typing right after a jump then

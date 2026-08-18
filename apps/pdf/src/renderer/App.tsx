@@ -33,6 +33,7 @@ import { buildSearchIndex, searchInIndex } from './search'
 import type { SearchIndex, SearchMatch } from './search'
 import { useI18n } from './i18n/locale'
 import { useAutosave } from './useAutosave'
+import { PDF_MAX_PAGES } from '../shared/ipc'
 import type {
   DrawingInput,
   FormValueInput,
@@ -65,6 +66,10 @@ const DOC_OPTS = {
   cMapPacked: true,
   standardFontDataUrl: `${ASSET_BASE}standard_fonts/`,
   wasmUrl: `${ASSET_BASE}wasm/`,
+  maxImageSize: 16_777_216,
+  // PDF content is untrusted. Keep PDF.js on its interpreter path instead of
+  // compiling document-provided expressions through Function/eval.
+  isEvalSupported: false,
 }
 
 /** Which items in the container are within the (expanded) viewport — shared lazy-render basis
@@ -602,6 +607,8 @@ export default function App() {
   const [saveError, setSaveError] = useState('')
   /** Autosave gate: this file was saved explicitly at least once */
   const savedOnceRef = useRef(false)
+  /** An external-write conflict pauses unattended retries until the document reloads. */
+  const sourceConflictRef = useRef(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([])
@@ -686,6 +693,10 @@ export default function App() {
       password: passwordRef.current,
       ...DOC_OPTS,
     }).promise
+    if (loaded.numPages > PDF_MAX_PAGES) {
+      await loaded.destroy()
+      throw new Error(`PDF contains more than ${PDF_MAX_PAGES.toLocaleString()} pages`)
+    }
     const all: PageSize[] = []
     const rots: number[] = []
     for (let i = 1; i <= loaded.numPages; i++) {
@@ -711,6 +722,7 @@ export default function App() {
     setDeleteToast(false)
     setUndoStack([])
     setRedoStack([])
+    sourceConflictRef.current = false
     void loaded.getOutline().then(
       (o) => setOutline(o && o.length > 0 ? (o as OutlineNode[]) : null),
       () => setOutline(null),
@@ -750,8 +762,9 @@ export default function App() {
     })()
   }, [openPath])
 
-  /** Documents opened with a password are treated as read-only: pdf-lib can't write back encrypted files */
-  const readOnly = status === 'ready' && passwordRef.current !== undefined
+  /** Password-protected and oversized PDFs are view-only: editing uses a lower isolated-memory cap. */
+  const readOnly =
+    status === 'ready' && (passwordRef.current !== undefined || fileSize > 64 * 1024 * 1024)
 
   const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s))
 
@@ -1081,15 +1094,29 @@ export default function App() {
 
   /** Resolved when the running save() lands; Save As serializes behind it */
   const saveInFlightRef = useRef<Promise<boolean> | null>(null)
+  const recoveryBlockedRef = useRef(false)
+  const previousDirtyRef = useRef(dirty)
+
+  useEffect(() => {
+    if (!dirty || (!previousDirtyRef.current && dirty)) recoveryBlockedRef.current = false
+    previousDirtyRef.current = dirty
+  }, [dirty])
 
   const save = (autosave = false): Promise<boolean> => {
     if (!dirty || saveState === 'saving' || !filePath) return Promise.resolve(!dirty)
     // An explicit save opts this file into autosave
     if (!autosave) savedOnceRef.current = true
+    recoveryBlockedRef.current = true
     const run = (async (): Promise<boolean> => {
       setSaveState('saving')
-      const result = await window.pdfApi.save({ path: filePath, ...editsPayload() })
+      const result = await window.pdfApi.save({
+        path: filePath,
+        auto: autosave,
+        ...editsPayload(),
+      })
       if (!result.ok) {
+        if (result.code === 'source-changed') sourceConflictRef.current = true
+        else recoveryBlockedRef.current = false
         opFailed(result.error)
         return false
       }
@@ -1147,6 +1174,48 @@ export default function App() {
   const saveAsFlowRef = useRef(false)
   useEffect(() => window.pdfApi.onSaveAsFlow((inFlight) => (saveAsFlowRef.current = inFlight)), [])
 
+  const recoveryInFlightRef = useRef(false)
+  const writeRecoveryRef = useRef<() => Promise<void>>(async () => undefined)
+  writeRecoveryRef.current = async () => {
+    if (
+      recoveryInFlightRef.current ||
+      recoveryBlockedRef.current ||
+      !dirty ||
+      !filePath ||
+      readOnly ||
+      saveState === 'saving' ||
+      saveInFlightRef.current ||
+      sourceConflictRef.current ||
+      saveAsFlowRef.current
+    ) {
+      return
+    }
+    recoveryInFlightRef.current = true
+    try {
+      await window.pdfApi.writeRecovery({
+        path: filePath,
+        auto: true,
+        ...editsPayload(),
+      })
+    } catch {
+      // Recovery is auxiliary; a normal explicit Save still reports any actionable error.
+    } finally {
+      recoveryInFlightRef.current = false
+    }
+  }
+
+  // A recovery copy never touches the source. Write it periodically and on blur,
+  // even before the user opts into normal autosave with an explicit Save.
+  useEffect(() => {
+    const interval = window.setInterval(() => void writeRecoveryRef.current(), 30_000)
+    const onBlur = () => void writeRecoveryRef.current()
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
+
   // Autosave (same strategy as Docs): every 30s and on window blur, silently persist pending
   // edits via the regular save() path; skipped while a save is in flight or without a file path.
   // Gated on one explicit save first: a PDF opened only to read must never be
@@ -1159,6 +1228,7 @@ export default function App() {
       saveState !== 'saving' &&
       filePath !== '' &&
       !readOnly &&
+      !sourceConflictRef.current &&
       !saveAsFlowRef.current,
     () => void save(true),
   )
@@ -1682,7 +1752,7 @@ export default function App() {
           )}
           {saveState === 'error' && (
             <span className="tb-save-error" title={saveError}>
-              {t('saveFailed')}
+              {t('saveFailed')}: {saveError}
             </span>
           )}
           {saveState === 'saved' && <span className="tb-save-ok">{t('savedOk')}</span>}

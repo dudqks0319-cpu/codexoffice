@@ -6,57 +6,13 @@
  * openPptx → promote → savePptx → openPptx chain.
  */
 import { describe, it, expect } from 'vitest'
-import PptxGenJS from 'pptxgenjs'
 import { openPptx, savePptx } from '../src/index'
 import { promoteSlideBackground, isBackgroundLikeElement } from '../src/background-promote'
-
-const PAGE = { w: 13.333, h: 7.5 }
-
-type ShapeSpec = {
-  x?: number
-  y?: number
-  w?: number
-  h?: number
-  fill?: string
-  lineTransparency?: number
-  visibleLine?: boolean
-  text?: string
-}
-
-async function deckWithShapes(shapes: ShapeSpec[]): Promise<Uint8Array> {
-  const p = new PptxGenJS()
-  p.defineLayout({ name: 'W', width: PAGE.w, height: PAGE.h })
-  p.layout = 'W'
-  const s = p.addSlide()
-  for (const spec of shapes) {
-    const opts: Record<string, unknown> = {
-      x: spec.x ?? 0,
-      y: spec.y ?? 0,
-      w: spec.w ?? PAGE.w,
-      h: spec.h ?? PAGE.h,
-      fill: { color: spec.fill ?? '0B2545' },
-    }
-    if (spec.lineTransparency != null) {
-      opts.line = { color: 'FFFFFF', width: 1, transparency: spec.lineTransparency }
-    } else if (spec.visibleLine) {
-      opts.line = { color: 'FF0000', width: 2 }
-    }
-    if (spec.text) s.addText(spec.text, opts)
-    else s.addShape('rect', opts)
-  }
-  s.addText('CONTENT', { x: 1, y: 1, w: 8, h: 1, fontSize: 32 })
-  const buf = (await p.write({ outputType: 'nodebuffer' })) as Buffer
-  return new Uint8Array(buf)
-}
+import { pptxGenJsFixture } from './pptxgenjs-fixture'
 
 describe('promoteSlideBackground', () => {
   it('promotes stacked full-page solid rects (transparent 1px border) into <p:bg>', async () => {
-    const opened = await openPptx(
-      await deckWithShapes([
-        { fill: '112233', lineTransparency: 100 },
-        { fill: '0B2545', lineTransparency: 100 },
-      ]),
-    )
+    const opened = await openPptx(await pptxGenJsFixture('background-stacked.pptx'))
     const slide = opened.deck.slides[0]!
     const before = slide.elements.length
 
@@ -79,7 +35,7 @@ describe('promoteSlideBackground', () => {
   })
 
   it('leaves shapes with a visible border alone', async () => {
-    const opened = await openPptx(await deckWithShapes([{ visibleLine: true }]))
+    const opened = await openPptx(await pptxGenJsFixture('background-visible-line.pptx'))
     const slide = opened.deck.slides[0]!
     const before = slide.elements.length
     expect(promoteSlideBackground(slide, opened.deck.size)).toBe(false)
@@ -87,12 +43,7 @@ describe('promoteSlideBackground', () => {
   })
 
   it('leaves non-full-page shapes and shapes with text alone', async () => {
-    const opened = await openPptx(
-      await deckWithShapes([
-        { w: 6, h: 4 },
-        { text: 'TITLE', lineTransparency: 100 },
-      ]),
-    )
+    const opened = await openPptx(await pptxGenJsFixture('background-nonfull-text.pptx'))
     const slide = opened.deck.slides[0]!
     const before = slide.elements.length
     expect(promoteSlideBackground(slide, opened.deck.size)).toBe(false)
@@ -100,7 +51,7 @@ describe('promoteSlideBackground', () => {
   })
 
   it('skips shapes referenced by the timing tree', async () => {
-    const opened = await openPptx(await deckWithShapes([{ lineTransparency: 100 }]))
+    const opened = await openPptx(await pptxGenJsFixture('background-full.pptx'))
     const slide = opened.deck.slides[0]!
     const spid = /<p:cNvPr\b[^>]*\bid="(\d+)"/.exec(slide.elements[0]!.anchor.originalXml)![1]
     slide.bodySuffix = slide.bodySuffix.replace(
@@ -111,7 +62,7 @@ describe('promoteSlideBackground', () => {
   })
 
   it('isBackgroundLikeElement matches full-page fills only', async () => {
-    const opened = await openPptx(await deckWithShapes([{ lineTransparency: 100 }, { w: 6, h: 4 }]))
+    const opened = await openPptx(await pptxGenJsFixture('background-mixed.pptx'))
     const slide = opened.deck.slides[0]!
     expect(isBackgroundLikeElement(slide.elements[0]!, opened.deck.size)).toBe(true)
     expect(isBackgroundLikeElement(slide.elements[1]!, opened.deck.size)).toBe(false)

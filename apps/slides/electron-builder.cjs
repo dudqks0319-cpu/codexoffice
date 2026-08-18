@@ -5,7 +5,7 @@ module.exports = {
   appId: 'com.genoffice.slides',
   productName: 'Codexoffice Slides',
   artifactName: 'Codexoffice-Slides-${version}-${arch}.${ext}',
-  electronVersion: '41.7.1',
+  electronVersion: '41.10.3',
   directories: { output: 'release' },
   files: ['out/**'],
   extraResources: [

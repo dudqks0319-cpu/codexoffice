@@ -1,5 +1,6 @@
 import JSZip from 'jszip'
 import { XMLParser } from 'fast-xml-parser'
+import { assertSafeArchive, readSafeZipText, TextBudget } from './limits'
 
 const parser = new XMLParser({ ignoreAttributes: true })
 
@@ -51,15 +52,20 @@ function collectParagraphs(node: unknown, out: string[]): void {
 /** extract slide text from a pptx: one "## Slide N" section per slide, one line per paragraph */
 export async function pptxToText(bytes: Uint8Array): Promise<string> {
   const zip = await JSZip.loadAsync(bytes)
+  assertSafeArchive(zip, 'pptx')
   const slidePaths = Object.keys(zip.files)
     .filter((p) => /^ppt\/slides\/slide\d+\.xml$/.test(p))
     .sort((a, b) => slideNumber(a) - slideNumber(b))
   const sections: string[] = []
+  const budget = new TextBudget()
   for (const path of slidePaths) {
-    const xml = await zip.files[path]!.async('text')
+    const xml = await readSafeZipText(zip, path, 'pptx')
+    if (xml === undefined) continue
     const paras: string[] = []
     collectParagraphs(parser.parse(xml), paras)
-    sections.push([`## Slide ${slideNumber(path)}`, ...paras].join('\n'))
+    const section = [`## Slide ${slideNumber(path)}`, ...paras].join('\n')
+    budget.add(section, sections.length ? '\n\n' : '')
+    sections.push(section)
   }
   return sections.join('\n\n')
 }

@@ -3,7 +3,7 @@ import { AiComposer, AiTypingIndicator } from '@genoffice/ui'
 import { CodexMark } from '../ribbon-icons'
 import type { AiSettings } from '@genoffice/ai-provider'
 import type { ChangePlan } from '../../domain/workbook.types'
-import type { AttachmentMeta } from '../../shared/desktop-api'
+import type { AttachmentAddResult, AttachmentMeta } from '../../shared/desktop-api'
 import type { QAFinding } from '../qa-scanner'
 import type { JobSnapshot } from '@genoffice/agent-core'
 import { useI18n, type TFunc } from '../i18n/locale'
@@ -69,7 +69,7 @@ export function AiChatPanel({
   attachments,
   attachNotice,
   onPickAttachments,
-  onAddAttachmentPaths,
+  onAddAttachmentFiles,
   onAddPastedImage,
   onRemoveAttachment,
   prompt,
@@ -102,7 +102,7 @@ export function AiChatPanel({
   readonly attachments: readonly AttachmentMeta[]
   readonly attachNotice: string | null
   readonly onPickAttachments: () => void
-  readonly onAddAttachmentPaths: (paths: readonly string[]) => void
+  readonly onAddAttachmentFiles: (files: readonly File[]) => Promise<AttachmentAddResult>
   /// Clipboard-pasted bitmaps (screenshots etc. without a local path): bytes +
   /// extension
   readonly onAddPastedImage: (data: ArrayBuffer, ext: string) => void
@@ -253,26 +253,20 @@ export function AiChatPanel({
     e.preventDefault()
     e.stopPropagation()
     setDragOver(false)
-    const paths = Array.from(e.dataTransfer.files)
-      .map((f) => window.desktopApi.getPathForFile(f))
-      .filter(Boolean)
-    if (paths.length > 0) onAddAttachmentPaths(paths)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length > 0) void onAddAttachmentFiles(files)
   }
 
   /** Files pasted into the input: ones with a local path go the regular
    * attachment route; pure bitmaps like screenshots are persisted by the host */
   const onPasteFiles = (files: File[]): void => {
-    const paths: string[] = []
     for (const f of files) {
-      const p = window.desktopApi.getPathForFile(f)
-      if (p) {
-        paths.push(p)
-        continue
-      }
-      const ext = PASTE_MIME_EXT[f.type] ?? f.name.split('.').pop()?.toLowerCase() ?? 'bin'
-      void f.arrayBuffer().then((buf) => onAddPastedImage(buf, ext))
+      void onAddAttachmentFiles([f]).then((local) => {
+        if (local.accepted.length > 0 || local.rejected.length > 0) return
+        const ext = PASTE_MIME_EXT[f.type] ?? f.name.split('.').pop()?.toLowerCase() ?? 'bin'
+        void f.arrayBuffer().then((buf) => onAddPastedImage(buf, ext))
+      })
     }
-    if (paths.length > 0) onAddAttachmentPaths(paths)
   }
 
   return (

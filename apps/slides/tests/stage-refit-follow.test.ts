@@ -27,6 +27,7 @@ vi.mock('react-konva', () => {
 })
 
 import { App } from '../src/renderer/App'
+import type { MenuCommand } from '../src/shared/ipc'
 
 /** Recording ResizeObserver: lets the test fire size changes for a target. */
 class FakeResizeObserver {
@@ -64,6 +65,37 @@ const blankSlide = () => ({
   background: { kind: 'color', color: '#ffffff' },
 })
 
+let menuCommandHandler: ((command: MenuCommand) => void) | null = null
+const menuUndo = vi.fn(() => Promise.resolve(null))
+const importPreview = {
+  token: 'preview-token',
+  sourceName: 'source.pptx',
+  defaultCandidateId: 'theme-1',
+  candidates: [
+    {
+      id: 'theme-1',
+      name: 'Imported',
+      slideCount: 1,
+      colors: Object.fromEntries(
+        [
+          'dk1',
+          'lt1',
+          'dk2',
+          'lt2',
+          'accent1',
+          'accent2',
+          'accent3',
+          'accent4',
+          'accent5',
+          'accent6',
+          'hlink',
+          'folHlink',
+        ].map((key) => [key, '#123456']),
+      ),
+    },
+  ],
+}
+
 /** Minimal slidesApi: enough for App to boot into the editor on a blank deck. */
 function makeSlidesApi() {
   const explicit: Record<string, unknown> = {
@@ -78,6 +110,15 @@ function makeSlidesApi() {
     getAnimations: () => Promise.resolve([]),
     getTransition: () => Promise.resolve(null),
     listFonts: () => Promise.resolve([]),
+    undo: menuUndo,
+    previewThemeImport: () => Promise.resolve(importPreview),
+    cancelThemeImport: () => Promise.resolve(),
+    onMenuCommand: (handler: (command: MenuCommand) => void) => {
+      menuCommandHandler = handler
+      return () => {
+        if (menuCommandHandler === handler) menuCommandHandler = null
+      }
+    },
   }
   const fallbacks = new Map<string, unknown>()
   return new Proxy(explicit, {
@@ -158,6 +199,8 @@ afterEach(() => {
   root = null
   container = null
   FakeResizeObserver.instances.length = 0
+  menuUndo.mockClear()
+  menuCommandHandler = null
 })
 
 /** Mount the App and boot into a blank deck at fit zoom 1 (1336x800 container). */
@@ -255,5 +298,18 @@ describe('stage fit-to-window follow', () => {
     stageSize = { w: 1336, h: 800 } // uncapped fit 1
     await act(async () => FakeResizeObserver.fire(wrap))
     expect(stageZoom(container!)).toBeCloseTo(1, 5)
+  })
+
+  it('blocks native menu edit commands while the PPTX design import modal is open', async () => {
+    await bootApp()
+    clickByText(container!, '.ribbon-tabs button', /^(Design|设计|디자인)$/)
+    clickByText(container!, 'button.theme-import-trigger', /PPTX/)
+    await settle()
+    expect(container!.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(menuCommandHandler).not.toBeNull()
+
+    act(() => menuCommandHandler?.('undo'))
+    await settle()
+    expect(menuUndo).not.toHaveBeenCalled()
   })
 })

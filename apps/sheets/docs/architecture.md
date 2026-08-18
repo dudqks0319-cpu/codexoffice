@@ -22,7 +22,7 @@ Renderer
 
 The document core is the only workbook writer. The renderer cannot access disk, model credentials, or subprocesses. A cloud model cannot invoke native capabilities or commit files.
 
-The Electron main process owns the XLSX sidecar lifecycle. The renderer receives an opaque session ID and can request only validated, size-limited worksheet ranges. External workbooks are read-only while this streaming path is being validated.
+The Electron main process owns the XLSX sidecar lifecycle. The renderer receives an opaque session ID and can request only validated, size-limited worksheet ranges. External workbooks are editable: the renderer journals commands against that session, while the main process verifies the original file hash and writes an atomic, preservation-checked XLSX update.
 
 ## Renderer composition
 
@@ -44,45 +44,45 @@ Univer starts with worksheet dimensions and empty sparse cell data. Scroll and a
 
 ## Workbook state
 
-Each document eventually owns:
+Each open external workbook owns:
 
 1. The original XLSX package.
-2. A normalized editor snapshot.
+2. A sparse renderer view plus sidecar-backed workbook metadata.
 3. A revisioned operation journal.
 
-The PoC implements the normalized snapshot and in-memory journal. The OOXML gateway operates independently to prove that untouched package entries survive a surgical cell edit.
+Small workbooks (up to 50,000 declared cells) preload completely for live formula calculation. Larger workbooks keep the sparse view: a bounded dependency closure is pinned into Univer when possible, with a sidecar calculation fallback when the closure is not representable. The OOXML gateway replays the journal and verifies that every entry outside the declared mutation set survives.
 
 ## Adapter boundary
 
-Product code depends on `WorkbookAdapter`, not Univer APIs. The adapter exposes:
+The blank/demo workbook path depends on `WorkbookAdapter`, which exposes:
 
 - `getSnapshot`
 - `plan`
 - `apply`
 - `undo`
 
-This keeps AI planning, transaction safety, and audit behavior replaceable if the editor changes.
+Imported XLSX workbooks use a separate lazy state and edit journal because the full file is intentionally absent from renderer memory. Both paths share the same validated command DSL and preview/approval boundary; imported-file AI apply is currently limited to bounded, single-sheet cell proposals so rollback remains atomic.
 
 ## XLSX preservation
 
-The gateway:
+The gateway and sidecar together:
 
 - validates ZIP path safety and entry count;
-- limits total uncompressed data;
-- inventories each uncompressed entry by SHA-256;
+- bound renderer IPC ranges and every worksheet part that must be rewritten;
+- inventory ZIP entries and preserve untouched compressed payloads through raw copy;
 - resolves a worksheet through workbook relationships;
 - rewrites only the target worksheet or workbook metadata;
 - refuses unknown sheet mappings and stale file hashes;
-- writes through a temporary sibling file and atomic rename.
+- verify the original whole-file SHA-256 before saving;
+- write through a temporary sibling file and atomic rename.
 
-The current gateway does not claim full OOXML compatibility. Its contract is that unlisted entries retain identical uncompressed bytes.
+The current gateway does not claim full OOXML compatibility. Its contract is that only declared entries may change; an unsupported edit or an unexpected package difference fails closed.
 
 ## Production gaps
 
-- Durable SQLite transaction and audit journal.
-- Full XLSX-to-editor import model.
-- High-fidelity borders, theme colors, conditional formatting, editable drawings and editable native charts.
-- Tables, names, validation, merged cells, filters, and frozen panes.
-- Formula calculation and differential Excel validation.
-- Local privacy classifier and cloud model gateway.
-- Signed updates, crash recovery, telemetry, and enterprise controls.
+- Excel/LibreOffice qualification corpus with golden visual, formula, no-op, and targeted-edit comparisons.
+- Range-move persistence, editing of tables that already exist in a file, and structured-reference formula evaluation.
+- Native Excel chart fidelity for themes, secondary axes, trendlines, 3D/effects, and scatter-series range editing.
+- Formula-function parity and differential calculation validation beyond the Univer/sidecar fallback coverage.
+- Pixel-identical print pagination across fonts and printer drivers.
+- Signed/notarized distribution, an exercised update channel, telemetry policy, and enterprise controls.

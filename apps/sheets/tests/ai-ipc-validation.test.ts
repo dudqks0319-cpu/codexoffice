@@ -13,6 +13,7 @@ describe('Sheets AI IPC schema integration', () => {
     expect(
       parseAiStreamRequest({
         requestId: 'sheets-test',
+        job: { jobId: 'sheets-job', capability: 'main-issued-secret', maximumOutputTokens: 8_192 },
         settings: {},
         system: '',
         messages: [],

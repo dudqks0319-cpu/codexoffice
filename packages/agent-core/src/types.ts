@@ -98,8 +98,10 @@ export interface AgentStreamCallbacks {
   /** normalized stop reason of the turn ('max_tokens' = cut off by the token limit); transports may omit this */
   onStopReason?(reason: string): void
   onDone(): void
-  onError(error: string): void
+  onError(error: string, code?: AgentStreamErrorCode): void
 }
+
+export type AgentStreamErrorCode = 'timeout' | 'credits' | 'budget'
 
 export interface AgentStreamHandle {
   /** abort the in-flight turn; the transport must still emit onDone afterwards */

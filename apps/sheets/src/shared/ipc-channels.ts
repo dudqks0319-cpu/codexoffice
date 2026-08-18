@@ -21,6 +21,8 @@ export const IPC_CHANNELS = {
   aiGetSettings: 'ai:get-settings',
   aiSetSettings: 'ai:set-settings',
   aiChat: 'ai:chat',
+  aiJobBegin: 'ai:job-begin',
+  aiJobEnd: 'ai:job-end',
   aiStream: 'ai:stream',
   aiStreamCancel: 'ai:stream-cancel',
   aiStreamChunk: 'ai:stream-chunk',

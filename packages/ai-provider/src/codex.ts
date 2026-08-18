@@ -12,6 +12,7 @@ import {
   createStreamWatchdog,
 } from './watchdog'
 import type { StreamCallbacks } from './stream'
+import { estimateAiStreamOutputTokens } from './ai-job-budget'
 
 export const CODEX_MAX_IMAGES = 8
 export const CODEX_MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -19,7 +20,10 @@ export const CODEX_MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
 export const CODEX_MAX_PROMPT_BYTES = 2 * 1024 * 1024
 
 const CODEX_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-const CODEX_MAX_TOOL_INPUT_JSON_CHARS = 256 * 1024
+const CODEX_RESPONSE_BYTES_PER_TOKEN = 4
+const CODEX_RESPONSE_FIXED_BYTES = 256
+const CODEX_TEXT_ONLY_FIXED_BYTES = 64
+const CODEX_MAX_TEXT_CHARS_WITH_TOOLS = 256
 const CODEX_MAX_TOOL_INPUT_NODES = 10_000
 const CODEX_MAX_TOOL_INPUT_DEPTH = 32
 const CODEX_MAX_TOOLS = 128
@@ -169,28 +173,68 @@ async function stageInput(
   ]
 }
 
-function maximumTextLength(maxTokens: number): number {
-  return Math.max(1, Math.min(500_000, Math.floor(maxTokens) * 4))
+interface CodexOutputBudget {
+  maxBytes: number
+  maxTextLength: number
+  maxToolCalls: 0 | 1
+  maxToolInputJsonLength: number
+}
+
+function outputBudget(
+  toolNames: Map<string, Record<string, unknown>>,
+  maxTokens: number,
+): CodexOutputBudget {
+  const maxBytes = Math.min(
+    CODEX_MAX_RESPONSE_BYTES,
+    Math.floor(maxTokens) * CODEX_RESPONSE_BYTES_PER_TOKEN,
+  )
+  const hasTools = toolNames.size > 0
+  const fixedBytes = hasTools ? CODEX_RESPONSE_FIXED_BYTES : CODEX_TEXT_ONLY_FIXED_BYTES
+  if (maxBytes <= fixedBytes + 6) {
+    throw new Error('Codex maxTokens is too small for the structured response envelope')
+  }
+  if (!hasTools) {
+    return {
+      maxBytes,
+      maxTextLength: Math.floor((maxBytes - fixedBytes) / 6),
+      maxToolCalls: 0,
+      maxToolInputJsonLength: 0,
+    }
+  }
+  // JSON string text can expand to six bytes per UTF-16 code unit (escaped controls).
+  // inputJson is itself valid JSON text, so four bytes per code unit covers UTF-8 and
+  // its outer string escaping. Fixed bytes include the longest accepted ASCII tool
+  // name plus all envelope/property syntax. One call per turn keeps the schema's
+  // worst-case response inside the provider reservation; the AgentLoop can continue.
+  const maxTextLength = Math.min(
+    CODEX_MAX_TEXT_CHARS_WITH_TOOLS,
+    Math.floor((maxBytes - fixedBytes) / 12),
+  )
+  const maxToolInputJsonLength = Math.floor((maxBytes - fixedBytes - maxTextLength * 6) / 4)
+  if (maxTextLength < 1 || maxToolInputJsonLength < 2) {
+    throw new Error('Codex maxTokens is too small for a tool response')
+  }
+  return { maxBytes, maxTextLength, maxToolCalls: 1, maxToolInputJsonLength }
 }
 
 function outputSchema(toolNames: Map<string, Record<string, unknown>>, maxTokens: number): unknown {
-  const maxTextLength = maximumTextLength(maxTokens)
+  const budget = outputBudget(toolNames, maxTokens)
   const nameSchema = toolNames.size
     ? { type: 'string', enum: [...toolNames.keys()] }
     : { type: 'string', maxLength: 0 }
   return {
     type: 'object',
     properties: {
-      text: { type: 'string', maxLength: maxTextLength },
+      text: { type: 'string', maxLength: budget.maxTextLength },
       toolCalls: {
         type: 'array',
-        maxItems: toolNames.size ? CODEX_MAX_TOOLS : 0,
+        maxItems: budget.maxToolCalls,
         items: {
           type: 'object',
           properties: {
-            id: { type: 'string', minLength: 1, maxLength: 256 },
+            id: { type: 'string', minLength: 1, maxLength: 8 },
             name: nameSchema,
-            inputJson: { type: 'string', maxLength: CODEX_MAX_TOOL_INPUT_JSON_CHARS },
+            inputJson: { type: 'string', maxLength: budget.maxToolInputJsonLength },
           },
           required: ['id', 'name', 'inputJson'],
           additionalProperties: false,
@@ -279,7 +323,8 @@ function parseEnvelope(
   allowedTools: Map<string, Record<string, unknown>>,
   maxTokens: number,
 ): CodexEnvelope {
-  if (Buffer.byteLength(raw, 'utf8') > CODEX_MAX_RESPONSE_BYTES) {
+  const budget = outputBudget(allowedTools, maxTokens)
+  if (Buffer.byteLength(raw, 'utf8') > budget.maxBytes) {
     throw new Error('Codex returned an oversized structured response')
   }
   let parsed: unknown
@@ -294,10 +339,7 @@ function parseEnvelope(
   if (Object.keys(parsed).some((key) => key !== 'text' && key !== 'toolCalls')) {
     throw new Error('Codex returned a malformed structured response')
   }
-  if (
-    parsed.text.length > maximumTextLength(maxTokens) ||
-    parsed.toolCalls.length > (allowedTools.size ? CODEX_MAX_TOOLS : 0)
-  ) {
+  if (parsed.text.length > budget.maxTextLength || parsed.toolCalls.length > budget.maxToolCalls) {
     throw new Error('Codex returned an oversized structured response')
   }
   const seenIds = new Set<string>()
@@ -307,10 +349,10 @@ function parseEnvelope(
       Object.keys(value).some((key) => !['id', 'name', 'inputJson'].includes(key)) ||
       typeof value.id !== 'string' ||
       !value.id ||
-      value.id.length > 256 ||
+      value.id.length > 8 ||
       typeof value.name !== 'string' ||
       typeof value.inputJson !== 'string' ||
-      value.inputJson.length > CODEX_MAX_TOOL_INPUT_JSON_CHARS
+      value.inputJson.length > budget.maxToolInputJsonLength
     ) {
       throw new Error('Codex returned a malformed tool call')
     }
@@ -324,7 +366,11 @@ function parseEnvelope(
     }
     return { id: value.id, name: value.name, input }
   })
-  return { text: parsed.text, toolCalls }
+  const envelope = { text: parsed.text, toolCalls }
+  if (estimateAiStreamOutputTokens(envelope.text, envelope.toolCalls) > maxTokens) {
+    throw new Error('Codex exceeded the reserved output budget')
+  }
+  return envelope
 }
 
 function parseToolInputJson(inputJson: string): Record<string, unknown> {

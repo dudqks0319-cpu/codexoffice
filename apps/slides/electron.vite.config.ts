@@ -27,6 +27,15 @@ export default defineConfig({
   // yields ERR_MODULE_NOT_FOUND).
   main: {
     resolve: { alias: workspaceAlias },
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve(here, 'src/main/index.ts'),
+          'design-inspect-worker': resolve(here, 'src/main/design-inspect-worker.ts'),
+        },
+        output: { entryFileNames: '[name].js' },
+      },
+    },
     // Bundle opentype.js too (the packaged app ships only out/**, so external deps are unresolvable at runtime)
     plugins: [
       externalizeDepsPlugin({

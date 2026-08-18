@@ -10,6 +10,7 @@
 import type { RenderSlide } from '@genoffice/pptx-render'
 import type { SlideComment, SectionInfo } from '@genoffice/pptx-engine'
 import type {
+  AiJobBudgetTicket,
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
@@ -23,6 +24,7 @@ export type {
   AiProviderConfig,
   AiProviderId,
   AiProviderMeta,
+  AiJobBudgetTicket,
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
@@ -123,16 +125,16 @@ export type GenerateSlideImageResult =
 export interface DesktopFilesApi {
   /** Multi-select attachment file dialog */
   pickAttachments(): Promise<AttachmentAddResult | null>
-  /** Validate dragged-in paths and return attachment metadata */
-  addAttachmentPaths(paths: string[]): Promise<AttachmentAddResult>
+  /** Validate genuine dropped/pasted File objects and return attachment metadata */
+  addAttachmentFiles(files: File[]): Promise<AttachmentAddResult>
+  /** Refresh metadata only for paths already granted to this tab */
+  refreshAttachments(paths: string[]): Promise<AttachmentAddResult>
   /** Save a clipboard-pasted image (no local path) to a temp file and add it as an attachment */
   addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
   /** Read one slice of an attachment's extracted text */
   readAttachment(path: string, offset: number, maxChars: number): Promise<AttachmentReadResult>
   /** Read an image attachment as base64 for multimodal (≤5MB) */
   readAttachmentImage(path: string): Promise<AttachmentImageResult>
-  /** Absolute path of a File dropped on the window (Electron webUtils) */
-  getPathForFile(file: File): string
 }
 
 /** One rich-text run (sent by the editor, with independent formatting). */
@@ -445,6 +447,43 @@ export interface ApplyThemeOp {
   majorFont?: string
   minorFont?: string
   fitWidthPx: number
+}
+
+export interface ImportedThemeCandidate {
+  id: string
+  name: string
+  slideCount: number
+  colors: Record<string, string>
+  majorFont?: string
+  minorFont?: string
+  majorEaFont?: string
+  minorEaFont?: string
+  majorCsFont?: string
+  minorCsFont?: string
+}
+
+export interface ThemeImportPreview {
+  token: string
+  sourceName: string
+  defaultCandidateId: string
+  candidates: ImportedThemeCandidate[]
+}
+
+export type ThemeImportErrorCode =
+  | 'unavailable'
+  | 'same-file'
+  | 'invalid-file'
+  | 'too-large'
+  | 'unsupported-file'
+  | 'inspection-failed'
+  | 'expired'
+  | 'invalid-selection'
+  | 'apply-failed'
+
+export type ThemeImportPreviewResult = ThemeImportPreview | { error: ThemeImportErrorCode } | null
+export interface ApplyImportedThemeOp {
+  token: string
+  candidateId: string
 }
 
 export type TransitionKind =
@@ -1185,6 +1224,11 @@ export interface SlidesApi {
   ) => Promise<{ footer: string | null; slideNum: boolean; date: string | null }>
   /** Apply a theme (color/font scheme + per-page background); returns the reparsed full RenderSlide set, null = no-op, { error } = failed (state rolled back) */
   applyTheme: (op: ApplyThemeOp) => Promise<RenderSlide[] | { error: string } | null>
+  previewThemeImport: () => Promise<ThemeImportPreviewResult>
+  cancelThemeImport: (token: string) => Promise<void>
+  applyImportedTheme: (
+    op: ApplyImportedThemeOp,
+  ) => Promise<RenderSlide[] | { error: ThemeImportErrorCode } | null>
   /** Set the transition effect (takes effect in PowerPoint shows of the saved pptx); returns success */
   setTransition: (op: SetTransitionOp) => Promise<boolean>
   /** The current page's transition effect (echoed on page switch) */
@@ -1274,10 +1318,22 @@ export interface SlidesApi {
   exportPdf: (op: ExportPdfOp) => Promise<ExportPdfResult>
   /** Print (system dialog; cancel counts as ok=false without an error) */
   printSlides: (op: PrintSlidesOp) => Promise<{ ok: boolean; error?: string }>
-  save: () => Promise<{ ok: boolean; path?: string; error?: string; slides?: RenderSlide[] }>
-  saveAs: (
-    defaultName: string,
-  ) => Promise<{ ok: boolean; path?: string; error?: string; slides?: RenderSlide[] }>
+  save: () => Promise<{
+    ok: boolean
+    path?: string
+    error?: string
+    slides?: RenderSlide[]
+    dirty?: boolean
+    superseded?: boolean
+  }>
+  saveAs: (defaultName: string) => Promise<{
+    ok: boolean
+    path?: string
+    error?: string
+    slides?: RenderSlide[]
+    dirty?: boolean
+    superseded?: boolean
+  }>
   /** The close guard chose "Save": the main process asks the renderer to run the full save flow */
   onCloseSaveRequest: (handler: () => void) => () => void
   reportCloseSaveResult: (ok: boolean) => void
@@ -1291,6 +1347,8 @@ export interface SlidesApi {
   onRenamed: (handler: (newPath: string) => void) => () => void
   getAiSettings: () => Promise<AiSettings>
   setAiSettings: (settings: AiSettings) => Promise<void>
+  aiJobBegin: (jobId: string) => Promise<AiJobBudgetTicket>
+  aiJobEnd: (ticket: AiJobBudgetTicket) => Promise<void>
   aiStream: (request: AiStreamRequest) => Promise<void>
   aiStreamCancel: (requestId: string) => Promise<void>
   /** Status of the app Codex account; credentials never enter the renderer. */

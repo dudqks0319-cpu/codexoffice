@@ -1,0 +1,135 @@
+import { execFileSync } from 'node:child_process'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
+
+import { checkReleaseDependencies } from './check-release-dependencies.mjs'
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const require = createRequire(import.meta.url)
+const { normalizeUpdateUrl } = require('../apps/shell/build/electron-builder-config.js')
+const SHA_PATTERN = /^[0-9a-f]{40}$/
+
+function check(id, status, detail) {
+  return { id, status, detail }
+}
+
+export function evaluateMacReleasePreflight(options = {}) {
+  const root = options.repositoryRoot ?? repositoryRoot
+  const environment = options.environment ?? process.env
+  const platform = options.platform ?? process.platform
+  const run =
+    options.execFileSync ??
+    ((command, args, runOptions = {}) =>
+      execFileSync(command, args, { encoding: 'utf8', ...runOptions }).trim())
+  const dependencyCheck = options.checkReleaseDependencies ?? checkReleaseDependencies
+  const checks = []
+
+  try {
+    const result = dependencyCheck({ repositoryRoot: root, environment })
+    checks.push(check('dependencies', 'PASS', `Electron ${result.electron} matches release policy`))
+  } catch (error) {
+    checks.push(
+      check(
+        'dependencies',
+        'FAIL',
+        error instanceof Error ? error.message : 'release dependency validation failed',
+      ),
+    )
+  }
+
+  const head = String(run('/usr/bin/git', ['rev-parse', 'HEAD'], { cwd: root })).trim()
+  const status = String(
+    run('/usr/bin/git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: root }),
+  ).trim()
+  const declaredSha = environment.GENOFFICE_SOURCE_SHA?.trim().toLowerCase() ?? ''
+  if (!SHA_PATTERN.test(declaredSha)) {
+    checks.push(check('source-sha', 'HOLD', 'GENOFFICE_SOURCE_SHA is not an exact source SHA'))
+  } else if (declaredSha !== head.toLowerCase()) {
+    checks.push(check('source-sha', 'FAIL', 'declared source SHA does not match Git HEAD'))
+  } else {
+    checks.push(check('source-sha', 'PASS', `declared source matches ${head.toLowerCase()}`))
+  }
+  checks.push(
+    status === ''
+      ? check('worktree', 'PASS', 'tracked and untracked release inputs are clean')
+      : check('worktree', 'FAIL', 'worktree has tracked or untracked changes'),
+  )
+
+  if (platform !== 'darwin') {
+    checks.push(check('signing', 'HOLD', 'macOS release signing requires a macOS host'))
+  } else {
+    const identities = String(
+      run('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning']),
+    )
+    const identity = environment.CSC_NAME?.trim() ?? ''
+    const validIdentityName = /^[^\r\n"]{1,300}$/.test(identity)
+    const signingAuthorized = environment.GENOFFICE_SIGNING_AUTHORIZED === '1'
+    const secureTimestamp = environment.GENOFFICE_SIGNING_TIMESTAMP_MODE === 'secure'
+    if (!signingAuthorized || !validIdentityName || !secureTimestamp) {
+      checks.push(
+        check(
+          'signing',
+          'HOLD',
+          'explicit identity, signing authorization, and secure timestamp are required',
+        ),
+      )
+    } else if (!identities.split(/\r?\n/).some((line) => line.includes(`"${identity}"`))) {
+      checks.push(
+        check('signing', 'FAIL', 'the explicitly selected signing identity is unavailable'),
+      )
+    } else {
+      checks.push(check('signing', 'PASS', 'explicit Developer ID identity is available'))
+    }
+  }
+
+  const notarizationAuthorized = environment.GENOFFICE_NOTARIZATION_AUTHORIZED === '1'
+  const hasKeychainProfile = Boolean(environment.APPLE_KEYCHAIN_PROFILE)
+  const hasAppleCredentialTuple = Boolean(
+    environment.APPLE_ID && environment.APPLE_APP_SPECIFIC_PASSWORD && environment.APPLE_TEAM_ID,
+  )
+  if (!notarizationAuthorized || (!hasKeychainProfile && !hasAppleCredentialTuple)) {
+    checks.push(
+      check(
+        'notarization',
+        'HOLD',
+        'explicit authorization and complete local credentials are required',
+      ),
+    )
+  } else {
+    checks.push(check('notarization', 'PASS', 'notarization prerequisites are configured'))
+  }
+
+  try {
+    const updateUrl = normalizeUpdateUrl(environment.GENOFFICE_UPDATE_URL)
+    checks.push(
+      updateUrl
+        ? check('update', 'PASS', 'credential-free HTTPS update channel is configured')
+        : check('update', 'HOLD', 'GENOFFICE_UPDATE_URL is not configured'),
+    )
+  } catch {
+    checks.push(check('update', 'FAIL', 'update channel URL violates release policy'))
+  }
+
+  const verdict = checks.every((entry) => entry.status === 'PASS') ? 'READY' : 'HOLD'
+  return { schemaVersion: 1, verdict, checks }
+}
+
+export function formatMacReleasePreflight(report) {
+  return [
+    'MACOS RELEASE PREFLIGHT',
+    ...report.checks.map((entry) => `- ${entry.id}: ${entry.status} — ${entry.detail}`),
+    `Verdict: ${report.verdict}`,
+  ].join('\n')
+}
+
+function hasFlag(flag) {
+  return process.argv.slice(2).includes(flag)
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const report = evaluateMacReleasePreflight()
+  if (hasFlag('--json')) console.log(JSON.stringify(report, null, 2))
+  else console.log(formatMacReleasePreflight(report))
+  if (hasFlag('--enforce') && report.verdict !== 'READY') process.exitCode = 1
+}

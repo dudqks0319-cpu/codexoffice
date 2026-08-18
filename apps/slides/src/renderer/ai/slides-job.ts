@@ -31,7 +31,7 @@ export function createSlidesJobMetadata(args: {
         hash: args.sourceHash,
       },
     ],
-    maximumBudget: { amount: SLIDES_AI_MAXIMUM_BUDGET, unit: 'tokens' },
+    maximumBudget: { amount: SLIDES_AI_MAXIMUM_BUDGET, unit: 'output tokens' },
   }
 }
 

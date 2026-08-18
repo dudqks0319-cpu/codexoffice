@@ -32,6 +32,11 @@ function setup(
     },
     cancel: (requestId) => cancelled.push(requestId),
     getSettings: () => ({ provider: 'codex' }),
+    getJobTicket: () => ({
+      jobId: 'job-1',
+      capability: 'main-issued-secret',
+      maximumOutputTokens: 8_192,
+    }),
     unknownErrorText: () => 'unknown error',
     timeoutErrorText: () => 'timed out',
     ...(creditsErrorText ? { creditsErrorText } : {}),
@@ -56,6 +61,8 @@ describe('createIpcTransport', () => {
     expect(started).toHaveLength(1)
     expect(started[0]!.settings).toEqual({ provider: 'codex' })
     expect(started[0]!.system).toBe('sys')
+    expect(started[0]!.job.jobId).toBe('job-1')
+    expect(started[0]!.maxTokens).toBe(2_048)
 
     emit({ type: 'delta', text: 'hi' })
     emit({ type: 'delta' })
@@ -102,7 +109,7 @@ describe('createIpcTransport', () => {
   it('maps a timeout error code to the localized timeout message', () => {
     const { cb, emit } = setup()
     emit({ type: 'error', error: 'AI request timed out: no data received', errorCode: 'timeout' })
-    expect(cb.onError).toHaveBeenCalledWith('timed out')
+    expect(cb.onError).toHaveBeenCalledWith('timed out', 'timeout')
   })
 
   it('maps a credits error code to the localized credits message', () => {
@@ -112,7 +119,7 @@ describe('createIpcTransport', () => {
       error: 'Your provider usage limit has been reached.',
       errorCode: 'credits',
     })
-    expect(cb.onError).toHaveBeenCalledWith('credits used up')
+    expect(cb.onError).toHaveBeenCalledWith('credits used up', 'credits')
   })
 
   it('a credits error code without creditsErrorText falls back to the carried text', () => {
@@ -122,7 +129,23 @@ describe('createIpcTransport', () => {
       error: 'Your provider usage limit has been reached.',
       errorCode: 'credits',
     })
-    expect(cb.onError).toHaveBeenCalledWith('Your provider usage limit has been reached.')
+    expect(cb.onError).toHaveBeenCalledWith(
+      'Your provider usage limit has been reached.',
+      'credits',
+    )
+  })
+
+  it('forwards the server budget error code with its safe message', () => {
+    const { cb, emit } = setup()
+    emit({
+      type: 'error',
+      error: 'This AI task reached its 8,192-token budget.',
+      errorCode: 'budget',
+    })
+    expect(cb.onError).toHaveBeenCalledWith(
+      'This AI task reached its 8,192-token budget.',
+      'budget',
+    )
   })
 
   it('fails the run after prolonged silence; pings re-arm the watchdog', () => {

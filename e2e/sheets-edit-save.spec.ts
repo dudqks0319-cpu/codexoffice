@@ -1,12 +1,11 @@
 import { test, expect } from '@playwright/test'
-import { execSync } from 'node:child_process'
-import { copyFile, mkdtemp } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import type { Page } from '@playwright/test'
+import { buildCompatibilityFixture } from '../apps/sheets/tests/fixture-builder'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl, screenshotPath } from './helpers'
-
-const FIXTURE = resolve(__dirname, '../apps/sheets/fixtures/generated/compatibility-basic.xlsx')
 
 /** cell values live on canvas, so reading them back goes through the system clipboard */
 const canReadClipboard = process.platform === 'darwin'
@@ -36,18 +35,18 @@ async function cellA1(page: Page): Promise<{ x: number; y: number }> {
 async function copyActiveCell(page: Page): Promise<string> {
   await page.keyboard.press('Meta+c')
   await page.waitForTimeout(500)
-  return execSync('pbpaste').toString()
+  return execFileSync('pbpaste').toString()
 }
 
 function sheetXml(workbookPath: string): string {
-  return execSync(`unzip -p "${workbookPath}" xl/worksheets/sheet1.xml`).toString()
+  return execFileSync('unzip', ['-p', workbookPath, 'xl/worksheets/sheet1.xml']).toString()
 }
 
 test.describe('sheets: edit and save an external workbook', () => {
   test('cell edit round-trips through save and reopen', async () => {
     const scratch = await mkdtemp(join(tmpdir(), 'genoffice-sheets-e2e-'))
     const workbook = join(scratch, 'edit-save.xlsx')
-    await copyFile(FIXTURE, workbook)
+    await writeFile(workbook, await buildCompatibilityFixture())
 
     // ── session 1: open, edit A1, save ──
     const first = await launchShell({

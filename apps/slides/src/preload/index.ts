@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type { ProjectApi } from '@genoffice/project-store'
+import {
+  parseAiJobBudgetTicket,
+  parseAiJobId,
+  parseAiRequestId,
+  parseAiStreamRequest,
+} from '@genoffice/ai-provider'
 import type {
   AddChartOp,
   AddElementOp,
@@ -9,6 +15,7 @@ import type {
   AddMediaBytesOp,
   AddSmartArtOp,
   ApplyThemeOp,
+  ApplyImportedThemeOp,
   AddBlankSlideOp,
   AddSlideOp,
   PasteSlideOp,
@@ -190,6 +197,10 @@ const api: SlidesApi = {
   getHeaderFooter: (slideIndex: number) =>
     ipcRenderer.invoke('slides:get-header-footer', slideIndex),
   applyTheme: (op: ApplyThemeOp) => ipcRenderer.invoke('slides:apply-theme', op),
+  previewThemeImport: () => ipcRenderer.invoke('slides:preview-theme-import'),
+  cancelThemeImport: (token: string) => ipcRenderer.invoke('slides:cancel-theme-import', token),
+  applyImportedTheme: (op: ApplyImportedThemeOp) =>
+    ipcRenderer.invoke('slides:apply-imported-theme', op),
   setTransition: (op: SetTransitionOp) => ipcRenderer.invoke('slides:set-transition', op),
   getTransition: (slideIndex: number) => ipcRenderer.invoke('slides:get-transition', slideIndex),
   setAdvanceTimes: (op: SetAdvanceTimesOp) => ipcRenderer.invoke('slides:set-advance-times', op),
@@ -250,8 +261,14 @@ const api: SlidesApi = {
   },
   getAiSettings: () => ipcRenderer.invoke('ai:get-settings'),
   setAiSettings: (settings: AiSettings) => ipcRenderer.invoke('ai:set-settings', settings),
-  aiStream: (request: AiStreamRequest) => ipcRenderer.invoke('ai:stream', request),
-  aiStreamCancel: (requestId: string) => ipcRenderer.invoke('ai:stream-cancel', requestId),
+  aiJobBegin: async (jobId: string) =>
+    parseAiJobBudgetTicket(await ipcRenderer.invoke('ai:job-begin', parseAiJobId(jobId))),
+  aiJobEnd: (ticket) =>
+    ipcRenderer.invoke('ai:job-end', parseAiJobBudgetTicket(ticket)).then(() => undefined),
+  aiStream: (request: AiStreamRequest) =>
+    ipcRenderer.invoke('ai:stream', parseAiStreamRequest(request)),
+  aiStreamCancel: (requestId: string) =>
+    ipcRenderer.invoke('ai:stream-cancel', parseAiRequestId(requestId)),
   aiCodexStatus: () => ipcRenderer.invoke('ai:codex-status'),
   aiCodexLogin: () => ipcRenderer.invoke('ai:codex-login'),
   webSearch: (query: string, maxResults?: number) =>
@@ -312,13 +329,20 @@ contextBridge.exposeInMainWorld('slidesApi', api)
 // Chat attachment bridge: method names/signatures match the window.desktop attachment subset in docs, so the renderer's files-skill is copied over wholesale
 const filesApi: DesktopFilesApi = {
   pickAttachments: () => ipcRenderer.invoke('slides:files-pick'),
-  addAttachmentPaths: (paths: string[]) => ipcRenderer.invoke('slides:files-add', paths),
+  addAttachmentFiles: (files: File[]) =>
+    ipcRenderer.invoke(
+      'slides:files-add',
+      files
+        .slice(0, 50)
+        .map((file) => webUtils.getPathForFile(file))
+        .filter(Boolean),
+    ),
+  refreshAttachments: (paths: string[]) => ipcRenderer.invoke('slides:files-refresh', paths),
   addPastedImage: (data: ArrayBuffer, ext: string) =>
     ipcRenderer.invoke('slides:files-add-pasted-image', data, ext),
   readAttachment: (path: string, offset: number, maxChars: number) =>
     ipcRenderer.invoke('slides:files-read', path, offset, maxChars),
   readAttachmentImage: (path: string) => ipcRenderer.invoke('slides:files-read-image', path),
-  getPathForFile: (file: File) => webUtils.getPathForFile(file),
 }
 
 contextBridge.exposeInMainWorld('desktop', filesApi)

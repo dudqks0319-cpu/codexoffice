@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createBlankPptx, openPptx, parseTheme, savePptx } from '@genoffice/pptx-engine'
 import type { Session } from '../src/main/session-state'
 import {
   beginHistoryBatch,
@@ -9,13 +10,28 @@ import {
   restoreAiSnapshot,
   restoreSnapshot,
   settleStaleHistoryBatch,
+  markHistoryDirtyAfterSave,
+  applyThemeToSession,
+  sessionRevision,
+  takeSnapshot,
+  sessionIsCurrent,
+  sessions,
+  bumpSessionRevision,
 } from '../src/main/session-state'
 
 vi.mock('electron', () => ({
   BrowserWindow: { getFocusedWindow: () => null },
 }))
 vi.mock('../src/main/fonts', () => ({
-  createSystemFontMetrics: () => ({}),
+  createSystemFontMetrics: () => ({
+    metrics: ({ fontSizePx }: { fontSizePx: number }) => ({
+      ascent: fontSizePx * 0.8,
+      descent: fontSizePx * 0.2,
+      lineHeight: fontSizePx * 1.2,
+    }),
+    measure: (text: string, { fontSizePx }: { fontSizePx: number }) =>
+      text.length * fontSizePx * 0.5,
+  }),
 }))
 
 function sessionWith(value: string): Session {
@@ -89,6 +105,19 @@ describe('Slides main-process history batching', () => {
     expect(valueOf(session)).toBe('before')
   })
 
+  it('restores metadata-only dirty state and marks pre-save snapshots dirty', () => {
+    const session = sessionWith('before')
+    session.metaDirty = false
+    pushHistory(session)
+    session.metaDirty = true
+    restoreSnapshot(session, session.undoStack[0]!)
+    expect(session.metaDirty).toBe(false)
+
+    pushHistory(session)
+    markHistoryDirtyAfterSave(session)
+    expect(session.undoStack.every((snapshot) => snapshot.metaDirty)).toBe(true)
+  })
+
   it('keeps the old deck snapshot when replacing the full deck', () => {
     const previous = sessionWith('old deck')
     const replacement = sessionWith('new deck')
@@ -154,6 +183,7 @@ describe('Slides main-process history batching', () => {
       slides: structuredClone(session.opened.deck.slides),
       entries: new Map(session.opened.archive.entries),
       size: { ...session.opened.deck.size },
+      metaDirty: !!session.metaDirty,
     })
     restoreSnapshot(session, session.undoStack.pop()!)
     expect(valueOf(session)).toBe('before')
@@ -179,5 +209,123 @@ describe('Slides main-process history batching', () => {
 
     restoreSnapshot(session, session.undoStack.pop()!)
     expect(valueOf(session)).toBe('before')
+  })
+
+  it('increments a monotonic revision so an edit that lands during save stays detectable', () => {
+    const session = sessionWith('before')
+    const saveRevision = sessionRevision(session)
+    pushHistory(session)
+    setValue(session, 'edited while save was running')
+    expect(sessionRevision(session)).toBeGreaterThan(saveRevision)
+  })
+
+  it('keeps detecting mutations after a gesture has already opened its one-step history', () => {
+    const session = sessionWith('before')
+    pushHistory(session)
+    const saveRevision = sessionRevision(session)
+    // Later preview/final-commit frames do not push another history entry, but their
+    // mutation path calls this same revision bump before save completion.
+    bumpSessionRevision(session)
+    expect(session.undoStack).toHaveLength(1)
+    expect(sessionRevision(session)).toBeGreaterThan(saveRevision)
+  })
+
+  it('detects that an async save belongs to a replaced document session', () => {
+    const previous = sessionWith('previous')
+    const replacement = sessionWith('replacement')
+    sessions.set(91, previous)
+    expect(sessionIsCurrent(91, previous)).toBe(true)
+    sessions.set(91, replacement)
+    expect(sessionIsCurrent(91, previous)).toBe(false)
+    sessions.delete(91)
+  })
+
+  it('restores a full history stack, redo, fit width, HTML state, and revision after theme failure', () => {
+    const session = sessionWith('before')
+    for (let index = 0; index < 50; index++) {
+      pushHistory(session)
+      setValue(session, `history-${index}`)
+    }
+    const undoBefore = session.undoStack.map(
+      (snapshot) => (snapshot.slides[0] as unknown as { value: string }).value,
+    )
+    const redoBefore = [takeSnapshot(session)]
+    session.redoStack = redoBefore
+    session.htmlPages = ['preserve']
+    const fitWidthBefore = session.fitWidthPx
+    const revisionBefore = sessionRevision(session)
+    const colors = Object.fromEntries(
+      [
+        'dk1',
+        'lt1',
+        'dk2',
+        'lt2',
+        'accent1',
+        'accent2',
+        'accent3',
+        'accent4',
+        'accent5',
+        'accent6',
+        'hlink',
+        'folHlink',
+      ].map((key) => [key, '#123456']),
+    )
+
+    expect(applyThemeToSession(session, { name: 'Safe', colors }, 640)).toHaveProperty('error')
+    expect(
+      session.undoStack.map(
+        (snapshot) => (snapshot.slides[0] as unknown as { value: string }).value,
+      ),
+    ).toEqual(undoBefore)
+    expect(session.redoStack).toBe(redoBefore)
+    expect(session.htmlPages).toEqual(['preserve'])
+    expect(session.fitWidthPx).toBe(fitWidthBefore)
+    expect(sessionRevision(session)).toBe(revisionBefore)
+  })
+
+  it('applies an imported design as one undo step and preserves it across save/reopen', async () => {
+    const opened = await openPptx(await createBlankPptx())
+    const session = {
+      path: '',
+      opened,
+      fitWidthPx: 1280,
+      undoStack: [],
+      redoStack: [],
+    } as Session
+    const originalTheme = opened.archive.readText('ppt/theme/theme1.xml')!
+    const colors = {
+      dk1: '#101820',
+      lt1: '#FAF7F0',
+      dk2: '#334155',
+      lt2: '#E5E7EB',
+      accent1: '#2563EB',
+      accent2: '#EA580C',
+      accent3: '#0F766E',
+      accent4: '#CA8A04',
+      accent5: '#7C3AED',
+      accent6: '#DB2777',
+      hlink: '#1D4ED8',
+      folHlink: '#6D28D9',
+    }
+
+    const rendered = applyThemeToSession(
+      session,
+      {
+        name: 'Imported',
+        colors,
+        majorFont: 'Arial',
+        minorFont: 'Arial',
+      },
+      1280,
+    )
+    expect(Array.isArray(rendered)).toBe(true)
+    expect(session.undoStack).toHaveLength(1)
+    const reopened = await openPptx(await savePptx(session.opened))
+    expect(parseTheme(reopened.archive.readText('ppt/theme/theme1.xml')!).colors.accent1).toBe(
+      '#2563EB',
+    )
+
+    restoreSnapshot(session, session.undoStack.pop()!)
+    expect(session.opened.archive.readText('ppt/theme/theme1.xml')).toBe(originalTheme)
   })
 })

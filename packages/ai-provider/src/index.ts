@@ -1,6 +1,7 @@
 export type {
   AiChatRequest,
   AiChatResponse,
+  AiJobBudgetTicket,
   AiProviderConfig,
   AiProviderId,
   AiProviderMeta,
@@ -30,6 +31,8 @@ export {
   AI_MAX_TOKENS,
   AiRequestValidationError,
   parseAiChatRequest,
+  parseAiJobBudgetTicket,
+  parseAiJobId,
   parseAiRequestId,
   parseAiStreamRequest,
 } from './ipc-validation'

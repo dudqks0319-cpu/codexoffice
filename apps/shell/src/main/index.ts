@@ -41,6 +41,7 @@ import { ProjectStore } from '@genoffice/project-store'
 import {
   configureCodexExecutable,
   configureCodexHome,
+  configureAiRequestGateStorage,
   getCodexAccountStatus,
   loginCodex,
   logoutCodex,
@@ -106,6 +107,7 @@ import {
   configurePdfRuntime,
   flushPdfSave,
   pdfIsDirty,
+  repairInterruptedPdfCommitSync,
   requestPdfClose,
   requestPdfSaveAs,
   setPdfSaveAsInFlight,
@@ -136,15 +138,13 @@ import { initAutoUpdater } from './updater'
 // ANY unpacked run (`npm run shell`, `npm run dev`, `npx electron .`) must not
 // share the installed app's userData or single-instance lock — otherwise a dev
 // run silently quits and forwards its argv to the running installed Codexoffice.
-// GENOFFICE_USER_DATA: test drivers point this at a scratch dir so an
-// automated instance can run alongside the dev instance (separate lock).
-// A trusted packaged smoke launcher may use the same absolute override; with no
-// override, the installed app keeps the established canonical path below.
+// GENOFFICE_USER_DATA: unpacked test drivers may point this at a scratch dir so
+// an automated instance can run alongside the dev instance (separate lock).
+// Packaged builds always use the canonical path below so a launcher-controlled
+// environment cannot reset the durable AI cost ledger.
 const requestedUserData = process.env.GENOFFICE_USER_DATA
-const allowPackagedUserDataOverride =
-  !app.isPackaged || process.env.GENOFFICE_PACKAGED_SMOKE === '1'
 const userDataOverride =
-  requestedUserData && allowPackagedUserDataOverride && isAbsolute(requestedUserData)
+  !app.isPackaged && requestedUserData && isAbsolute(requestedUserData)
     ? requestedUserData
     : undefined
 
@@ -156,14 +156,11 @@ if (!app.isPackaged) {
 // Older AI Office installs are copied only when that established target is absent or empty.
 if (app.isPackaged) {
   const appData = app.getPath('appData')
-  const userData = userDataOverride ?? join(appData, 'GenOffice')
+  const userData = join(appData, 'GenOffice')
   const olderUserData = join(appData, 'AI Office')
   app.setPath('userData', userData)
-  if (!userDataOverride) {
-    const targetEmpty = !existsSync(userData) || readdirSync(userData).length === 0
-    if (targetEmpty && existsSync(olderUserData))
-      cpSync(olderUserData, userData, { recursive: true })
-  }
+  const targetEmpty = !existsSync(userData) || readdirSync(userData).length === 0
+  if (targetEmpty && existsSync(olderUserData)) cpSync(olderUserData, userData, { recursive: true })
 }
 
 // module build outputs: packaged builds carry them as extraResources
@@ -188,6 +185,7 @@ const SIDECAR_BIN = app.isPackaged
   : join(APPS_ROOT, 'sheets', 'native', 'xlsx-engine', 'target', 'release', SIDECAR_EXE)
 
 configureCodexHome(join(app.getPath('userData'), 'codex'))
+configureAiRequestGateStorage(app.getPath('userData'))
 configureCodexExecutable(
   app.isPackaged ? packagedCodexExecutablePath(process.resourcesPath) : undefined,
 )
@@ -210,6 +208,7 @@ configureSlidesRuntime({
 })
 configurePdfRuntime({
   preloadPath: join(PDF_OUT, 'preload', 'index.js'),
+  jobPreloadPath: join(PDF_OUT, 'preload', 'job.js'),
   rendererUrl: process.env.PDF_RENDERER_URL,
   rendererFile: join(PDF_OUT, 'renderer', 'index.html'),
 })
@@ -898,6 +897,7 @@ const tm = (key: Parameters<typeof tMain>[1], params?: Parameters<typeof tMain>[
 
 let shellWindow: BrowserWindow | null = null
 let tabManager: TabManager | null = null
+let quitRequested = false
 
 /**
  * When the user creates a file from a specific project view, remember which
@@ -1045,23 +1045,36 @@ function createShellWindow(): void {
     void (async () => {
       for (const tab of dirtySheets) {
         manager.activateTab(tab.id)
-        if (!(await requestSheetsClose(tab.webContents, win))) return
+        if (!(await requestSheetsClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of dirtyPdf) {
         manager.activateTab(tab.id)
-        if (!(await requestPdfClose(tab.webContents, win))) return
+        if (!(await requestPdfClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of dirtySlides) {
         manager.activateTab(tab.id)
-        if (!(await requestSlidesClose(tab.webContents, win))) return
+        if (!(await requestSlidesClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of docsTabs) {
         if (!(await docsQueryDirty(tab.webContents))) continue
         manager.activateTab(tab.id)
-        if (!(await requestDocsClose(tab.webContents, win))) return
+        if (!(await requestDocsClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       closeConfirmed = true
-      if (!win.isDestroyed()) win.close()
+      if (quitRequested) app.quit()
+      else if (!win.isDestroyed()) win.close()
     })()
   })
 
@@ -1094,12 +1107,17 @@ const UNSUPPORTED_DOC_RE = /\.(doc|rtf|odt|ppt|pps|odp|ods|xlsm|xlsb|pages|key|n
  */
 const OPEN_DIALOG_EXTENSIONS = ['docx', 'doc', 'xlsx', 'xls', 'csv', 'pptx', 'ppt', 'pdf']
 
+const existsForOpen = (filePath: string): boolean => {
+  if (PDF_RE.test(filePath)) repairInterruptedPdfCommitSync(filePath)
+  return existsSync(filePath)
+}
+
 function supportedFileIn(argv: string[]): string | null {
   return (
     argv.find(
       (arg) =>
         (DOCX_RE.test(arg) || XLSX_RE.test(arg) || PPTX_RE.test(arg) || PDF_RE.test(arg)) &&
-        existsSync(arg),
+        existsForOpen(arg),
     ) ?? null
   )
 }
@@ -1122,7 +1140,7 @@ function notifyUnsupportedFile(filePath: string): void {
 
 /** the single router: extension decides which module owns the file; false = nothing opened */
 function openDocumentPath(filePath: string): boolean {
-  if (!existsSync(filePath) || !tabManager) return false
+  if (!existsForOpen(filePath) || !tabManager) return false
   if (DOCX_RE.test(filePath)) {
     recordRecentFile(filePath)
     const existing = tabManager.findDocsTabByPath(filePath)
@@ -1810,6 +1828,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  quitRequested = true
   // No close prompt may fall through to "Save" during shutdown
   markSheetsShuttingDown()
   stopSheetsSidecar()

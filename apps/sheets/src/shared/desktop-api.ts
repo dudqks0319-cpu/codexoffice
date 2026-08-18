@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type {
   AiChatRequest,
   AiChatResponse,
+  AiJobBudgetTicket,
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
@@ -1762,6 +1763,13 @@ export const aiChatRequestSchema = z
 export const aiStreamRequestSchema = z
   .object({
     requestId: z.string().min(1),
+    job: z
+      .object({
+        jobId: z.string().min(1).max(128),
+        capability: z.string().min(1).max(128),
+        maximumOutputTokens: z.literal(8_192),
+      })
+      .strict(),
     settings: aiSettingsInputSchema,
     system: z.string(),
     messages: z.array(agentMessageSchema).max(MAX_AI_MESSAGES),
@@ -1899,6 +1907,8 @@ export interface DesktopApi {
   getAiSettings(): Promise<AiSettings>
   setAiSettings(settings: AiSettings): Promise<AiSettings>
   aiChat(request: AiChatRequest): Promise<AiChatResponse>
+  aiJobBegin(jobId: string): Promise<AiJobBudgetTicket>
+  aiJobEnd(ticket: AiJobBudgetTicket): Promise<void>
   /// start a streaming AI call; deltas arrive via onAiStream with the same requestId
   aiStream(request: AiStreamRequest): Promise<void>
   aiStreamCancel(requestId: string): Promise<void>
@@ -1913,8 +1923,8 @@ export interface DesktopApi {
   onAiStream(handler: (chunk: AiStreamChunk) => void): () => void
   /// Chat attachments: multi-select file dialog (returns null on cancel)
   pickAttachments(): Promise<AttachmentAddResult | null>
-  /// Validates dropped paths and returns attachment metadata
-  addAttachmentPaths(paths: string[]): Promise<AttachmentAddResult>
+  /// Validates genuine dropped/pasted File objects and returns attachment metadata
+  addAttachmentFiles(files: File[]): Promise<AttachmentAddResult>
   /// Persists a clipboard-pasted image (no local path) to a temp file and adds it
   /// as an attachment
   addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
@@ -1922,8 +1932,6 @@ export interface DesktopApi {
   readAttachment(path: string, offset: number, maxChars: number): Promise<AttachmentReadResult>
   /// Reads an image attachment as base64 for multimodal input (≤5MB)
   readAttachmentImage(path: string): Promise<AttachmentImageResult>
-  /// Absolute path of a File dropped onto the window (Electron webUtils)
-  getPathForFile(file: File): string
 }
 
 export type MenuAction = 'open' | 'save' | 'save-as' | 'export-pdf' | 'undo' | 'redo'
