@@ -22,11 +22,25 @@ export interface AiRequestLedgerEvent {
   tokens: number
 }
 
-interface AiRequestLedgerDocument {
-  version: 1
-  events: AiRequestLedgerEvent[]
+export type AiRequestAuditReason =
+  'reserved' | 'disabled' | 'duplicate' | 'concurrency' | 'rate-limit' | 'daily-limit'
+
+export interface AiRequestAuditEvent {
+  id: string
+  at: number
+  tokens: number
+  decision: 'allow' | 'deny'
+  reason: AiRequestAuditReason
 }
 
+interface AiRequestLedgerDocument {
+  version: 2
+  events: AiRequestLedgerEvent[]
+  audit: AiRequestAuditEvent[]
+}
+
+const MAX_LEDGER_EVENTS = 100_000
+const MAX_AUDIT_EVENTS = 10_000
 const sleepArray = new Int32Array(new SharedArrayBuffer(4))
 const lockOwnerFile = 'owner.json'
 
@@ -53,10 +67,10 @@ function parseLedger(raw: string): AiRequestLedgerDocument {
   }
   if (!value || typeof value !== 'object') throw failClosed('AI request ledger is corrupt')
   const record = value as Record<string, unknown>
-  if (record.version !== 1 || !Array.isArray(record.events)) {
+  if ((record.version !== 1 && record.version !== 2) || !Array.isArray(record.events)) {
     throw failClosed('AI request ledger is corrupt')
   }
-  if (record.events.length > 100_000) throw failClosed('AI request ledger is corrupt')
+  if (record.events.length > MAX_LEDGER_EVENTS) throw failClosed('AI request ledger is corrupt')
   const ids = new Set<string>()
   const events = record.events.map((event) => {
     if (!event || typeof event !== 'object') throw failClosed('AI request ledger is corrupt')
@@ -75,7 +89,46 @@ function parseLedger(raw: string): AiRequestLedgerDocument {
     ids.add(item.id)
     return { id: item.id, at: item.at as number, tokens: item.tokens as number }
   })
-  return { version: 1, events }
+  if (record.version === 1) return { version: 2, events, audit: [] }
+  if (!Array.isArray(record.audit) || record.audit.length > MAX_AUDIT_EVENTS) {
+    throw failClosed('AI request ledger is corrupt')
+  }
+  const auditIds = new Set<string>()
+  const allowedReasons = new Set<AiRequestAuditReason>([
+    'reserved',
+    'disabled',
+    'duplicate',
+    'concurrency',
+    'rate-limit',
+    'daily-limit',
+  ])
+  const audit = record.audit.map((event) => {
+    if (!event || typeof event !== 'object') throw failClosed('AI request ledger is corrupt')
+    const item = event as Record<string, unknown>
+    if (
+      typeof item.id !== 'string' ||
+      !/^[0-9a-f-]{36}$/i.test(item.id) ||
+      !Number.isSafeInteger(item.at) ||
+      (item.at as number) < 0 ||
+      !Number.isSafeInteger(item.tokens) ||
+      (item.tokens as number) < 0 ||
+      (item.decision !== 'allow' && item.decision !== 'deny') ||
+      typeof item.reason !== 'string' ||
+      !allowedReasons.has(item.reason as AiRequestAuditReason)
+    ) {
+      throw failClosed('AI request ledger is corrupt')
+    }
+    if (auditIds.has(item.id)) throw failClosed('AI request ledger is corrupt')
+    auditIds.add(item.id)
+    return {
+      id: item.id,
+      at: item.at as number,
+      tokens: item.tokens as number,
+      decision: item.decision as AiRequestAuditEvent['decision'],
+      reason: item.reason as AiRequestAuditReason,
+    }
+  })
+  return { version: 2, events, audit }
 }
 
 function assertRegularFile(path: string): void {
@@ -188,7 +241,10 @@ export interface AiRequestLedgerOptions {
 /** Synchronous, process-safe ledger transaction used by the synchronous request gate API. */
 export function withAiRequestLedger<T>(
   options: AiRequestLedgerOptions,
-  update: (events: AiRequestLedgerEvent[]) => { result: T; events?: AiRequestLedgerEvent[] },
+  update: (
+    events: AiRequestLedgerEvent[],
+    audit: AiRequestAuditEvent[],
+  ) => { result: T; events?: AiRequestLedgerEvent[]; audit?: AiRequestAuditEvent[] },
 ): T {
   const lockPath = `${options.path}.lock`
   const deadline = Date.now() + (options.lockTimeoutMs ?? 2_000)
@@ -229,11 +285,17 @@ export function withAiRequestLedger<T>(
     assertRegularFile(options.path)
     const document = existsSync(options.path)
       ? parseLedger(readFileSync(options.path, 'utf8'))
-      : { version: 1 as const, events: [] }
+      : { version: 2 as const, events: [], audit: [] }
     updating = true
-    const transaction = update(document.events)
+    const transaction = update(document.events, document.audit)
     updating = false
-    if (transaction.events) writeAtomic(options.path, { version: 1, events: transaction.events })
+    if (transaction.events || transaction.audit) {
+      writeAtomic(options.path, {
+        version: 2,
+        events: transaction.events ?? document.events,
+        audit: transaction.audit ?? document.audit,
+      })
+    }
     return transaction.result
   } catch (error) {
     if (updating) throw error

@@ -34,6 +34,7 @@
     "release:preflight:enforce": "node tools/check-macos-release-preflight.mjs --enforce",
     "release:mac:package": "npm run release:preflight:enforce && npm run dist:mac",
     "verify:office-evidence": "node tools/check-microsoft-office-evidence.mjs",
+    "verify:ai-operations-evidence": "node tools/check-ai-operations-evidence.mjs",
     "audit:release-dependencies": "node tools/check-release-dependencies.mjs",
     "audit:mac-bundle-size": "node tools/check-macos-bundle-size.mjs --enforce",
     "notices": "node tools/gen-third-party-notices.mjs",

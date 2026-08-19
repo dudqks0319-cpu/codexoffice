@@ -1,7 +1,12 @@
 import { AI_DEFAULT_TURN_TIMEOUT_MS } from './watchdog'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { withAiRequestLedger, type AiRequestLedgerEvent } from './request-ledger'
+import {
+  withAiRequestLedger,
+  type AiRequestAuditEvent,
+  type AiRequestAuditReason,
+  type AiRequestLedgerEvent,
+} from './request-ledger'
 
 export interface AiRequestGateOptions {
   now?: () => number
@@ -83,14 +88,24 @@ export function createAiRequestGate(options: AiRequestGateOptions = {}) {
   const maxDailyTokens = options.maxDailyTokens ?? 4_000_000
   const active = new Set<string>()
   const events: AiRequestLedgerEvent[] = []
+  const audit: AiRequestAuditEvent[] = []
+  const lastDeniedAuditBucket = new Map<AiRequestAuditReason, number>()
   const ledgerPath =
     options.ledgerPath ??
     (options.userDataDir ? join(options.userDataDir, 'ai-request-ledger.json') : undefined)
 
   const transact = <T>(
-    update: (current: AiRequestLedgerEvent[]) => { result: T; events?: AiRequestLedgerEvent[] },
+    update: (
+      current: AiRequestLedgerEvent[],
+      currentAudit: AiRequestAuditEvent[],
+    ) => { result: T; events?: AiRequestLedgerEvent[]; audit?: AiRequestAuditEvent[] },
   ): T => {
-    if (!ledgerPath) return update(events).result
+    if (!ledgerPath) {
+      const transaction = update(events, audit)
+      if (transaction.events) events.splice(0, events.length, ...transaction.events)
+      if (transaction.audit) audit.splice(0, audit.length, ...transaction.audit)
+      return transaction.result
+    }
     try {
       return withAiRequestLedger(
         {
@@ -110,39 +125,89 @@ export function createAiRequestGate(options: AiRequestGateOptions = {}) {
     }
   }
 
+  const auditEvent = (
+    at: number,
+    tokens: number,
+    decision: AiRequestAuditEvent['decision'],
+    reason: AiRequestAuditReason,
+  ): AiRequestAuditEvent => ({ id: randomUUID(), at, tokens, decision, reason })
+
+  const appendAudit = (
+    storedAudit: AiRequestAuditEvent[],
+    event: AiRequestAuditEvent,
+  ): AiRequestAuditEvent[] | undefined => {
+    const retained = storedAudit.filter((entry) => entry.at > event.at - dailyWindowMs)
+    if (event.decision === 'deny') {
+      const bucket = Math.floor(event.at / 60_000)
+      if (lastDeniedAuditBucket.get(event.reason) === bucket) {
+        return retained.length === storedAudit.length ? undefined : retained
+      }
+    }
+    return [...retained, event].slice(-10_000)
+  }
+
+  const recordDenied = (
+    code: Exclude<AiRequestGateError['code'], 'ledger-unavailable'>,
+    tokens: number,
+    time: number,
+  ): never => {
+    transact((stored, storedAudit) => {
+      const nextAudit = appendAudit(storedAudit, auditEvent(time, tokens, 'deny', code))
+      return {
+        result: undefined,
+        ...(nextAudit === undefined ? {} : { audit: nextAudit }),
+      }
+    })
+    lastDeniedAuditBucket.set(code, Math.floor(time / 60_000))
+    throw new AiRequestGateError(code)
+  }
+
   return {
     acquire(requestId: string, tokens: number): AiRequestLease {
-      if (isDisabled()) throw new AiRequestGateError('disabled')
-      if (active.has(requestId)) throw new AiRequestGateError('duplicate')
-      if (active.size >= maxConcurrent) throw new AiRequestGateError('concurrency')
       const time = now()
-      if (!Number.isSafeInteger(tokens) || tokens < 0) throw new AiRequestGateError('daily-limit')
+      if (!Number.isSafeInteger(time) || time < 0) {
+        throw new AiRequestGateError('ledger-unavailable')
+      }
+      const auditTokens = Number.isSafeInteger(tokens) && tokens >= 0 ? tokens : 0
+      if (isDisabled()) recordDenied('disabled', auditTokens, time)
+      if (active.has(requestId)) recordDenied('duplicate', auditTokens, time)
+      if (active.size >= maxConcurrent) recordDenied('concurrency', auditTokens, time)
+      if (!Number.isSafeInteger(tokens) || tokens < 0) {
+        recordDenied('daily-limit', auditTokens, time)
+      }
       const reservationId = randomUUID()
-      if (ledgerPath) {
-        transact((stored) => {
-          const retained = stored.filter((entry) => entry.at > time - dailyWindowMs)
-          const burst = retained.filter((entry) => entry.at > time - burstWindowMs).length
-          const rolling = retained.filter((entry) => entry.at > time - rollingWindowMs).length
-          if (burst >= maxBurstRequests || rolling >= maxRollingRequests)
-            throw new AiRequestGateError('rate-limit')
-          const dailyTokens = retained.reduce((sum, entry) => sum + entry.tokens, 0)
-          if (retained.length >= maxDailyRequests || dailyTokens + tokens > maxDailyTokens)
-            throw new AiRequestGateError('daily-limit')
+      const admission = transact<
+        | { readonly allowed: true }
+        | { readonly allowed: false; readonly code: 'rate-limit' | 'daily-limit' }
+      >((stored, storedAudit) => {
+        const retained = stored.filter((entry) => entry.at > time - dailyWindowMs)
+        const retainedAudit = storedAudit.filter((entry) => entry.at > time - dailyWindowMs)
+        const burst = retained.filter((entry) => entry.at > time - burstWindowMs).length
+        const rolling = retained.filter((entry) => entry.at > time - rollingWindowMs).length
+        const dailyTokens = retained.reduce((sum, entry) => sum + entry.tokens, 0)
+        const code: 'rate-limit' | 'daily-limit' | undefined =
+          burst >= maxBurstRequests || rolling >= maxRollingRequests
+            ? 'rate-limit'
+            : retained.length >= maxDailyRequests || dailyTokens + tokens > maxDailyTokens
+              ? 'daily-limit'
+              : undefined
+        if (code) {
+          const nextAudit = appendAudit(retainedAudit, auditEvent(time, tokens, 'deny', code))
           return {
-            result: undefined,
-            events: [...retained, { id: reservationId, at: time, tokens }],
+            result: { allowed: false as const, code },
+            ...(retained.length === stored.length ? {} : { events: retained }),
+            ...(nextAudit === undefined ? {} : { audit: nextAudit }),
           }
-        })
-      } else {
-        while (events[0] && events[0].at <= time - dailyWindowMs) events.shift()
-        const burst = events.filter((entry) => entry.at > time - burstWindowMs).length
-        const rolling = events.filter((entry) => entry.at > time - rollingWindowMs).length
-        if (burst >= maxBurstRequests || rolling >= maxRollingRequests)
-          throw new AiRequestGateError('rate-limit')
-        const dailyTokens = events.reduce((sum, entry) => sum + entry.tokens, 0)
-        if (events.length >= maxDailyRequests || dailyTokens + tokens > maxDailyTokens)
-          throw new AiRequestGateError('daily-limit')
-        events.push({ id: reservationId, at: time, tokens })
+        }
+        return {
+          result: { allowed: true as const },
+          events: [...retained, { id: reservationId, at: time, tokens }],
+          audit: appendAudit(retainedAudit, auditEvent(time, tokens, 'allow', 'reserved'))!,
+        }
+      })
+      if (!admission.allowed) {
+        lastDeniedAuditBucket.set(admission.code, Math.floor(time / 60_000))
+        throw new AiRequestGateError(admission.code)
       }
       active.add(requestId)
       let released = false

@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { dirname, resolve } from 'node:path'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
 import { checkReleaseDependencies } from './check-release-dependencies.mjs'
+import { verifyAiOperationsEvidence } from './check-ai-operations-evidence.mjs'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
@@ -23,6 +24,7 @@ export function evaluateMacReleasePreflight(options = {}) {
     ((command, args, runOptions = {}) =>
       execFileSync(command, args, { encoding: 'utf8', ...runOptions }).trim())
   const dependencyCheck = options.checkReleaseDependencies ?? checkReleaseDependencies
+  const aiEvidenceCheck = options.verifyAiOperationsEvidence ?? verifyAiOperationsEvidence
   const checks = []
 
   try {
@@ -109,6 +111,26 @@ export function evaluateMacReleasePreflight(options = {}) {
     )
   } catch {
     checks.push(check('update', 'FAIL', 'update channel URL violates release policy'))
+  }
+
+  const aiEvidencePath = environment.GENOFFICE_AI_OPERATIONS_EVIDENCE?.trim() ?? ''
+  if (!aiEvidencePath) {
+    checks.push(
+      check(
+        'ai-operations',
+        'HOLD',
+        'source-bound provider hard-cap, alert, kill-switch, and aggregate evidence is required',
+      ),
+    )
+  } else if (!isAbsolute(aiEvidencePath) || !SHA_PATTERN.test(declaredSha)) {
+    checks.push(check('ai-operations', 'FAIL', 'AI operations evidence configuration is invalid'))
+  } else {
+    try {
+      aiEvidenceCheck(aiEvidencePath, { expectedSourceSha: declaredSha })
+      checks.push(check('ai-operations', 'PASS', 'source-bound provider controls are verified'))
+    } catch {
+      checks.push(check('ai-operations', 'FAIL', 'AI operations evidence failed verification'))
+    }
   }
 
   const verdict = checks.every((entry) => entry.status === 'PASS') ? 'READY' : 'HOLD'

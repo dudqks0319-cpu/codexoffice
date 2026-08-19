@@ -35,8 +35,11 @@ function readyEnvironment() {
     GENOFFICE_NOTARIZATION_AUTHORIZED: '1',
     APPLE_KEYCHAIN_PROFILE: 'private-profile-name',
     GENOFFICE_UPDATE_URL: 'https://updates.example.com/codexoffice',
+    GENOFFICE_AI_OPERATIONS_EVIDENCE: '/private/evidence/ai-operations.json',
   }
 }
+
+const verifyAiOperationsEvidence = () => ({ status: 'PASS' })
 
 describe('macOS release preflight', () => {
   it('is mandatory in the canonical release packaging command', () => {
@@ -52,6 +55,7 @@ describe('macOS release preflight', () => {
       platform: 'darwin',
       execFileSync: commandFixture(),
       checkReleaseDependencies: () => ({ electron: '41.10.3' }),
+      verifyAiOperationsEvidence,
     })
 
     expect(report.verdict).toBe('READY')
@@ -65,6 +69,7 @@ describe('macOS release preflight', () => {
       platform: 'darwin',
       execFileSync: commandFixture({ dirty: true, identityAvailable: false }),
       checkReleaseDependencies: () => ({ electron: '41.10.3' }),
+      verifyAiOperationsEvidence,
     })
 
     expect(report.verdict).toBe('HOLD')
@@ -82,12 +87,13 @@ describe('macOS release preflight', () => {
       platform: 'darwin',
       execFileSync: commandFixture({ identityAvailable: false }),
       checkReleaseDependencies: () => ({ electron: '41.10.3' }),
+      verifyAiOperationsEvidence,
     })
 
     expect(report.verdict).toBe('HOLD')
     expect(
       report.checks.filter((entry) => entry.status === 'HOLD').map((entry) => entry.id),
-    ).toEqual(['source-sha', 'signing', 'notarization', 'update'])
+    ).toEqual(['source-sha', 'signing', 'notarization', 'update', 'ai-operations'])
   })
 
   it('fails a vulnerable dependency or unsafe update URL without exposing its credentials', () => {
@@ -102,6 +108,7 @@ describe('macOS release preflight', () => {
       checkReleaseDependencies: () => {
         throw new Error('electron is vulnerable')
       },
+      verifyAiOperationsEvidence,
     })
     const formatted = formatMacReleasePreflight(report)
 
@@ -113,5 +120,24 @@ describe('macOS release preflight', () => {
       ]),
     )
     expect(formatted).not.toContain('super-secret')
+  })
+
+  it('fails closed when configured AI operations evidence is invalid', () => {
+    const report = evaluateMacReleasePreflight({
+      environment: readyEnvironment(),
+      platform: 'darwin',
+      execFileSync: commandFixture(),
+      checkReleaseDependencies: () => ({ electron: '41.10.3' }),
+      verifyAiOperationsEvidence: () => {
+        throw new Error('provider evidence contained a secret path')
+      },
+    })
+    const formatted = formatMacReleasePreflight(report)
+
+    expect(report.verdict).toBe('HOLD')
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ id: 'ai-operations', status: 'FAIL' }),
+    )
+    expect(formatted).not.toContain('secret path')
   })
 })

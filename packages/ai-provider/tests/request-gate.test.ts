@@ -89,7 +89,76 @@ describe('AI request gate', () => {
     const ledger = await readFile(join(userDataDir, 'ai-request-ledger.json'), 'utf8')
     expect(ledger).not.toContain('prompt contains')
     expect(ledger).not.toContain('private@example.com')
-    expect(JSON.parse(ledger)).toMatchObject({ version: 1, events: [{ tokens: 7 }] })
+    const parsed = JSON.parse(ledger)
+    expect(parsed).toMatchObject({
+      version: 2,
+      events: [{ tokens: 7 }],
+    })
+    expect(parsed.audit).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tokens: 7, decision: 'allow', reason: 'reserved' }),
+        expect.objectContaining({ tokens: 4, decision: 'deny', reason: 'daily-limit' }),
+      ]),
+    )
+  })
+
+  it('persists redacted allow and deny decisions without request identifiers', async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), 'genoffice-ai-ledger-'))
+    const options = {
+      userDataDir,
+      isDisabled: () => false,
+      maxBurstRequests: 10,
+      maxRollingRequests: 10,
+      maxDailyRequests: 10,
+      maxDailyTokens: 5,
+    }
+    const gate = createAiRequestGate(options)
+    gate.acquire('private request id with person@example.com', 5).release()
+    expect(() => gate.acquire('another private request', 1)).toThrowError(
+      expect.objectContaining<Partial<AiRequestGateError>>({ code: 'daily-limit' }),
+    )
+
+    const ledger = await readFile(join(userDataDir, 'ai-request-ledger.json'), 'utf8')
+    expect(ledger).not.toContain('private request')
+    expect(ledger).not.toContain('person@example.com')
+    expect(JSON.parse(ledger).audit).toEqual([
+      expect.objectContaining({ tokens: 5, decision: 'allow', reason: 'reserved' }),
+      expect.objectContaining({ tokens: 1, decision: 'deny', reason: 'daily-limit' }),
+    ])
+  })
+
+  it('records the application kill switch denial without starting a reservation', async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), 'genoffice-ai-ledger-'))
+    const gate = createAiRequestGate({ userDataDir, isDisabled: () => true })
+
+    expect(() => gate.acquire('must-not-be-persisted', 9)).toThrowError(
+      expect.objectContaining<Partial<AiRequestGateError>>({ code: 'disabled' }),
+    )
+    const ledger = JSON.parse(await readFile(join(userDataDir, 'ai-request-ledger.json'), 'utf8'))
+    expect(ledger.events).toEqual([])
+    expect(ledger.audit).toEqual([
+      expect.objectContaining({ tokens: 9, decision: 'deny', reason: 'disabled' }),
+    ])
+    expect(JSON.stringify(ledger)).not.toContain('must-not-be-persisted')
+  })
+
+  it('coalesces repeated denial audit writes within one minute', async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), 'genoffice-ai-ledger-'))
+    const gate = createAiRequestGate({
+      userDataDir,
+      now: () => 60_001,
+      isDisabled: () => true,
+    })
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      expect(() => gate.acquire(`blocked-${attempt}`, attempt)).toThrowError(
+        expect.objectContaining<Partial<AiRequestGateError>>({ code: 'disabled' }),
+      )
+    }
+    const ledger = JSON.parse(await readFile(join(userDataDir, 'ai-request-ledger.json'), 'utf8'))
+    expect(ledger.audit).toEqual([
+      expect.objectContaining({ tokens: 0, decision: 'deny', reason: 'disabled' }),
+    ])
   })
 
   it('serializes independent gates so they cannot overspend one ledger', async () => {
