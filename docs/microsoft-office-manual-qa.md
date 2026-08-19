@@ -12,9 +12,9 @@ evidence.
 Before producing the source-bound candidate, run
 `npm run release:preflight`. The canonical `npm run release:mac:package`
 command enforces the same checks before packaging and refuses vulnerable
-dependencies, dirty or mismatched source, missing signing/notarization
-prerequisites, a missing or unsafe update channel, and missing AI provider
-operations evidence.
+dependencies, dirty or mismatched source, missing Microsoft Office or
+LibreOffice evidence, missing signing/notarization prerequisites, an unverified
+update exercise, and missing AI provider operations evidence.
 
 ## Evidence header
 
@@ -40,10 +40,14 @@ GENOFFICE_SOURCE_SHA=<exact-40-character-release-SHA> \
   npm run verify:office-evidence -- /absolute/path/to/microsoft-office.json
 ```
 
-The verifier rejects absolute/traversing paths, symlinks, missing files,
-digest mismatches, incomplete application versions/screenshots, and unchecked
-manual assertions. It proves packet integrity and completeness; it does not
-replace the human visual judgment described below.
+The schema-v2 verifier requires fresh evidence from the previous 30 days and
+the tested architecture. It rejects unknown fields, absolute/traversing paths,
+symlinks, empty or oversized files, duplicate paths, digest mismatches,
+unchanged fixture/output bytes, incomplete versions/screenshots, and unchecked
+manual assertions. It also verifies DMG/ZIP, OOXML ZIP, and PNG/JPEG signatures
+instead of trusting file extensions. Files are hashed in bounded chunks. It
+proves packet integrity and completeness; it does not replace the human visual
+judgment described below.
 
 ## Word round trip
 
@@ -107,3 +111,8 @@ slot, clipped text, or media/relationship loss.
   is missing.
 - `FAIL`: Office repairs the file, content changes unexpectedly, or a saved
   Office-authored file cannot reopen in CodexOffice.
+
+For final packaging, set
+`GENOFFICE_MICROSOFT_OFFICE_EVIDENCE=/absolute/path/to/microsoft-office.json`.
+The canonical release preflight reports only generic PASS/HOLD/FAIL text and
+never prints the evidence path or verifier details.

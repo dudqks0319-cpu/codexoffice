@@ -4,6 +4,44 @@ Last verified: 2026-08-19 (Asia/Seoul; P0 remote CI plus local P1 PDF lifecycle,
 AI operations and updater evidence gates, full repository regression, and
 LibreOffice corpus evidence)
 
+## 2026-08-19 source-bound manual compatibility evidence gate
+
+- The canonical macOS preflight now remains HOLD until both
+  `GENOFFICE_MICROSOFT_OFFICE_EVIDENCE` and
+  `GENOFFICE_LIBREOFFICE_EVIDENCE` identify absolute, exact-source packets.
+  Invalid packets become generic FAIL results without printing local paths,
+  account details, or verifier errors.
+- Microsoft Office and LibreOffice use the same schema-v2 bounded verifier. It
+  requires fresh evidence no older than 30 days, macOS architecture and full
+  application versions, an exact release artifact, distinct fixture and
+  application-authored document bytes, three to twelve screenshots per
+  surface, and every suite-specific visual/round-trip assertion.
+- Manifest and nested objects reject unknown fields. Evidence must be a unique,
+  nonempty regular non-symlink file under one canonical root. Release artifacts
+  are capped at 2 GiB, documents at 512 MiB, screenshots at 20 MiB, the packet
+  at 5 GiB, and SHA-256 hashing is performed in 1 MiB chunks. LibreOffice also
+  requires the automated structural corpus result to be recorded as passing.
+- Canonical paths, rather than raw path spellings, enforce uniqueness, so
+  `file.png` and `./file.png` cannot satisfy two evidence slots. Release inputs
+  must carry a ZIP or DMG signature, documents must be ZIP-based OOXML with the
+  suite-specific extension, and screenshots must carry a PNG or JPEG signature;
+  renamed text files cannot masquerade as compatibility evidence.
+- This closes the local evidence-contract and packaging-gate gap only. Word is
+  still unavailable and no complete human-reviewed Microsoft Office or stable
+  LibreOffice desktop packet exists, so both external compatibility gates
+  remain HOLD.
+- Fresh regression evidence for this checkpoint: 3,882 JavaScript/TypeScript
+  tests passed with two intentional skips; Sheets Rust 53/53 and Shell 254/254
+  passed; all workspace typechecks passed; lint reported zero errors and eight
+  existing React Hook warnings; all five production builds passed; Electron
+  E2E passed 17/17 in 51.2 seconds; LibreOffice structural round-trip passed
+  3/3; and formatting plus `git diff --check` passed.
+- Final Codex Security diff scan
+  `104cb475-b335-4700-beda-f8bbe6428dcb` reviewed all five changed source/tool
+  surfaces with complete coverage and zero reportable findings. Measured usage
+  was 2,633,826 total tokens, 2,630,654 input tokens, and 2,618,240 cached input
+  tokens. TAC access remained not granted and did not gate the local scan.
+
 ## 2026-08-19 source-bound updater evidence gate
 
 - A valid HTTPS channel is no longer sufficient for release readiness. The

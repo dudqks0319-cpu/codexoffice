@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 2,
+  "sourceSha": "0000000000000000000000000000000000000000",
+  "testedAt": "2026-08-19T00:00:00.000Z",
+  "macosVersion": "replace-with-tested-macos-version",
+  "architecture": "arm64",
+  "releaseArtifact": {
+    "path": "Codexoffice-release.dmg",
+    "sha256": "replace-with-sha256"
+  },
+  "structuralCorpusPassed": true,
+  "libreoffice": {
+    "writer": {
+      "status": "PASS",
+      "version": "replace-with-full-version-and-build",
+      "fixture": { "path": "writer-input.docx", "sha256": "replace-with-sha256" },
+      "savedDocument": {
+        "path": "writer-roundtrip.docx",
+        "sha256": "replace-with-sha256"
+      },
+      "screenshots": [
+        { "path": "writer-before.png", "sha256": "replace-with-sha256" },
+        { "path": "writer-libreoffice.png", "sha256": "replace-with-sha256" },
+        { "path": "writer-reopen.png", "sha256": "replace-with-sha256" }
+      ],
+      "assertions": {
+        "noRepairPrompt": true,
+        "footnotesPreserved": true,
+        "bidirectionalEditsPreserved": true,
+        "visualLayoutReviewed": true
+      }
+    },
+    "calc": {
+      "status": "PASS",
+      "version": "replace-with-full-version-and-build",
+      "fixture": { "path": "calc-input.xlsx", "sha256": "replace-with-sha256" },
+      "savedDocument": { "path": "calc-roundtrip.xlsx", "sha256": "replace-with-sha256" },
+      "screenshots": [
+        { "path": "calc-before.png", "sha256": "replace-with-sha256" },
+        { "path": "calc-libreoffice.png", "sha256": "replace-with-sha256" },
+        { "path": "calc-reopen.png", "sha256": "replace-with-sha256" }
+      ],
+      "assertions": {
+        "noRepairPrompt": true,
+        "formulasPreserved": true,
+        "chartsPreserved": true,
+        "visualLayoutReviewed": true
+      }
+    },
+    "impress": {
+      "status": "PASS",
+      "version": "replace-with-full-version-and-build",
+      "fixture": { "path": "impress-input.pptx", "sha256": "replace-with-sha256" },
+      "savedDocument": {
+        "path": "impress-roundtrip.pptx",
+        "sha256": "replace-with-sha256"
+      },
+      "screenshots": [
+        { "path": "impress-before.png", "sha256": "replace-with-sha256" },
+        { "path": "impress-libreoffice.png", "sha256": "replace-with-sha256" },
+        { "path": "impress-reopen.png", "sha256": "replace-with-sha256" }
+      ],
+      "assertions": {
+        "noRepairPrompt": true,
+        "mastersPreserved": true,
+        "mediaPreserved": true,
+        "visualLayoutReviewed": true
+      }
+    }
+  }
+}

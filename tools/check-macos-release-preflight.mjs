@@ -5,6 +5,8 @@ import { createRequire } from 'node:module'
 
 import { checkReleaseDependencies } from './check-release-dependencies.mjs'
 import { verifyAiOperationsEvidence } from './check-ai-operations-evidence.mjs'
+import { verifyLibreOfficeEvidence } from './check-libreoffice-evidence.mjs'
+import { verifyMicrosoftOfficeEvidence } from './check-microsoft-office-evidence.mjs'
 import { verifyUpdateEvidence } from './check-update-evidence.mjs'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -26,6 +28,9 @@ export function evaluateMacReleasePreflight(options = {}) {
       execFileSync(command, args, { encoding: 'utf8', ...runOptions }).trim())
   const dependencyCheck = options.checkReleaseDependencies ?? checkReleaseDependencies
   const aiEvidenceCheck = options.verifyAiOperationsEvidence ?? verifyAiOperationsEvidence
+  const microsoftOfficeEvidenceCheck =
+    options.verifyMicrosoftOfficeEvidence ?? verifyMicrosoftOfficeEvidence
+  const libreOfficeEvidenceCheck = options.verifyLibreOfficeEvidence ?? verifyLibreOfficeEvidence
   const updateEvidenceCheck = options.verifyUpdateEvidence ?? verifyUpdateEvidence
   const checks = []
 
@@ -59,6 +64,37 @@ export function evaluateMacReleasePreflight(options = {}) {
       ? check('worktree', 'PASS', 'tracked and untracked release inputs are clean')
       : check('worktree', 'FAIL', 'worktree has tracked or untracked changes'),
   )
+
+  const manualEvidenceChecks = [
+    {
+      id: 'microsoft-office',
+      path: environment.GENOFFICE_MICROSOFT_OFFICE_EVIDENCE?.trim() ?? '',
+      verifier: microsoftOfficeEvidenceCheck,
+      missing: 'source-bound Word, Excel, and PowerPoint manual evidence is required',
+      pass: 'source-bound Microsoft Office bidirectional manual QA is verified',
+    },
+    {
+      id: 'libreoffice',
+      path: environment.GENOFFICE_LIBREOFFICE_EVIDENCE?.trim() ?? '',
+      verifier: libreOfficeEvidenceCheck,
+      missing: 'source-bound Writer, Calc, and Impress visual evidence is required',
+      pass: 'source-bound LibreOffice bidirectional manual QA is verified',
+    },
+  ]
+  for (const evidence of manualEvidenceChecks) {
+    if (!evidence.path) {
+      checks.push(check(evidence.id, 'HOLD', evidence.missing))
+    } else if (!isAbsolute(evidence.path) || !SHA_PATTERN.test(declaredSha)) {
+      checks.push(check(evidence.id, 'FAIL', 'manual compatibility evidence is misconfigured'))
+    } else {
+      try {
+        evidence.verifier(evidence.path, { expectedSourceSha: declaredSha })
+        checks.push(check(evidence.id, 'PASS', evidence.pass))
+      } catch {
+        checks.push(check(evidence.id, 'FAIL', 'manual compatibility evidence failed verification'))
+      }
+    }
+  }
 
   if (platform !== 'darwin') {
     checks.push(check('signing', 'HOLD', 'macOS release signing requires a macOS host'))

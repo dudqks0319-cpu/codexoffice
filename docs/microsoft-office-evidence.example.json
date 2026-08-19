@@ -1,8 +1,9 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "sourceSha": "0000000000000000000000000000000000000000",
   "testedAt": "2026-08-13T00:00:00.000Z",
   "macosVersion": "replace-with-tested-macos-version",
+  "architecture": "arm64",
   "releaseArtifact": {
     "path": "Codexoffice-release.dmg",
     "sha256": "0000000000000000000000000000000000000000000000000000000000000000"

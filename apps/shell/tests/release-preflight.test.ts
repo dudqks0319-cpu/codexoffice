@@ -37,11 +37,15 @@ function readyEnvironment() {
     GENOFFICE_UPDATE_URL: 'https://updates.example.com/codexoffice',
     GENOFFICE_UPDATE_EVIDENCE: '/private/evidence/update.json',
     GENOFFICE_AI_OPERATIONS_EVIDENCE: '/private/evidence/ai-operations.json',
+    GENOFFICE_MICROSOFT_OFFICE_EVIDENCE: '/private/evidence/microsoft-office.json',
+    GENOFFICE_LIBREOFFICE_EVIDENCE: '/private/evidence/libreoffice.json',
   }
 }
 
 const verifyAiOperationsEvidence = () => ({ status: 'PASS' })
 const verifyUpdateEvidence = () => ({ status: 'PASS' })
+const verifyMicrosoftOfficeEvidence = () => ({ status: 'PASS' })
+const verifyLibreOfficeEvidence = () => ({ status: 'PASS' })
 
 describe('macOS release preflight', () => {
   it('is mandatory in the canonical release packaging command', () => {
@@ -59,6 +63,8 @@ describe('macOS release preflight', () => {
       checkReleaseDependencies: () => ({ electron: '41.10.3' }),
       verifyAiOperationsEvidence,
       verifyUpdateEvidence,
+      verifyMicrosoftOfficeEvidence,
+      verifyLibreOfficeEvidence,
     })
 
     expect(report.verdict).toBe('READY')
@@ -74,6 +80,8 @@ describe('macOS release preflight', () => {
       checkReleaseDependencies: () => ({ electron: '41.10.3' }),
       verifyAiOperationsEvidence,
       verifyUpdateEvidence,
+      verifyMicrosoftOfficeEvidence,
+      verifyLibreOfficeEvidence,
     })
 
     expect(report.verdict).toBe('HOLD')
@@ -98,7 +106,15 @@ describe('macOS release preflight', () => {
     expect(report.verdict).toBe('HOLD')
     expect(
       report.checks.filter((entry) => entry.status === 'HOLD').map((entry) => entry.id),
-    ).toEqual(['source-sha', 'signing', 'notarization', 'update', 'ai-operations'])
+    ).toEqual([
+      'source-sha',
+      'microsoft-office',
+      'libreoffice',
+      'signing',
+      'notarization',
+      'update',
+      'ai-operations',
+    ])
   })
 
   it('fails a vulnerable dependency or unsafe update URL without exposing its credentials', () => {
@@ -115,6 +131,8 @@ describe('macOS release preflight', () => {
       },
       verifyAiOperationsEvidence,
       verifyUpdateEvidence,
+      verifyMicrosoftOfficeEvidence,
+      verifyLibreOfficeEvidence,
     })
     const formatted = formatMacReleasePreflight(report)
 
@@ -138,6 +156,8 @@ describe('macOS release preflight', () => {
         throw new Error('provider evidence contained a secret path')
       },
       verifyUpdateEvidence,
+      verifyMicrosoftOfficeEvidence,
+      verifyLibreOfficeEvidence,
     })
     const formatted = formatMacReleasePreflight(report)
 
@@ -158,6 +178,8 @@ describe('macOS release preflight', () => {
       checkReleaseDependencies: () => ({ electron: '41.10.3' }),
       verifyAiOperationsEvidence,
       verifyUpdateEvidence: updateVerifier,
+      verifyMicrosoftOfficeEvidence,
+      verifyLibreOfficeEvidence,
     })
 
     expect(report.verdict).toBe('HOLD')
@@ -175,6 +197,8 @@ describe('macOS release preflight', () => {
       verifyUpdateEvidence: () => {
         throw new Error('evidence /private/secret/update.json contained token')
       },
+      verifyMicrosoftOfficeEvidence,
+      verifyLibreOfficeEvidence,
     })
     const formatted = formatMacReleasePreflight(report)
 
@@ -182,5 +206,32 @@ describe('macOS release preflight', () => {
     expect(report.checks).toContainEqual(expect.objectContaining({ id: 'update', status: 'FAIL' }))
     expect(formatted).not.toContain('/private/secret')
     expect(formatted).not.toContain('token')
+  })
+
+  it('fails closed without exposing configured Office evidence details', () => {
+    const report = evaluateMacReleasePreflight({
+      environment: readyEnvironment(),
+      platform: 'darwin',
+      execFileSync: commandFixture(),
+      checkReleaseDependencies: () => ({ electron: '41.10.3' }),
+      verifyAiOperationsEvidence,
+      verifyUpdateEvidence,
+      verifyMicrosoftOfficeEvidence: () => {
+        throw new Error('/private/evidence/microsoft-office.json contains tester@example.com')
+      },
+      verifyLibreOfficeEvidence: () => {
+        throw new Error('/private/evidence/libreoffice.json contains user path')
+      },
+    })
+    const formatted = formatMacReleasePreflight(report)
+
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'microsoft-office', status: 'FAIL' }),
+        expect.objectContaining({ id: 'libreoffice', status: 'FAIL' }),
+      ]),
+    )
+    expect(formatted).not.toContain('/private/evidence')
+    expect(formatted).not.toContain('tester@example.com')
   })
 })

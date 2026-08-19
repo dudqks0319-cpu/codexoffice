@@ -28,3 +28,24 @@ PASS requires all three bidirectional flows with screenshots and exact artifact
 hashes. A repair prompt, missing relationship/media, changed formula, shifted
 footnote, clipped text, or layout regression is FAIL. Missing desktop runtime,
 screenshots, hashes, or human review remains HOLD.
+
+Copy `docs/libreoffice-evidence.example.json` beside the exact release artifact,
+fixture copies, LibreOffice-authored documents, and screenshots as
+`libreoffice.json`. Record the stable Writer, Calc, and Impress version/build,
+tested architecture, and a test time no older than 30 days. After the automated
+corpus passes, verify the packet with:
+
+```sh
+GENOFFICE_SOURCE_SHA=<exact-40-character-release-SHA> \
+  npm run verify:libreoffice-evidence -- /absolute/path/to/libreoffice.json
+```
+
+The schema-v2 verifier requires `structuralCorpusPassed: true`, different
+fixture/output bytes, exact application assertions, three to twelve distinct
+screenshots per surface, bounded regular non-symlink files, SHA-256 binding,
+and one source-bound release artifact. Unknown fields, stale timestamps,
+traversal, duplicates, tampering, or oversized evidence fail closed. For final
+packaging, the verifier also requires DMG/ZIP release bytes, ZIP-based OOXML,
+and PNG/JPEG screenshots rather than trusting extensions. Set
+`GENOFFICE_LIBREOFFICE_EVIDENCE=/absolute/path/to/libreoffice.json`; preflight
+does not expose evidence paths or detailed verifier errors.
