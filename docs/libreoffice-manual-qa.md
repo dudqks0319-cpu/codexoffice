@@ -45,7 +45,10 @@ fixture/output bytes, exact application assertions, three to twelve distinct
 screenshots per surface, bounded regular non-symlink files, SHA-256 binding,
 and one source-bound release artifact. Unknown fields, stale timestamps,
 traversal, duplicates, tampering, or oversized evidence fail closed. For final
-packaging, the verifier also requires DMG/ZIP release bytes, ZIP-based OOXML,
-and PNG/JPEG screenshots rather than trusting extensions. Set
+packaging, the verifier requires a release ZIP with exactly one bounded
+Codexoffice `release-identity.json` tied to the expected source SHA, ZIP-based
+OOXML, and PNG/JPEG screenshots rather than trusting extensions. It also hashes
+the bounded archived `app.asar` and requires it to match the receipt while the
+ZIP remains pinned to one no-follow file descriptor. Set
 `GENOFFICE_LIBREOFFICE_EVIDENCE=/absolute/path/to/libreoffice.json`; preflight
 does not expose evidence paths or detailed verifier errors.

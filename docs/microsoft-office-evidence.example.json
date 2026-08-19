@@ -5,7 +5,7 @@
   "macosVersion": "replace-with-tested-macos-version",
   "architecture": "arm64",
   "releaseArtifact": {
-    "path": "Codexoffice-release.dmg",
+    "path": "Codexoffice-release.zip",
     "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   "office": {

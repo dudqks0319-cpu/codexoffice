@@ -261,8 +261,9 @@ CI와 PDF를 한 커밋에 섞지 않는다.
 - PDF commit journal은 v2에서 PID와 OS 프로세스 생성 세대를 함께 기록한다. 같은 PID가 재사용돼도 생성 세대가 다르면 복구하고, 정확히 일치하거나 확인할 수 없으면 fail-closed한다.
 - AI request ledger v2는 승인된 요청의 예약 토큰과 비식별 allow/deny 사유를 0600 원자 저장하고, 반복 거부 로그를 분당 사유별 한 건으로 합쳐 로컬 I/O 남용을 제한한다.
 - macOS release preflight는 provider hard cap, 80% 이하 경고, fresh kill switch, multi-client 합산, 비식별 비용 로그를 정확한 source SHA와 결속한 증거가 없으면 HOLD한다.
-- 전체 회귀는 JavaScript/TypeScript 3,882 PASS / 2 skip, Sheets Rust 53/53, Electron E2E 17/17, LibreOffice 구조 round-trip 3/3, build/typecheck/format/diff-check PASS다.
+- 전체 회귀는 JavaScript/TypeScript 3,887 PASS / 2 skip, Sheets Rust 53/53, Electron E2E 17/17, LibreOffice 구조 round-trip 3/3, build/typecheck/format/diff-check PASS다.
 - 보안 diff scan `d0bedaae-5376-4e60-ad0b-bcd8291d9c3d`은 변경 보안 표면 전체를 검토했고 보고 가능한 finding 0건으로 완료됐다.
+- 수동 QA ZIP provenance 후속 보안 diff scan `a1da0f94-c886-4b3d-a11b-6f3ada621213`도 최종 snapshot 전체 coverage와 finding 0건으로 완료됐다.
 
 ## 13. 실행 체크리스트
 
@@ -282,6 +283,7 @@ CI와 PDF를 한 커밋에 섞지 않는다.
 - [x] provider 운영 증거 검증기와 macOS release fail-closed 연결
 - [x] 업데이트 성공·실패 증거 검증기와 macOS release fail-closed 연결
 - [x] Microsoft Office·LibreOffice 수동 증거 검증기와 canonical release preflight 연결
+- [x] 수동 QA release ZIP 내부 source identity·실제 `app.asar` 해시 검증 및 구형 후보 거부
 - [ ] Microsoft Office 수동 QA
 - [ ] LibreOffice 수동 QA
 - [ ] Developer ID 서명·공증·Gatekeeper 검증

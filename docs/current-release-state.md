@@ -6,6 +6,16 @@ LibreOffice corpus evidence)
 
 ## 2026-08-19 source-bound manual compatibility evidence gate
 
+- Follow-up provenance hardening rejects a manual QA packet unless its release
+  ZIP contains exactly one bounded `Codexoffice.app/Contents/Resources/release-identity.json`.
+  The embedded identity must name `Codexoffice`, use `com.genoffice.app`, carry
+  the expected exact source SHA, and describe the packaged `app.asar` with its
+  actual SHA-256. The bounded central directory, receipt, and payload are read
+  from one `O_NOFOLLOW` descriptor; the artifact is hashed through that same
+  descriptor so a pathname replacement cannot switch candidates mid-check. The
+  previously retained ZIP was inspected and correctly
+  identified as source `045dcfb4e4515cc28f50bc44eb015c58eada6f9c`; it can no
+  longer be presented as evidence for the current source.
 - The canonical macOS preflight now remains HOLD until both
   `GENOFFICE_MICROSOFT_OFFICE_EVIDENCE` and
   `GENOFFICE_LIBREOFFICE_EVIDENCE` identify absolute, exact-source packets.
@@ -23,14 +33,17 @@ LibreOffice corpus evidence)
   requires the automated structural corpus result to be recorded as passing.
 - Canonical paths, rather than raw path spellings, enforce uniqueness, so
   `file.png` and `./file.png` cannot satisfy two evidence slots. Release inputs
-  must carry a ZIP or DMG signature, documents must be ZIP-based OOXML with the
+  must be ZIP files containing exactly one bounded Codexoffice
+  `release-identity.json`; its source SHA, app identity, and package payload
+  metadata must match the candidate. Documents must be ZIP-based OOXML with the
   suite-specific extension, and screenshots must carry a PNG or JPEG signature;
-  renamed text files cannot masquerade as compatibility evidence.
+  renamed text files and old release candidates cannot masquerade as current
+  compatibility evidence.
 - This closes the local evidence-contract and packaging-gate gap only. Word is
   still unavailable and no complete human-reviewed Microsoft Office or stable
   LibreOffice desktop packet exists, so both external compatibility gates
   remain HOLD.
-- Fresh regression evidence for this checkpoint: 3,882 JavaScript/TypeScript
+- Fresh regression evidence for this checkpoint: 3,887 JavaScript/TypeScript
   tests passed with two intentional skips; Sheets Rust 53/53 and Shell 254/254
   passed; all workspace typechecks passed; lint reported zero errors and eight
   existing React Hook warnings; all five production builds passed; Electron
@@ -41,6 +54,12 @@ LibreOffice corpus evidence)
   surfaces with complete coverage and zero reportable findings. Measured usage
   was 2,633,826 total tokens, 2,630,654 input tokens, and 2,618,240 cached input
   tokens. TAC access remained not granted and did not gate the local scan.
+- Follow-up immutable snapshot scan
+  `a1da0f94-c886-4b3d-a11b-6f3ada621213` covered the final bounded ZIP directory
+  parser, single-descriptor artifact continuity, actual archived `app.asar`
+  digest comparison, negative tests, and the real retained 309 MiB ZIP. Coverage
+  was complete with zero reportable findings. TAC remained `not_granted`; the
+  scan continued on the documented parent-only path.
 
 ## 2026-08-19 source-bound updater evidence gate
 

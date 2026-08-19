@@ -1,6 +1,16 @@
 import { createHash } from 'node:crypto'
-import { closeSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs'
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+} from 'node:fs'
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path'
+import { inflateRawSync } from 'node:zlib'
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
 const SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/
@@ -9,7 +19,16 @@ const MAX_RELEASE_BYTES = 2 * 1024 * 1024 * 1024
 const MAX_DOCUMENT_BYTES = 512 * 1024 * 1024
 const MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024
 const MAX_TOTAL_BYTES = 5 * 1024 * 1024 * 1024
+const MAX_ZIP_DIRECTORY_BYTES = 8 * 1024 * 1024
+const MAX_ZIP_ENTRIES = 10_000
+const MAX_RELEASE_IDENTITY_BYTES = 64 * 1024
+const MAX_PACKAGE_PAYLOAD_BYTES = 64 * 1024 * 1024
 const DEFAULT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000
+const RELEASE_IDENTITY_SUFFIX = '/Contents/Resources/release-identity.json'
+const RELEASE_PAYLOAD_PATH = 'Contents/Resources/app.asar'
+const ZIP_EOCD_SIGNATURE = 0x06054b50
+const ZIP_CENTRAL_HEADER_SIGNATURE = 0x02014b50
+const ZIP_LOCAL_HEADER_SIGNATURE = 0x04034b50
 
 function fail(prefix, message) {
   throw new Error(`[${prefix}] ${message}`)
@@ -46,28 +65,49 @@ function assertFreshTimestamp(value, now, maxAgeMs, label, prefix) {
   }
 }
 
-function hashFile(path) {
+function hashFileDescriptor(fd, expectedBytes) {
   const hash = createHash('sha256')
   const buffer = Buffer.allocUnsafe(1024 * 1024)
-  const fd = openSync(path, 'r')
-  try {
-    for (;;) {
-      const bytesRead = readSync(fd, buffer, 0, buffer.length, null)
-      if (bytesRead === 0) break
-      hash.update(buffer.subarray(0, bytesRead))
-    }
-  } finally {
-    closeSync(fd)
+  let offset = 0
+  for (;;) {
+    if (expectedBytes !== undefined && offset === expectedBytes) break
+    const requested =
+      expectedBytes === undefined ? buffer.length : Math.min(buffer.length, expectedBytes - offset)
+    const bytesRead = readSync(fd, buffer, 0, requested, offset)
+    if (bytesRead === 0) break
+    hash.update(buffer.subarray(0, bytesRead))
+    offset += bytesRead
+  }
+  if (expectedBytes !== undefined && offset !== expectedBytes) {
+    throw new Error('file length changed while hashing')
   }
   return hash.digest('hex')
 }
 
-function readBytes(path, offset, length) {
-  const buffer = Buffer.alloc(length)
+function hashFile(path) {
   const fd = openSync(path, 'r')
   try {
-    const bytesRead = readSync(fd, buffer, 0, length, offset)
-    return buffer.subarray(0, bytesRead)
+    return hashFileDescriptor(fd)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function readBytesFromDescriptor(fd, offset, length) {
+  const buffer = Buffer.alloc(length)
+  let total = 0
+  while (total < length) {
+    const bytesRead = readSync(fd, buffer, total, length - total, offset + total)
+    if (bytesRead === 0) break
+    total += bytesRead
+  }
+  return buffer.subarray(0, total)
+}
+
+function readBytes(path, offset, length) {
+  const fd = openSync(path, 'r')
+  try {
+    return readBytesFromDescriptor(fd, offset, length)
   } finally {
     closeSync(fd)
   }
@@ -84,20 +124,180 @@ function hasZipSignature(bytes) {
   )
 }
 
+function readZipDirectory(fd, fileSize) {
+  const tailLength = Math.min(fileSize, 65_557)
+  const tailOffset = fileSize - tailLength
+  const tail = readBytesFromDescriptor(fd, tailOffset, tailLength)
+  let eocdOffset = -1
+  for (let index = tail.length - 22; index >= 0; index -= 1) {
+    if (tail.readUInt32LE(index) !== ZIP_EOCD_SIGNATURE) continue
+    const commentLength = tail.readUInt16LE(index + 20)
+    if (index + 22 + commentLength === tail.length) {
+      eocdOffset = index
+      break
+    }
+  }
+  if (eocdOffset < 0) throw new Error('release artifact ZIP directory is missing')
+  const diskNumber = tail.readUInt16LE(eocdOffset + 4)
+  const directoryDisk = tail.readUInt16LE(eocdOffset + 6)
+  const diskEntries = tail.readUInt16LE(eocdOffset + 8)
+  const entryCount = tail.readUInt16LE(eocdOffset + 10)
+  const directorySize = tail.readUInt32LE(eocdOffset + 12)
+  const directoryOffset = tail.readUInt32LE(eocdOffset + 16)
+  const absoluteEocdOffset = tailOffset + eocdOffset
+  if (
+    diskNumber !== 0 ||
+    directoryDisk !== 0 ||
+    diskEntries !== entryCount ||
+    entryCount > MAX_ZIP_ENTRIES ||
+    directorySize > MAX_ZIP_DIRECTORY_BYTES ||
+    directoryOffset + directorySize !== absoluteEocdOffset
+  ) {
+    throw new Error('release artifact ZIP directory is unsupported or oversized')
+  }
+  const directory = readBytesFromDescriptor(fd, directoryOffset, directorySize)
+  if (directory.length !== directorySize) {
+    throw new Error('release artifact ZIP directory is truncated')
+  }
+  const entries = []
+  let cursor = 0
+  for (let index = 0; index < entryCount; index += 1) {
+    if (
+      cursor + 46 > directory.length ||
+      directory.readUInt32LE(cursor) !== ZIP_CENTRAL_HEADER_SIGNATURE
+    ) {
+      throw new Error('release artifact ZIP entry is invalid')
+    }
+    const flags = directory.readUInt16LE(cursor + 8)
+    const method = directory.readUInt16LE(cursor + 10)
+    const compressedSize = directory.readUInt32LE(cursor + 20)
+    const uncompressedSize = directory.readUInt32LE(cursor + 24)
+    const nameLength = directory.readUInt16LE(cursor + 28)
+    const extraLength = directory.readUInt16LE(cursor + 30)
+    const commentLength = directory.readUInt16LE(cursor + 32)
+    const startDisk = directory.readUInt16LE(cursor + 34)
+    const localHeaderOffset = directory.readUInt32LE(cursor + 42)
+    const next = cursor + 46 + nameLength + extraLength + commentLength
+    if (
+      nameLength === 0 ||
+      nameLength > 1_024 ||
+      next > directory.length ||
+      (flags & 1) !== 0 ||
+      ![0, 8].includes(method) ||
+      startDisk !== 0 ||
+      [compressedSize, uncompressedSize, localHeaderOffset].includes(0xffffffff)
+    ) {
+      throw new Error('release artifact ZIP entry is unsupported')
+    }
+    const name = directory.subarray(cursor + 46, cursor + 46 + nameLength).toString('utf8')
+    if (Buffer.byteLength(name, 'utf8') !== nameLength || /[\0\r\n\\]/.test(name)) {
+      throw new Error('release artifact ZIP entry name is invalid')
+    }
+    entries.push({ name, flags, method, compressedSize, uncompressedSize, localHeaderOffset })
+    cursor = next
+  }
+  if (cursor !== directory.length) {
+    throw new Error('release artifact ZIP directory contains trailing data')
+  }
+  return entries
+}
+
+function readZipEntry(fd, fileSize, entry, maxBytes) {
+  if (
+    entry.uncompressedSize <= 0 ||
+    entry.uncompressedSize > maxBytes ||
+    entry.compressedSize <= 0 ||
+    entry.compressedSize > maxBytes + 64 * 1024
+  ) {
+    throw new Error('release artifact ZIP entry is empty or oversized')
+  }
+  const header = readBytesFromDescriptor(fd, entry.localHeaderOffset, 30)
+  if (header.length !== 30 || header.readUInt32LE(0) !== ZIP_LOCAL_HEADER_SIGNATURE) {
+    throw new Error('release artifact ZIP local header is invalid')
+  }
+  const flags = header.readUInt16LE(6)
+  const method = header.readUInt16LE(8)
+  const nameLength = header.readUInt16LE(26)
+  const extraLength = header.readUInt16LE(28)
+  const nameBytes = readBytesFromDescriptor(fd, entry.localHeaderOffset + 30, nameLength)
+  if (
+    flags !== entry.flags ||
+    method !== entry.method ||
+    nameBytes.length !== nameLength ||
+    nameBytes.toString('utf8') !== entry.name
+  ) {
+    throw new Error('release artifact ZIP local header does not match its directory')
+  }
+  const dataOffset = entry.localHeaderOffset + 30 + nameLength + extraLength
+  if (dataOffset + entry.compressedSize > fileSize) {
+    throw new Error('release artifact ZIP entry data is truncated')
+  }
+  const compressed = readBytesFromDescriptor(fd, dataOffset, entry.compressedSize)
+  if (compressed.length !== entry.compressedSize) {
+    throw new Error('release artifact ZIP entry data is truncated')
+  }
+  const output =
+    entry.method === 0 ? compressed : inflateRawSync(compressed, { maxOutputLength: maxBytes })
+  if (output.length !== entry.uncompressedSize) {
+    throw new Error('release artifact ZIP entry length is invalid')
+  }
+  return output
+}
+
+export function inspectReleaseZip(artifactPath, options = {}) {
+  if (!SHA256_PATTERN.test(options.expectedSha256 ?? '')) {
+    throw new Error('expected release artifact digest is invalid')
+  }
+  const fd = openSync(artifactPath, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const info = fstatSync(fd)
+    if (!info.isFile() || info.size <= 0 || info.size > MAX_RELEASE_BYTES) {
+      throw new Error('release artifact ZIP is empty or oversized')
+    }
+    const entries = readZipDirectory(fd, info.size)
+    const identityEntries = entries.filter(
+      (entry) =>
+        /^[^/\r\n]+\.app\/Contents\/Resources\/release-identity\.json$/.test(entry.name) &&
+        entry.name.endsWith(RELEASE_IDENTITY_SUFFIX),
+    )
+    if (identityEntries.length !== 1) {
+      throw new Error('release artifact must contain exactly one release identity')
+    }
+    const appRoot = identityEntries[0].name.slice(0, -RELEASE_IDENTITY_SUFFIX.length)
+    const payloadName = `${appRoot}/${RELEASE_PAYLOAD_PATH}`
+    const payloadEntries = entries.filter((entry) => entry.name === payloadName)
+    if (payloadEntries.length !== 1) {
+      throw new Error('release artifact must contain exactly one package payload')
+    }
+    const identityBytes = readZipEntry(
+      fd,
+      info.size,
+      identityEntries[0],
+      MAX_RELEASE_IDENTITY_BYTES,
+    )
+    const payloadBytes = readZipEntry(fd, info.size, payloadEntries[0], MAX_PACKAGE_PAYLOAD_BYTES)
+    const identity = JSON.parse(identityBytes.toString('utf8'))
+    const payloadSha256 = createHash('sha256').update(payloadBytes).digest('hex')
+    if (fstatSync(fd).size !== info.size) {
+      throw new Error('release artifact length changed during inspection')
+    }
+    const artifactSha256 = hashFileDescriptor(fd, info.size)
+    if (fstatSync(fd).size !== info.size || artifactSha256 !== options.expectedSha256) {
+      throw new Error('release artifact digest changed or does not match evidence')
+    }
+    return { identity, payloadSha256 }
+  } finally {
+    closeSync(fd)
+  }
+}
+
 function assertFileKind(path, size, kind, expectedExtension, label, prefix) {
   const extension = extname(path).toLowerCase()
   if (kind === 'release') {
-    if (extension === '.zip') {
-      if (!hasZipSignature(readBytes(path, 0, 4))) fail(prefix, `${label} is not a ZIP file`)
-      return
+    if (extension !== '.zip' || !hasZipSignature(readBytes(path, 0, 4))) {
+      fail(prefix, `${label} must be a ZIP file`)
     }
-    if (extension === '.dmg') {
-      if (size < 512 || readBytes(path, size - 512, 4).toString('ascii') !== 'koly') {
-        fail(prefix, `${label} is not a DMG file`)
-      }
-      return
-    }
-    fail(prefix, `${label} must be a DMG or ZIP file`)
+    return
   }
   if (kind === 'document') {
     if (extension !== expectedExtension || !hasZipSignature(readBytes(path, 0, 4))) {
@@ -154,7 +354,9 @@ function validateFile(
   }
   if (seenFiles.has(canonicalResolved)) fail(prefix, `${label} path is duplicated`)
   assertFileKind(resolved, info.size, kind, expectedExtension, label, prefix)
-  if (hashFile(resolved) !== descriptor.sha256) fail(prefix, `${label} digest mismatch`)
+  if (kind !== 'release' && hashFile(resolved) !== descriptor.sha256) {
+    fail(prefix, `${label} digest mismatch`)
+  }
   seenFiles.add(canonicalResolved)
   return info.size
 }
@@ -234,6 +436,60 @@ export function verifyManualOfficeEvidence(manifestPath, options) {
     prefix,
     'release',
   )
+  let releaseInspection
+  try {
+    releaseInspection = (options.inspectReleaseZip ?? inspectReleaseZip)(
+      resolve(evidenceRoot, manifest.releaseArtifact.path),
+      { expectedSha256: manifest.releaseArtifact.sha256 },
+    )
+  } catch {
+    fail(prefix, 'release artifact identity is missing or invalid')
+  }
+  assertExactKeys(
+    releaseInspection,
+    ['identity', 'payloadSha256'],
+    'release artifact inspection',
+    prefix,
+  )
+  if (!SHA256_PATTERN.test(releaseInspection.payloadSha256)) {
+    fail(prefix, 'release artifact inspected payload digest is invalid')
+  }
+  const releaseIdentity = releaseInspection.identity
+  assertExactKeys(
+    releaseIdentity,
+    ['schemaVersion', 'productName', 'appId', 'version', 'sourceSha', 'packagePayload'],
+    'release artifact identity',
+    prefix,
+  )
+  assertExactKeys(
+    releaseIdentity.packagePayload,
+    ['path', 'sha256'],
+    'release artifact package payload',
+    prefix,
+  )
+  if (
+    releaseIdentity.schemaVersion !== 1 ||
+    releaseIdentity.productName !== 'Codexoffice' ||
+    releaseIdentity.appId !== 'com.genoffice.app'
+  ) {
+    fail(prefix, 'release artifact identity does not describe Codexoffice')
+  }
+  assertBoundedText(releaseIdentity.version, 'release artifact version', prefix)
+  if (!SOURCE_SHA_PATTERN.test(releaseIdentity.sourceSha)) {
+    fail(prefix, 'release artifact source SHA is invalid')
+  }
+  if (releaseIdentity.sourceSha !== expectedSourceSha) {
+    fail(prefix, 'release artifact source SHA does not match expected release source')
+  }
+  if (
+    releaseIdentity.packagePayload.path !== RELEASE_PAYLOAD_PATH ||
+    !SHA256_PATTERN.test(releaseIdentity.packagePayload.sha256)
+  ) {
+    fail(prefix, 'release artifact package payload identity is invalid')
+  }
+  if (releaseIdentity.packagePayload.sha256 !== releaseInspection.payloadSha256) {
+    fail(prefix, 'release artifact package payload digest mismatch')
+  }
 
   const suite = manifest[options.suiteKey]
   const appNames = Object.keys(options.requiredAssertions)

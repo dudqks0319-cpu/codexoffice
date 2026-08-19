@@ -44,10 +44,16 @@ The schema-v2 verifier requires fresh evidence from the previous 30 days and
 the tested architecture. It rejects unknown fields, absolute/traversing paths,
 symlinks, empty or oversized files, duplicate paths, digest mismatches,
 unchanged fixture/output bytes, incomplete versions/screenshots, and unchecked
-manual assertions. It also verifies DMG/ZIP, OOXML ZIP, and PNG/JPEG signatures
-instead of trusting file extensions. Files are hashed in bounded chunks. It
-proves packet integrity and completeness; it does not replace the human visual
-judgment described below.
+manual assertions. It verifies release ZIP, OOXML ZIP, and PNG/JPEG signatures
+instead of trusting file extensions. The release input must contain
+exactly one bounded Codexoffice `release-identity.json`; its source SHA, app
+identity, and package payload metadata must match the candidate. The ZIP central
+directory, identity, and `app.asar` have independent entry/count/size limits;
+the actual archived `app.asar` SHA-256 must match the receipt. The release file
+is parsed and hashed through one no-follow descriptor so a pathname swap cannot
+change the candidate mid-check. Other files are hashed in bounded chunks. The
+verifier proves packet integrity and completeness; it does not replace the human
+visual judgment described below.
 
 ## Word round trip
 

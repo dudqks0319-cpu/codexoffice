@@ -10,8 +10,10 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import JSZip from 'jszip'
 
 import { verifyMicrosoftOfficeEvidence } from '../../../tools/check-microsoft-office-evidence.mjs'
+import { inspectReleaseZip } from '../../../tools/check-manual-office-evidence.mjs'
 
 let evidenceRoot = ''
 const sourceSha = '0123456789abcdef0123456789abcdef01234567'
@@ -19,8 +21,38 @@ const now = Date.parse('2026-08-19T01:00:00.000Z')
 const zipHeader = Buffer.from([0x50, 0x4b, 0x03, 0x04])
 const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
-function verify(manifestPath: string, expectedSourceSha = sourceSha) {
-  return verifyMicrosoftOfficeEvidence(manifestPath, { expectedSourceSha, now })
+function releaseIdentity(identitySourceSha = sourceSha, payloadSha256 = digest('app-asar')) {
+  return {
+    schemaVersion: 1,
+    productName: 'Codexoffice',
+    appId: 'com.genoffice.app',
+    version: '0.5.0',
+    sourceSha: identitySourceSha,
+    packagePayload: {
+      path: 'Contents/Resources/app.asar',
+      sha256: payloadSha256,
+    },
+  }
+}
+
+function releaseArchive(identitySourceSha = sourceSha) {
+  const payloadSha256 = digest('app-asar')
+  return {
+    identity: releaseIdentity(identitySourceSha, payloadSha256),
+    payloadSha256,
+  }
+}
+
+function verify(
+  manifestPath: string,
+  expectedSourceSha = sourceSha,
+  inspectRelease = () => releaseArchive(),
+) {
+  return verifyMicrosoftOfficeEvidence(manifestPath, {
+    expectedSourceSha,
+    now,
+    inspectReleaseZip: inspectRelease,
+  })
 }
 
 function digest(value: string | Buffer): string {
@@ -32,10 +64,8 @@ function evidenceFile(name: string, value: string | Buffer = name) {
   return { path: name, sha256: digest(value) }
 }
 
-function dmgFixture() {
-  const bytes = Buffer.alloc(512)
-  bytes.write('koly', 0, 'ascii')
-  return bytes
+function zipFixture() {
+  return Buffer.concat([zipHeader, Buffer.from('release-fixture')])
 }
 
 function applicationEvidence(appName: 'word' | 'excel' | 'powerpoint') {
@@ -89,7 +119,7 @@ function validManifest() {
     testedAt: '2026-08-13T00:00:00.000Z',
     macosVersion: 'macOS fixture',
     architecture: 'arm64',
-    releaseArtifact: evidenceFile('Codexoffice.dmg', dmgFixture()),
+    releaseArtifact: evidenceFile('Codexoffice.zip', zipFixture()),
     office: {
       word: applicationEvidence('word'),
       excel: applicationEvidence('excel'),
@@ -222,5 +252,69 @@ describe('Microsoft Office evidence verifier', () => {
     writeFileSync(manifestPath, JSON.stringify(manifest))
 
     expect(() => verify(manifestPath)).toThrow(/fixture and saved document must differ/)
+  })
+
+  it('rejects a release artifact built from an older source SHA', () => {
+    const { manifestPath } = validManifest()
+    const oldSourceSha = 'fedcba9876543210fedcba9876543210fedcba98'
+
+    expect(() => verify(manifestPath, sourceSha, () => releaseArchive(oldSourceSha))).toThrow(
+      /release artifact source SHA does not match expected release source/,
+    )
+  })
+
+  it('rejects a release receipt whose payload digest does not match app.asar', () => {
+    const { manifestPath } = validManifest()
+    expect(() =>
+      verify(manifestPath, sourceSha, () => ({
+        identity: releaseIdentity(sourceSha, 'a'.repeat(64)),
+        payloadSha256: 'b'.repeat(64),
+      })),
+    ).toThrow(/release artifact package payload digest mismatch/)
+  })
+
+  it('requires the provenance-bearing ZIP rather than an opaque DMG', () => {
+    const { manifest, manifestPath } = validManifest()
+    const bytes = Buffer.alloc(512)
+    bytes.write('koly', 0, 'ascii')
+    manifest.releaseArtifact = evidenceFile('Codexoffice.dmg', bytes)
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    expect(() => verify(manifestPath)).toThrow(/release artifact must be a ZIP file/)
+  })
+
+  it('reads one source-bound identity and verifies the archived app.asar digest', async () => {
+    evidenceRoot = mkdtempSync(join(tmpdir(), 'genoffice-office-release-zip-'))
+    const payload = Buffer.from('app-asar')
+    const zip = new JSZip()
+    zip.file('Codexoffice.app/Contents/Resources/app.asar', payload)
+    zip.file(
+      'Codexoffice.app/Contents/Resources/release-identity.json',
+      JSON.stringify(releaseIdentity(sourceSha, digest(payload))),
+    )
+    const bytes = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+    const artifactPath = join(evidenceRoot, 'real-release.zip')
+    writeFileSync(artifactPath, bytes)
+
+    expect(inspectReleaseZip(artifactPath, { expectedSha256: digest(bytes) })).toEqual({
+      identity: releaseIdentity(sourceSha, digest(payload)),
+      payloadSha256: digest(payload),
+    })
+  })
+
+  it('rejects duplicate release identities in the ZIP directory', async () => {
+    evidenceRoot = mkdtempSync(join(tmpdir(), 'genoffice-office-release-zip-'))
+    const zip = new JSZip()
+    zip.file('One.app/Contents/Resources/app.asar', 'one')
+    zip.file('One.app/Contents/Resources/release-identity.json', JSON.stringify(releaseIdentity()))
+    zip.file('Two.app/Contents/Resources/app.asar', 'two')
+    zip.file('Two.app/Contents/Resources/release-identity.json', JSON.stringify(releaseIdentity()))
+    const bytes = await zip.generateAsync({ type: 'nodebuffer' })
+    const artifactPath = join(evidenceRoot, 'duplicate-release.zip')
+    writeFileSync(artifactPath, bytes)
+
+    expect(() => inspectReleaseZip(artifactPath, { expectedSha256: digest(bytes) })).toThrow(
+      /exactly one release identity/,
+    )
   })
 })

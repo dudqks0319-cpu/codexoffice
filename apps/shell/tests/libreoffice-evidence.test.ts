@@ -13,6 +13,32 @@ const zipHeader = Buffer.from([0x50, 0x4b, 0x03, 0x04])
 const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 let evidenceRoot = ''
 
+function releaseIdentity() {
+  return {
+    schemaVersion: 1,
+    productName: 'Codexoffice',
+    appId: 'com.genoffice.app',
+    version: '0.5.0',
+    sourceSha,
+    packagePayload: {
+      path: 'Contents/Resources/app.asar',
+      sha256: digest('app-asar'),
+    },
+  }
+}
+
+function releaseArchive() {
+  return { identity: releaseIdentity(), payloadSha256: digest('app-asar') }
+}
+
+function verify(manifestPath: string, expectedSourceSha = sourceSha) {
+  return verifyLibreOfficeEvidence(manifestPath, {
+    expectedSourceSha,
+    now,
+    inspectReleaseZip: releaseArchive,
+  })
+}
+
 function digest(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex')
 }
@@ -22,10 +48,8 @@ function evidenceFile(name: string, value: string | Buffer = name) {
   return { path: name, sha256: digest(value) }
 }
 
-function dmgFixture() {
-  const bytes = Buffer.alloc(512)
-  bytes.write('koly', 0, 'ascii')
-  return bytes
+function zipFixture() {
+  return Buffer.concat([zipHeader, Buffer.from('release-fixture')])
 }
 
 function makeAppEvidence(appName: 'writer' | 'calc' | 'impress') {
@@ -79,7 +103,7 @@ function validManifest() {
     testedAt: '2026-08-19T00:00:00.000Z',
     macosVersion: 'macOS fixture',
     architecture: 'arm64',
-    releaseArtifact: evidenceFile('Codexoffice.dmg', dmgFixture()),
+    releaseArtifact: evidenceFile('Codexoffice.zip', zipFixture()),
     structuralCorpusPassed: true,
     libreoffice: {
       writer: makeAppEvidence('writer'),
@@ -100,7 +124,7 @@ afterEach(() => {
 describe('LibreOffice manual evidence verifier', () => {
   it('accepts complete source-bound manual and structural evidence', () => {
     const { manifestPath } = validManifest()
-    expect(verifyLibreOfficeEvidence(manifestPath, { expectedSourceSha: sourceSha, now })).toEqual({
+    expect(verify(manifestPath)).toEqual({
       sourceSha,
       testedAt: '2026-08-19T00:00:00.000Z',
       status: 'PASS',
@@ -111,32 +135,23 @@ describe('LibreOffice manual evidence verifier', () => {
     const { manifest, manifestPath } = validManifest()
     manifest.structuralCorpusPassed = false
     writeFileSync(manifestPath, JSON.stringify(manifest))
-    expect(() =>
-      verifyLibreOfficeEvidence(manifestPath, { expectedSourceSha: sourceSha, now }),
-    ).toThrow(/structuralCorpusPassed must be true/)
+    expect(() => verify(manifestPath)).toThrow(/structuralCorpusPassed must be true/)
 
     manifest.structuralCorpusPassed = true
     manifest.libreoffice.impress.assertions.visualLayoutReviewed = false
     writeFileSync(manifestPath, JSON.stringify(manifest))
-    expect(() =>
-      verifyLibreOfficeEvidence(manifestPath, { expectedSourceSha: sourceSha, now }),
-    ).toThrow(/assertion is incomplete: visualLayoutReviewed/)
+    expect(() => verify(manifestPath)).toThrow(/assertion is incomplete: visualLayoutReviewed/)
   })
 
   it('rejects source mismatch and credential-like unknown fields', () => {
     const { manifest, manifestPath } = validManifest()
-    expect(() =>
-      verifyLibreOfficeEvidence(manifestPath, {
-        expectedSourceSha: 'fedcba9876543210fedcba9876543210fedcba98',
-        now,
-      }),
-    ).toThrow(/does not match expected release source/)
+    expect(() => verify(manifestPath, 'fedcba9876543210fedcba9876543210fedcba98')).toThrow(
+      /does not match expected release source/,
+    )
 
     const unsafe = manifest as typeof manifest & { profileSecret?: string }
     unsafe.profileSecret = 'must-not-enter-evidence'
     writeFileSync(manifestPath, JSON.stringify(unsafe))
-    expect(() =>
-      verifyLibreOfficeEvidence(manifestPath, { expectedSourceSha: sourceSha, now }),
-    ).toThrow(/unknown field: profileSecret/)
+    expect(() => verify(manifestPath)).toThrow(/unknown field: profileSecret/)
   })
 })
