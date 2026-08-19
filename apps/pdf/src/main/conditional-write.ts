@@ -15,6 +15,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 
 import type { PdfDiskState } from './pdf-file-state'
 import { capturePdfDiskState, pdfSourceChanged, sha256Bytes } from './pdf-file-state'
+import { lookupPdfProcessIdentity, type PdfProcessIdentityLookup } from './pdf-process-identity'
 import { prepareAtomicWrite, syncParent } from './atomic-write'
 
 export type ConditionalWriteResult =
@@ -38,12 +39,22 @@ const errorCode = (error: unknown): string | undefined =>
     ? String((error as { code?: unknown }).code)
     : undefined
 
-interface PdfCommitJournal {
+interface LegacyPdfCommitJournal {
   readonly version: 1
   readonly pid: number
   readonly sourcePath: string
   readonly claimPath: string
 }
+
+interface PdfCommitJournalV2 {
+  readonly version: 2
+  readonly pid: number
+  readonly processIdentity: string
+  readonly sourcePath: string
+  readonly claimPath: string
+}
+
+type PdfCommitJournal = LegacyPdfCommitJournal | PdfCommitJournalV2
 
 const journalPathFor = (sourcePath: string): string => `${sourcePath}.genoffice-commit.json`
 const claimPrefixFor = (sourcePath: string): string => `${basename(sourcePath)}.genoffice-claim-`
@@ -67,7 +78,55 @@ const syncParentSync = (sourcePath: string): void => {
  * Repair the only source-missing crash window before a PDF path is granted.
  * An exclusive hard link refuses to overwrite a path recreated by another app.
  */
-function repairInterruptedPdfCommitPathSync(sourcePath: string, seen: Set<string>): boolean {
+function parseCommitJournal(sourcePath: string, value: unknown): PdfCommitJournal | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const raw = value as {
+    version?: unknown
+    pid?: unknown
+    processIdentity?: unknown
+    sourcePath?: unknown
+    claimPath?: unknown
+  }
+  if (
+    (raw.version !== 1 && raw.version !== 2) ||
+    !Number.isSafeInteger(raw.pid) ||
+    (raw.pid as number) <= 0 ||
+    raw.sourcePath !== sourcePath ||
+    typeof raw.claimPath !== 'string' ||
+    dirname(raw.claimPath) !== dirname(sourcePath) ||
+    !basename(raw.claimPath).startsWith(claimPrefixFor(sourcePath)) ||
+    (raw.version === 2 &&
+      (typeof raw.processIdentity !== 'string' ||
+        raw.processIdentity.length === 0 ||
+        raw.processIdentity.length > 256))
+  ) {
+    return undefined
+  }
+  return raw as PdfCommitJournal
+}
+
+function journalOwnerState(
+  journal: PdfCommitJournal,
+  lookup: PdfProcessIdentityLookup,
+): 'active' | 'inactive' | 'unknown' {
+  let observed
+  try {
+    observed = lookup(journal.pid)
+  } catch {
+    return 'unknown'
+  }
+  if (observed.state === 'dead') return 'inactive'
+  if (observed.state === 'unknown') return 'unknown'
+  // A legacy live PID is ambiguous because it has no process generation.
+  if (journal.version === 1) return 'unknown'
+  return observed.identity === journal.processIdentity ? 'active' : 'inactive'
+}
+
+function repairInterruptedPdfCommitPathSync(
+  sourcePath: string,
+  seen: Set<string>,
+  lookup: PdfProcessIdentityLookup,
+): boolean {
   if (seen.has(sourcePath)) return false
   seen.add(sourcePath)
   try {
@@ -75,6 +134,7 @@ function repairInterruptedPdfCommitPathSync(sourcePath: string, seen: Set<string
       return repairInterruptedPdfCommitPathSync(
         resolve(dirname(sourcePath), readlinkSync(sourcePath)),
         seen,
+        lookup,
       )
     }
   } catch {
@@ -83,8 +143,8 @@ function repairInterruptedPdfCommitPathSync(sourcePath: string, seen: Set<string
   const journalPath = journalPathFor(sourcePath)
   if (existsSync(sourcePath)) {
     try {
-      const raw = JSON.parse(readFileSync(journalPath, 'utf8')) as Partial<PdfCommitJournal>
-      if (typeof raw.pid === 'number' && processIsAlive(raw.pid)) return false
+      const journal = parseCommitJournal(sourcePath, JSON.parse(readFileSync(journalPath, 'utf8')))
+      if (!journal || journalOwnerState(journal, lookup) !== 'inactive') return false
       unlinkSync(journalPath)
       syncParentSync(sourcePath)
     } catch {
@@ -94,22 +154,13 @@ function repairInterruptedPdfCommitPathSync(sourcePath: string, seen: Set<string
   }
   let journal: PdfCommitJournal
   try {
-    const raw = JSON.parse(readFileSync(journalPath, 'utf8')) as Partial<PdfCommitJournal>
-    if (
-      raw.version !== 1 ||
-      typeof raw.pid !== 'number' ||
-      raw.sourcePath !== sourcePath ||
-      typeof raw.claimPath !== 'string' ||
-      dirname(raw.claimPath) !== dirname(sourcePath) ||
-      !basename(raw.claimPath).startsWith(claimPrefixFor(sourcePath))
-    ) {
-      return false
-    }
-    journal = raw as PdfCommitJournal
+    const parsed = parseCommitJournal(sourcePath, JSON.parse(readFileSync(journalPath, 'utf8')))
+    if (!parsed) return false
+    journal = parsed
   } catch {
     return false
   }
-  if (processIsAlive(journal.pid)) return false
+  if (journalOwnerState(journal, lookup) !== 'inactive') return false
   try {
     linkSync(journal.claimPath, sourcePath)
     unlinkSync(journalPath)
@@ -120,18 +171,11 @@ function repairInterruptedPdfCommitPathSync(sourcePath: string, seen: Set<string
   }
 }
 
-export function repairInterruptedPdfCommitSync(sourcePath: string): boolean {
-  return repairInterruptedPdfCommitPathSync(sourcePath, new Set())
-}
-
-const processIsAlive = (pid: number): boolean => {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return errorCode(error) !== 'ESRCH'
-  }
+export function repairInterruptedPdfCommitSync(
+  sourcePath: string,
+  lookup: PdfProcessIdentityLookup = lookupPdfProcessIdentity,
+): boolean {
+  return repairInterruptedPdfCommitPathSync(sourcePath, new Set(), lookup)
 }
 
 async function acquireClaimDirectoryLock(
@@ -236,6 +280,10 @@ async function replacePdfIfUnchangedLocked(
 ): Promise<ConditionalWriteResult> {
   if (await pdfSourceChanged(args.expectedState, args.sourcePath)) return { kind: 'changed' }
   await assertClaimBudget(args.sourcePath, args.expectedState.size)
+  const currentProcess = lookupPdfProcessIdentity(process.pid)
+  if (currentProcess.state !== 'alive') {
+    throw new Error('pdf: current process generation is unavailable; refusing source mutation')
+  }
   const prepared = await prepareAtomicWrite(args.sourcePath, args.replacementBytes)
   const replacementSha256 = sha256Bytes(args.replacementBytes)
   const claim = `${args.sourcePath}.genoffice-claim-${process.pid}-${randomUUID()}`
@@ -246,8 +294,9 @@ async function replacePdfIfUnchangedLocked(
     await args.hooks?.beforeClaim?.()
     repairInterruptedPdfCommitSync(args.sourcePath)
     await createCommitJournal(journal, {
-      version: 1,
+      version: 2,
       pid: process.pid,
+      processIdentity: currentProcess.identity,
       sourcePath: args.sourcePath,
       claimPath: claim,
     })

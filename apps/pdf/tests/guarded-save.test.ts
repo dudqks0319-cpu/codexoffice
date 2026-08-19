@@ -19,6 +19,7 @@ import { PDFArray, PDFDocument, PDFName } from 'pdf-lib'
 import { savePdfWithSourceGuard } from '../src/main/guarded-save'
 import { repairInterruptedPdfCommitSync } from '../src/main/conditional-write'
 import { capturePdfDiskState } from '../src/main/pdf-file-state'
+import type { PdfProcessIdentityLookup } from '../src/main/pdf-process-identity'
 import { applySaveRequest } from '../src/main/save-pdf'
 import type { SavePdfRequest } from '../src/shared/ipc'
 
@@ -235,6 +236,87 @@ describe('guarded PDF save', () => {
     expect(hash(await readFile(aliasPath))).toBe(hash(original))
   })
 
+  it('repairs a v2 journal when the PID belongs to a newer process generation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'genoffice-pdf-guard-pid-reuse-'))
+    cleanups.push(directory)
+    const sourcePath = join(directory, 'source.pdf')
+    const claimPath = `${sourcePath}.genoffice-claim-crash-fixture`
+    const journalPath = `${sourcePath}.genoffice-commit.json`
+    const original = await makePdf(445)
+    await writeFile(claimPath, original)
+    await writeFile(
+      journalPath,
+      JSON.stringify({
+        version: 2,
+        pid: 4242,
+        processIdentity: 'old-process-generation',
+        sourcePath,
+        claimPath,
+      }),
+      { mode: 0o600 },
+    )
+    const lookup: PdfProcessIdentityLookup = () => ({
+      state: 'alive',
+      identity: 'reused-pid-new-generation',
+    })
+
+    expect(repairInterruptedPdfCommitSync(sourcePath, lookup)).toBe(true)
+    expect(hash(await readFile(sourcePath))).toBe(hash(original))
+    await expect(readFile(journalPath)).rejects.toThrow()
+  })
+
+  it('does not repair a v2 journal while its exact process generation is active', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'genoffice-pdf-guard-owner-live-'))
+    cleanups.push(directory)
+    const sourcePath = join(directory, 'source.pdf')
+    const claimPath = `${sourcePath}.genoffice-claim-crash-fixture`
+    const journalPath = `${sourcePath}.genoffice-commit.json`
+    const original = await makePdf(446)
+    await writeFile(claimPath, original)
+    const journal = {
+      version: 2,
+      pid: 4242,
+      processIdentity: 'same-process-generation',
+      sourcePath,
+      claimPath,
+    }
+    await writeFile(journalPath, JSON.stringify(journal), { mode: 0o600 })
+    const lookup: PdfProcessIdentityLookup = () => ({
+      state: 'alive',
+      identity: 'same-process-generation',
+    })
+
+    expect(repairInterruptedPdfCommitSync(sourcePath, lookup)).toBe(false)
+    await expect(readFile(sourcePath)).rejects.toThrow()
+    expect(JSON.parse(await readFile(journalPath, 'utf8'))).toEqual(journal)
+  })
+
+  it('fails closed when a v2 journal process generation cannot be verified', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'genoffice-pdf-guard-owner-unknown-'))
+    cleanups.push(directory)
+    const sourcePath = join(directory, 'source.pdf')
+    const claimPath = `${sourcePath}.genoffice-claim-crash-fixture`
+    const journalPath = `${sourcePath}.genoffice-commit.json`
+    const original = await makePdf(447)
+    await writeFile(claimPath, original)
+    await writeFile(
+      journalPath,
+      JSON.stringify({
+        version: 2,
+        pid: 4242,
+        processIdentity: 'unverifiable-generation',
+        sourcePath,
+        claimPath,
+      }),
+      { mode: 0o600 },
+    )
+    const lookup: PdfProcessIdentityLookup = () => ({ state: 'unknown' })
+
+    expect(repairInterruptedPdfCommitSync(sourcePath, lookup)).toBe(false)
+    await expect(readFile(sourcePath)).rejects.toThrow()
+    await expect(readFile(journalPath)).resolves.toBeInstanceOf(Buffer)
+  })
+
   it('durably writes the exact repair journal before moving the source path', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'genoffice-pdf-guard-journal-'))
     cleanups.push(directory)
@@ -254,9 +336,15 @@ describe('guarded PDF save', () => {
       hooks: {
         afterJournalBeforeClaim: async () => {
           const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
+            version: number
+            pid: number
+            processIdentity: string
             sourcePath: string
             claimPath: string
           }
+          expect(journal.version).toBe(2)
+          expect(journal.pid).toBe(process.pid)
+          expect(journal.processIdentity).toMatch(/^(darwin|linux|win32):/)
           expect(journal.sourcePath).toBe(sourcePath)
           expect(journal.claimPath).toContain('.genoffice-claim-')
           expect(hash(await readFile(sourcePath))).toBe(hash(original))

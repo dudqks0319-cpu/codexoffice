@@ -63,8 +63,16 @@ class ElectronPdfJobProcess implements PdfJobProcess {
   private abort: ((error: Error) => void) | null = null
   private cleanup: (() => void) | null = null
   private stagedRoot: string | null = null
+  private stopped = false
+
+  private assertRunning(root?: string): void {
+    if (!this.stopped) return
+    if (root) void rm(root, { recursive: true, force: true })
+    throw new Error('pdf: isolated transformation process stopped')
+  }
 
   async run(envelope: PdfJobEnvelope): Promise<unknown> {
+    this.assertRunning()
     if (this.window) throw new Error('pdf: isolated job process already started')
     if (!jobPreloadPath) throw new Error('pdf: isolated job preload is not configured')
 
@@ -82,9 +90,12 @@ class ElectronPdfJobProcess implements PdfJobProcess {
     if (!schemeRegistered) throw new Error('pdf: isolated stream scheme was not registered')
 
     const root = await mkdtemp(join(tmpdir(), 'genoffice-pdf-job-'))
+    this.assertRunning(root)
     await chmod(root, 0o700)
+    this.assertRunning(root)
     this.stagedRoot = root
     const staged = await stagePdfJobSources(envelope.job, root)
+    this.assertRunning(root)
     const inputToken = randomUUID()
     const sourceUrl = `${PDF_JOB_SCHEME}://${inputToken}/source`
     const otherUrl = `${PDF_JOB_SCHEME}://${inputToken}/other`
@@ -215,6 +226,10 @@ class ElectronPdfJobProcess implements PdfJobProcess {
         backgroundThrottling: false,
       },
     })
+    if (this.stopped) {
+      win.destroy()
+      this.assertRunning(root)
+    }
     this.window = win
     win.removeMenu()
     const contents = win.webContents
@@ -332,6 +347,7 @@ class ElectronPdfJobProcess implements PdfJobProcess {
   }
 
   destroy(force: boolean): void {
+    this.stopped = true
     const win = this.window
     this.window = null
     this.cleanup?.()
@@ -354,9 +370,14 @@ class ElectronPdfJobProcess implements PdfJobProcess {
 }
 
 // One heavy transform at a time bounds staged buffers and the sandboxed pdf-lib heap.
+const configuredTestTimeout = Number(process.env.GENOFFICE_PDF_JOB_TEST_TIMEOUT_MS)
+const pdfJobTimeoutMs =
+  !app.isPackaged && Number.isSafeInteger(configuredTestTimeout) && configuredTestTimeout > 0
+    ? Math.min(120_000, configuredTestTimeout)
+    : 120_000
 const queue = new PdfJobQueue({
   createProcess: () => new ElectronPdfJobProcess(),
-  timeoutMs: 120_000,
+  timeoutMs: pdfJobTimeoutMs,
   maxConcurrent: 1,
   maxQueued: 1,
 })
