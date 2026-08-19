@@ -252,10 +252,17 @@ CI와 PDF를 한 커밋에 섞지 않는다.
 - Node 22.23.2에서 `npm ci` clean install이 성공했다.
 - lint는 오류 0건이며 기존 React Hook 경고 8건만 남았다.
 - 전체 typecheck, unit/integration test, `build:all`이 통과했다.
-- 실제 Electron E2E는 sandbox 밖 재실행에서 15/15 통과했다.
+- 실제 Electron E2E는 sandbox 밖 전체 재실행에서 17/17 통과했다.
 - LibreOffice 구조 round-trip corpus는 DOCX/XLSX/PPTX 3/3 통과했다.
 - 온라인 `npm audit --omit=dev`와 전체 `npm audit`는 `nanoid`를 3.3.18로 올린 뒤 모두 0건이다.
-- 다음 원격 증거는 GitHub Actions의 test/e2e/Sheets compatibility 완료 상태다.
+- GitHub Actions의 test/e2e/Sheets compatibility가 모두 통과했고 CI와 PDF 수정은 독립 커밋으로 분리했다.
+- 실제 Electron에서 PDF 저장을 20회 연속 실행해 매 작업 뒤 숨은 renderer와 `genoffice-pdf-job-*` staging이 기준 상태로 복귀하고, 최종 RSS가 기준선 +256 MiB 및 5회차 +128 MiB 이내임을 검증했다.
+- 입력 staging 중 1 ms timeout이 먼저 발생하면 중단된 `run()`이 나중에 숨은 창을 만들 수 있던 경쟁을 닫았다. 실제 timeout E2E는 원본 byte 보존, renderer·창·staging 정리, shell 생존을 검증한다.
+- PDF commit journal은 v2에서 PID와 OS 프로세스 생성 세대를 함께 기록한다. 같은 PID가 재사용돼도 생성 세대가 다르면 복구하고, 정확히 일치하거나 확인할 수 없으면 fail-closed한다.
+- AI request ledger v2는 승인된 요청의 예약 토큰과 비식별 allow/deny 사유를 0600 원자 저장하고, 반복 거부 로그를 분당 사유별 한 건으로 합쳐 로컬 I/O 남용을 제한한다.
+- macOS release preflight는 provider hard cap, 80% 이하 경고, fresh kill switch, multi-client 합산, 비식별 비용 로그를 정확한 source SHA와 결속한 증거가 없으면 HOLD한다.
+- 전체 회귀는 JavaScript/TypeScript 3,863 PASS / 2 skip, Sheets Rust 53/53, Electron E2E 17/17, LibreOffice 구조 round-trip 3/3, build/typecheck/format/diff-check PASS다.
+- 보안 diff scan `d0bedaae-5376-4e60-ad0b-bcd8291d9c3d`은 변경 보안 표면 전체를 검토했고 보고 가능한 finding 0건으로 완료됐다.
 
 ## 13. 실행 체크리스트
 
@@ -264,13 +271,15 @@ CI와 PDF를 한 커밋에 섞지 않는다.
 - [x] Linux에서 `darwin-arm64`/`darwin-x64` 매핑 assertion
 - [x] Linux에서 `linux-x64` 정확한 거부 assertion
 - [x] macOS wrapper와 명시 target 동등성 검증
-- [ ] 필수 CI 검사 및 Sheets compatibility 실행 확인
+- [x] 필수 CI 검사 및 Sheets compatibility 실행 확인
 - [x] PDF atomic replace 직전 fault injection
 - [x] 원본 해시·복구본·lock·다음 저장 검증
-- [ ] CI와 PDF 커밋 분리
+- [x] CI와 PDF 커밋 분리
 - [x] clean Node 22.12 전체 검증
 - [x] 승인 온라인 의존성 감사 (production/full 0건, `nanoid` 3.3.18 반영 후 재검증)
-- [ ] PDF 20회 반복·timeout·RSS·renderer 검증
+- [x] PDF 20회 반복·timeout·RSS·renderer 검증
+- [x] 로컬 AI 토큰 상한·kill switch·비식별 허용/차단 감사 로그
+- [x] provider 운영 증거 검증기와 macOS release fail-closed 연결
 - [ ] Microsoft Office 수동 QA
 - [ ] LibreOffice 수동 QA
 - [ ] Developer ID 서명·공증·Gatekeeper 검증

@@ -1,7 +1,78 @@
 # GenOffice macOS package release state
 
-Last verified: 2026-08-13 (Asia/Seoul; local security, clean Node 20/22,
-online dependency audit, compatibility, and editor E2E evidence)
+Last verified: 2026-08-19 (Asia/Seoul; P0 remote CI plus local P1 PDF lifecycle,
+AI operations gate, full repository regression, and LibreOffice corpus evidence)
+
+## 2026-08-19 P1 integration and AI operations gate
+
+- The process-global AI request ledger now uses schema v2. It preserves the
+  exact accepted reservation count/token budget and a bounded, redacted audit
+  stream containing only timestamps, token reservations, allow/deny decisions,
+  and stable reason codes. Prompt text, document content, renderer request IDs,
+  account identifiers, and credentials are never persisted. Repeated identical
+  denials are coalesced to one record per reason per minute to prevent a blocked
+  renderer from turning audit logging into unbounded synchronous disk I/O.
+- The macOS release preflight now fails closed without an exact-source AI
+  operations packet. The packet must prove a provider-enforced daily/monthly
+  cap, an alert at or below 80%, fresh provider and application kill-switch
+  exercises, multi-client provider-account aggregation, and a redacted
+  cost-attribution log. The verifier rejects stale dates, unknown fields,
+  symlinks, traversal, digest drift, individual artifacts above 20 MiB, and a
+  packet above 64 MiB. This validates integrity, not provider truth.
+- Codex Security diff scan
+  `d0bedaae-5376-4e60-ad0b-bcd8291d9c3d` completed with all five changed
+  security surfaces covered and zero reportable findings. TAC enrollment was
+  not granted, but that status is advisory and did not gate the local review.
+- Full fresh integration evidence: 3,863 JavaScript/TypeScript tests passed with
+  two intentional skips; Sheets Rust 53/53 passed; all workspace typechecks
+  passed; lint reported zero errors and eight pre-existing React Hook warnings;
+  all five production builds passed; Electron E2E passed 17/17 in 49.0 seconds;
+  formatting and `git diff --check` passed; and LibreOffice structural
+  round-trip passed 3/3.
+- The first full E2E run exposed a test-only race with the intentionally
+  two-second `Saved` toast under continuous process sampling. The test now waits
+  for the stable successful state (no pending/error indicator and Save disabled)
+  and samples every 25 ms. Focused PDF lifecycle E2E then passed 2/2 and the
+  complete suite passed 17/17.
+- Current report-only release preflight: dependency policy PASS; exact source
+  SHA HOLD; dirty worktree FAIL; Developer ID, notarization, update channel, and
+  provider operations evidence HOLD. No packaging, signing, provider call, or
+  publication was attempted.
+
+## 2026-08-19 PDF P1 lifecycle and commit recovery
+
+This checkpoint is local implementation evidence on branch `agent/codex-sdk`.
+It does not claim Microsoft Office, Apple signing/notarization, update-channel,
+or provider-account evidence.
+
+- PDF commit journals now use schema v2 and bind the owner PID to an OS process
+  generation. A dead owner or a live reused PID with a different generation
+  permits the exclusive hard-link repair; the exact active generation and an
+  unavailable identity remain fail-closed. Legacy v1 journals still repair
+  only when the PID is definitely absent.
+- The generation lookup is command-injection resistant: PIDs are positive safe
+  integers, macOS uses constant `/bin/ps` argv without a shell, Linux uses
+  `/proc/<pid>/stat` plus the boot ID, and Windows uses the fixed system
+  PowerShell path with a numeric PID. The current process identity is cached.
+- A real Electron stress test performs 20 sequential PDF annotation saves. It
+  verifies the hidden sandbox window appears, then each new renderer generation
+  disappears; every `genoffice-pdf-job-*` staging root returns to the baseline;
+  the source contains 20 square annotations; and final combined working set is
+  bounded by both baseline +256 MiB and the fifth save +128 MiB.
+- The new actual-timeout E2E exposed and fixed a lifecycle race: when the queue
+  deadline elapsed during source staging, `destroy()` could run before the
+  hidden window existed and the abandoned async `run()` could create it later.
+  `ElectronPdfJobProcess` now records a terminal stop before cleanup and checks
+  it after every asynchronous pre-window boundary and immediately after window
+  construction. A 1 ms unpackaged-only timeout now preserves the original PDF,
+  removes the hidden window/renderer/staging root, reports the error, and leaves
+  the shell responsive.
+
+Focused fresh evidence: PDF journal/identity/memory/runner 30/30 PASS, PDF
+typecheck and targeted ESLint/format PASS, PDF and Shell builds PASS, and the
+real Electron lifecycle E2E 2/2 PASS in 13.3 seconds. Full repository regression
+is recorded above; remote CI remains required after this checkpoint is
+committed.
 
 ## 2026-08-13 PDF isolation and external release preflight
 
@@ -14,7 +85,7 @@ publish, provider call, signing, notarization, or update delivery.
   without printing credential values. `release:mac:package` enforces this gate
   before the canonical macOS distribution command. On the current tree it
   reports dependency PASS, dirty-worktree FAIL, and source/signing/
-  notarization/update HOLD.
+  notarization/update/AI-operations HOLD.
 - Microsoft Office manual evidence now has a machine-verifiable manifest
   contract. The verifier binds the exact release artifact, input fixtures,
   Office-saved documents, and at least three screenshots per application to
@@ -60,10 +131,13 @@ publish, provider call, signing, notarization, or update delivery.
   the prior Electron 41.7.1 and legacy extract-zip findings; offline cache
   output is not used as release evidence.
 - The tracked LibreOffice compatibility corpus freshly passed 3/3 structural
-  round trips. Word, Excel, and PowerPoint were not installed on this Mac, so
-  Microsoft Office bidirectional visual/manual compatibility remains HOLD. The
-  exact fixtures, observations, screenshots, versions, and pass criteria are
-  recorded in `docs/microsoft-office-manual-qa.md`.
+  round trips. Microsoft Excel 16.105.3 and PowerPoint 16.105.1 are installed;
+  Word is missing. An isolated Excel fixture round-trip attempt timed out before
+  producing an Office-authored output, and screen capture was unavailable, so
+  it is not counted as compatibility evidence. Microsoft Office bidirectional
+  visual/manual compatibility remains HOLD. The exact fixtures, observations,
+  screenshots, versions, and pass criteria are recorded in
+  `docs/microsoft-office-manual-qa.md`.
 - The existing final DMG passed `hdiutil verify`, but it predates this dirty
   source and is not a release candidate. Its embedded app reports hardened
   runtime and Team ID `3FG9QJC8WC`, while local strict trust verification fails
@@ -88,11 +162,12 @@ publish, provider call, signing, notarization, or update delivery.
   binary, Node 22.12 or newer, and no checksum/binary-path override environment.
   It passes on the current dependency tree and deliberately fails on Node 20.
 
-Fresh post-change verification: PDF 237/237 tests, Shell 222/222 tests, all
-workspace JavaScript/TypeScript tests 3,841 passed / 2 skipped, Sheets Rust
+Fresh post-change verification: PDF 243/243 tests, Shell 235/235 tests, all
+workspace JavaScript/TypeScript tests 3,863 passed / 2 skipped, Sheets Rust
 53/53 passed, all workspace typechecks PASS, lint 0 errors / 8 pre-existing
-React hook warnings, all five production builds PASS, full Electron E2E 15/15
-PASS in 52.9 seconds, targeted formatting PASS, and `git diff --check` PASS.
+React hook warnings, all five production builds PASS, full Electron E2E 17/17
+PASS in 49.0 seconds, full changed-file formatting PASS, and `git diff --check`
+PASS.
 The generated PDF main bundle contains no `PDFDocument` or `pdf-lib`; those
 symbols remain only in the sandbox job preload.
 
@@ -319,17 +394,16 @@ ran.
 
 ### Remaining gates
 
-1. **Dependency owner:** superseded by the prioritized hardening follow-up
-   above. Identified production HIGH is 0 in the checked advisory corpus; an
-   explicitly approved current live bulk audit and clean install remain HOLD.
-2. **PDF runtime owner:** add a transport/utility-process memory ceiling that is
-   enforced before deserialization. The current sandbox, one-job cap, request
-   budgets, and 1 MB ACK protocol bound cooperative code, but a fully compromised
-   job renderer could still send one oversized private-port message before main
-   validates it; `PDFDocument.load` also necessarily precedes parsed-object caps.
-3. **PDF storage owner:** the claim-budget stale-lock deletion is closed by the
-   follow-up above. Commit-journal PID reuse can still delay repair and remains
-   a separate availability item.
+1. **Dependency owner:** clean Node 22 install and explicitly approved current
+   online production/full audits are complete with 0 findings. Re-run them on
+   the final exact-SHA release candidate.
+2. **PDF runtime owner:** repeated-transform and timeout lifecycle evidence is
+   complete. The 768 MiB watchdog remains an enforced sampled kill-switch, not
+   a kernel allocation reservation; do not move hostile PDF parsing into a
+   Node-integrated utility process merely to obtain V8 heap flags.
+3. **PDF storage owner:** claim-budget ABA deletion and commit-journal PID reuse
+   are closed. Preserve the adjacent bounded claim history until a coordinated
+   cross-application file replacement primitive is available.
 4. **AI operations owner:** local restart-durable spend accounting is now
    implemented. Provider/account hard caps, alerts, and a distributed ledger
    remain mandatory before calling it a Production cost ceiling.

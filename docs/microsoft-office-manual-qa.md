@@ -1,7 +1,11 @@
 # Microsoft Office manual compatibility gate
 
-Status: **HOLD — Microsoft Word, Excel, and PowerPoint are not installed on the
-current verification Mac.** This document defines the manual release gate; it
+Status: **HOLD — Excel 16.105.3 and PowerPoint 16.105.1 are installed, but Word
+is missing and no complete source-bound manual packet exists.** An isolated
+Excel fixture attempt timed out before creating an Office-authored output, and
+screen capture was unavailable; that attempt is not compatibility evidence.
+Do not close or force-quit an existing Office process because it may contain
+unrelated unsaved user work. This document defines the manual release gate; it
 does not convert LibreOffice or Electron automation into Microsoft Office
 evidence.
 
@@ -9,7 +13,8 @@ Before producing the source-bound candidate, run
 `npm run release:preflight`. The canonical `npm run release:mac:package`
 command enforces the same checks before packaging and refuses vulnerable
 dependencies, dirty or mismatched source, missing signing/notarization
-prerequisites, and a missing or unsafe update channel.
+prerequisites, a missing or unsafe update channel, and missing AI provider
+operations evidence.
 
 ## Evidence header
 
