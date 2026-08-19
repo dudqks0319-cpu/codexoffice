@@ -13,7 +13,7 @@ const corpus = [
   },
   {
     kind: 'xlsx',
-    path: 'qa-artifacts/model-comparison/luna-max/luna-max-portfolio.xlsx',
+    path: 'qa-artifacts/model-comparison/sol-high/sol-high-portfolio.xlsx',
   },
   { kind: 'pptx', path: 'packages/pptx-engine/tests/fixtures/01_standard_business.pptx' },
 ]

@@ -284,6 +284,8 @@ CI와 PDF를 한 커밋에 섞지 않는다.
 - [x] 업데이트 성공·실패 증거 검증기와 macOS release fail-closed 연결
 - [x] Microsoft Office·LibreOffice 수동 증거 검증기와 canonical release preflight 연결
 - [x] 수동 QA release ZIP 내부 source identity·실제 `app.asar` 해시 검증 및 구형 후보 거부
+- [x] Electron 필수 locale를 제품 19개 언어와 정확히 맞춰 macOS 번들 크기 게이트 통과
+- [x] Excel·PowerPoint 실제 Office 부분 round-trip 구조 검증
 - [ ] Microsoft Office 수동 QA
 - [ ] LibreOffice 수동 QA
 - [ ] Developer ID 서명·공증·Gatekeeper 검증

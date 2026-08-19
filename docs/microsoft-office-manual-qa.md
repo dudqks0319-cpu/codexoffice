@@ -1,9 +1,15 @@
 # Microsoft Office manual compatibility gate
 
 Status: **HOLD — Excel 16.105.3 and PowerPoint 16.105.1 are installed, but Word
-is missing and no complete source-bound manual packet exists.** An isolated
-Excel fixture attempt timed out before creating an Office-authored output, and
-screen capture was unavailable; that attempt is not compatibility evidence.
+is missing and no complete source-bound manual packet exists.** On source
+`da55e787d13eed00412a43a75d5b523a092e2776`, Excel preserved three worksheets,
+three valid frozen panes, two charts, six conditional-formatting regions, and
+the edited value, formula, and chart title after an Office save and reopen.
+PowerPoint preserved five slides, one master, eleven layouts, and one media
+part after an Office title edit, shape move, save, and reopen. These are useful
+partial observations, but they are not release evidence because the required
+screenshots, Word flow, and complete bidirectional CodexOffice packet are
+missing.
 Do not close or force-quit an existing Office process because it may contain
 unrelated unsaved user work. This document defines the manual release gate; it
 does not convert LibreOffice or Electron automation into Microsoft Office
@@ -74,7 +80,13 @@ unexpected pagination break attributable to the round trip.
 
 ## Excel round trip
 
-Fixture: `qa-artifacts/model-comparison/luna-max/luna-max-portfolio.xlsx`
+Fixture: `qa-artifacts/model-comparison/sol-high/sol-high-portfolio.xlsx`
+
+Do not substitute the Luna Max comparison workbook for this gate. Its worksheet
+panes use namespaced `x:xSplit`/`x:ySplit` attributes, and Microsoft Excel
+normalizes them away. The Sol High workbook contains valid unprefixed pane
+attributes and is the representative frozen-pane preservation fixture. The
+Luna workbook remains a negative interoperability case, not a PASS corpus.
 
 1. Open the copy in CodexOffice and record sheet names, used ranges, formulas,
    displayed values, tables, images, and the two chart titles/series.

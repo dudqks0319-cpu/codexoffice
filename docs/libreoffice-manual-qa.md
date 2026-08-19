@@ -10,10 +10,15 @@ Use copies of the same tracked corpus used by `npm run compat:libreoffice`:
 | App surface | Fixture                                                          | Automated result                               | Manual result |
 | ----------- | ---------------------------------------------------------------- | ---------------------------------------------- | ------------- |
 | Docs        | `apps/docs/tests/pagination-corpus/docx/06-with-footnotes.docx`  | 20 body references and 22 footnotes preserved  | HOLD          |
-| Sheets      | `qa-artifacts/model-comparison/luna-max/luna-max-portfolio.xlsx` | 3 sheets, 3 worksheets, and 2 charts preserved | HOLD          |
+| Sheets      | `qa-artifacts/model-comparison/sol-high/sol-high-portfolio.xlsx` | 3 sheets, 3 worksheets, and 2 charts preserved | HOLD          |
 | Slides      | `packages/pptx-engine/tests/fixtures/01_standard_business.pptx`  | 5 slides, 1 master, and 1 media part preserved | HOLD          |
 
 For each copied fixture:
+
+The Luna Max comparison workbook is intentionally not the representative
+Sheets fixture because its pane attributes are namespaced in a way Microsoft
+Excel normalizes away. Keep it as a negative interoperability case; use the Sol
+High workbook above when judging frozen-pane preservation.
 
 1. Open it in CodexOffice, make one ordinary edit, save, close, and reopen.
 2. Open the result in a stable LibreOffice desktop release and capture the

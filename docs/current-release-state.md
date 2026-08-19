@@ -223,13 +223,18 @@ publish, provider call, signing, notarization, or update delivery.
   the prior Electron 41.7.1 and legacy extract-zip findings; offline cache
   output is not used as release evidence.
 - The tracked LibreOffice compatibility corpus freshly passed 3/3 structural
-  round trips. Microsoft Excel 16.105.3 and PowerPoint 16.105.1 are installed;
-  Word is missing. An isolated Excel fixture round-trip attempt timed out before
-  producing an Office-authored output, and screen capture was unavailable, so
-  it is not counted as compatibility evidence. Microsoft Office bidirectional
-  visual/manual compatibility remains HOLD. The exact fixtures, observations,
-  screenshots, versions, and pass criteria are recorded in
-  `docs/microsoft-office-manual-qa.md`.
+  round trips. Its representative workbook is now the Sol High fixture with
+  valid frozen-pane attributes; the Luna Max fixture remains a negative
+  interoperability case. Microsoft Excel 16.105.3 and PowerPoint 16.105.1 are
+  installed, while Word is missing. On source `da55e78`, Excel preserved three
+  worksheets, three frozen panes, two charts, six conditional-formatting
+  regions, and the edited value/formula/chart title after an Office save and
+  reopen. PowerPoint preserved five slides, one master, eleven layouts, and one
+  media part after an Office title edit, shape move, save, and reopen. These are
+  partial observations only: required screenshots, Word, and complete
+  bidirectional CodexOffice evidence remain missing, so Microsoft Office QA is
+  still HOLD. The exact fixtures, observations, versions, and pass criteria are
+  recorded in `docs/microsoft-office-manual-qa.md`.
 - The existing final DMG passed `hdiutil verify`, but it predates this dirty
   source and is not a release candidate. Its embedded app reports hardened
   runtime and Team ID `3FG9QJC8WC`, while local strict trust verification fails
