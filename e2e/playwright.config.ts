@@ -9,6 +9,7 @@ import { defineConfig } from '@playwright/test'
  */
 export default defineConfig({
   testDir: '.',
+  testIgnore: ['office-authored-reopen.spec.ts'],
   outputDir: './test-results',
   timeout: 90_000,
   fullyParallel: false,

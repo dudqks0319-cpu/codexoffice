@@ -235,6 +235,13 @@ publish, provider call, signing, notarization, or update delivery.
   bidirectional CodexOffice evidence remain missing, so Microsoft Office QA is
   still HOLD. The exact fixtures, observations, versions, and pass criteria are
   recorded in `docs/microsoft-office-manual-qa.md`.
+- The explicit `test:e2e:office-reopen` lane now reopens Office-authored XLSX
+  and PPTX files in scratch CodexOffice profiles, verifies required OOXML
+  markers, renders all workbook sheets and presentation slides, and captures
+  only the Electron editor pages. It passed 2/2 against the current Excel and
+  PowerPoint outputs while the default 17-test E2E suite remained 17/17 PASS.
+  This repeatable CodexOffice-side evidence does not replace missing Word and
+  Microsoft Office screenshots, so the release decision remains HOLD.
 - The existing final DMG passed `hdiutil verify`, but it predates this dirty
   source and is not a release candidate. Its embedded app reports hardened
   runtime and Team ID `3FG9QJC8WC`, while local strict trust verification fails

@@ -61,6 +61,24 @@ change the candidate mid-check. Other files are hashed in bounded chunks. The
 verifier proves packet integrity and completeness; it does not replace the human
 visual judgment described below.
 
+After Excel and PowerPoint save their disposable fixture copies, reopen both
+Office-authored outputs in isolated CodexOffice profiles and capture only the
+Electron application pages with the explicit manual-QA lane:
+
+```sh
+GENOFFICE_OFFICE_EXCEL_OUTPUT=/absolute/path/to/excel-roundtrip.xlsx \
+GENOFFICE_OFFICE_POWERPOINT_OUTPUT=/absolute/path/to/powerpoint-roundtrip.pptx \
+GENOFFICE_OFFICE_REOPEN_EVIDENCE=/absolute/path/to/evidence/reopen \
+GENOFFICE_OFFICE_EXCEL_MARKER=unique-excel-marker \
+GENOFFICE_OFFICE_POWERPOINT_MARKER=unique-powerpoint-marker \
+  npm run test:e2e:office-reopen
+```
+
+This lane refuses relative paths and missing markers, uses a scratch
+CodexOffice profile, and captures only the editor page rather than the desktop.
+Its screenshots cover the CodexOffice reopen side only; the separate Microsoft
+Office screenshots and human assertions below remain mandatory.
+
 ## Word round trip
 
 Fixture: `apps/docs/tests/pagination-corpus/docx/06-with-footnotes.docx`

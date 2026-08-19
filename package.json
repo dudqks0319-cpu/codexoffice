@@ -29,6 +29,7 @@
     "build:all": "npm run build -w @genoffice/docs && npm run build -w @genoffice/sheets && npm run build -w @genoffice/slides && npm run build -w @genoffice/pdf && npm run build -w @genoffice/shell",
     "shell": "npm run build:all && electron apps/shell",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:office-reopen": "playwright test --config e2e/playwright.office.config.ts",
     "compat:libreoffice": "node tools/verify-libreoffice-corpus.mjs",
     "release:preflight": "node tools/check-macos-release-preflight.mjs",
     "release:preflight:enforce": "node tools/check-macos-release-preflight.mjs --enforce",
