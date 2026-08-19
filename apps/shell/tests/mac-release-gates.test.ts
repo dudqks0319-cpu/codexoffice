@@ -10,6 +10,7 @@ import {
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { LANGS } from '@genoffice/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -26,7 +27,8 @@ const builderModule = require('../build/electron-builder-config.js') as {
     env: Record<string, string>,
     dependencies?: { resolveCodexExtraResource: () => { from: string; to: string } },
   ) => {
-    mac: { identity?: string | null; notarize?: boolean }
+    mac: { identity?: string | null; notarize?: boolean; electronLanguages?: readonly string[] }
+    win: { electronLanguages?: readonly string[] }
     dmg: { sign?: boolean }
     electronDist?: string
     afterPack?: string
@@ -290,6 +292,24 @@ describe('electron-builder signing defaults', () => {
     const config = createBuilderConfig({})
 
     expect(config.electronDist).toBe('../../node_modules/electron/dist')
+  })
+
+  it('packages Chromium locales for every supported UI language and no others', () => {
+    const config = createBuilderConfig({})
+    const macLocales = config.mac.electronLanguages ?? []
+    const windowsLocales = config.win.electronLanguages ?? []
+    const toUiLanguage = (locale: string) => {
+      if (locale === 'zh_CN' || locale === 'zh-CN') return 'zh'
+      if (locale === 'zh_TW' || locale === 'zh-TW') return 'zh-TW'
+      if (locale === 'pt_BR' || locale === 'pt-BR') return 'pt'
+      if (locale === 'en-US') return 'en'
+      return locale
+    }
+
+    expect(macLocales.map(toUiLanguage).sort()).toEqual([...LANGS].sort())
+    expect(windowsLocales.map(toUiLanguage).sort()).toEqual([...LANGS].sort())
+    expect(new Set(macLocales).size).toBe(macLocales.length)
+    expect(new Set(windowsLocales).size).toBe(windowsLocales.length)
   })
 
   it('forces unsigned and non-notarized packaging when signing is not authorized', () => {
