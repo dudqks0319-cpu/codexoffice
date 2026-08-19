@@ -34,9 +34,10 @@ AI operations gate, full repository regression, and LibreOffice corpus evidence)
   for the stable successful state (no pending/error indicator and Save disabled)
   and samples every 25 ms. Focused PDF lifecycle E2E then passed 2/2 and the
   complete suite passed 17/17.
-- Current report-only release preflight: dependency policy PASS; exact source
-  SHA HOLD; dirty worktree FAIL; Developer ID, notarization, update channel, and
-  provider operations evidence HOLD. No packaging, signing, provider call, or
+- After committing the checkpoint, exact-source preflight for
+  `a46c13ec42a1237f01bf23a112cf13ad3f1ede16` reports dependency, source SHA, and
+  clean worktree PASS. Developer ID, notarization, update channel, and provider
+  operations evidence remain HOLD. No packaging, signing, provider call, or
   publication was attempted.
 
 ## 2026-08-19 PDF P1 lifecycle and commit recovery
