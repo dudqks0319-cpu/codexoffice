@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   evaluateMacReleasePreflight,
@@ -35,11 +35,13 @@ function readyEnvironment() {
     GENOFFICE_NOTARIZATION_AUTHORIZED: '1',
     APPLE_KEYCHAIN_PROFILE: 'private-profile-name',
     GENOFFICE_UPDATE_URL: 'https://updates.example.com/codexoffice',
+    GENOFFICE_UPDATE_EVIDENCE: '/private/evidence/update.json',
     GENOFFICE_AI_OPERATIONS_EVIDENCE: '/private/evidence/ai-operations.json',
   }
 }
 
 const verifyAiOperationsEvidence = () => ({ status: 'PASS' })
+const verifyUpdateEvidence = () => ({ status: 'PASS' })
 
 describe('macOS release preflight', () => {
   it('is mandatory in the canonical release packaging command', () => {
@@ -56,6 +58,7 @@ describe('macOS release preflight', () => {
       execFileSync: commandFixture(),
       checkReleaseDependencies: () => ({ electron: '41.10.3' }),
       verifyAiOperationsEvidence,
+      verifyUpdateEvidence,
     })
 
     expect(report.verdict).toBe('READY')
@@ -70,6 +73,7 @@ describe('macOS release preflight', () => {
       execFileSync: commandFixture({ dirty: true, identityAvailable: false }),
       checkReleaseDependencies: () => ({ electron: '41.10.3' }),
       verifyAiOperationsEvidence,
+      verifyUpdateEvidence,
     })
 
     expect(report.verdict).toBe('HOLD')
@@ -88,6 +92,7 @@ describe('macOS release preflight', () => {
       execFileSync: commandFixture({ identityAvailable: false }),
       checkReleaseDependencies: () => ({ electron: '41.10.3' }),
       verifyAiOperationsEvidence,
+      verifyUpdateEvidence,
     })
 
     expect(report.verdict).toBe('HOLD')
@@ -109,6 +114,7 @@ describe('macOS release preflight', () => {
         throw new Error('electron is vulnerable')
       },
       verifyAiOperationsEvidence,
+      verifyUpdateEvidence,
     })
     const formatted = formatMacReleasePreflight(report)
 
@@ -131,6 +137,7 @@ describe('macOS release preflight', () => {
       verifyAiOperationsEvidence: () => {
         throw new Error('provider evidence contained a secret path')
       },
+      verifyUpdateEvidence,
     })
     const formatted = formatMacReleasePreflight(report)
 
@@ -139,5 +146,41 @@ describe('macOS release preflight', () => {
       expect.objectContaining({ id: 'ai-operations', status: 'FAIL' }),
     )
     expect(formatted).not.toContain('secret path')
+  })
+
+  it('holds when an HTTPS channel exists without a real update exercise packet', () => {
+    const { GENOFFICE_UPDATE_EVIDENCE: _updateEvidence, ...environment } = readyEnvironment()
+    const updateVerifier = vi.fn()
+    const report = evaluateMacReleasePreflight({
+      environment,
+      platform: 'darwin',
+      execFileSync: commandFixture(),
+      checkReleaseDependencies: () => ({ electron: '41.10.3' }),
+      verifyAiOperationsEvidence,
+      verifyUpdateEvidence: updateVerifier,
+    })
+
+    expect(report.verdict).toBe('HOLD')
+    expect(report.checks).toContainEqual(expect.objectContaining({ id: 'update', status: 'HOLD' }))
+    expect(updateVerifier).not.toHaveBeenCalled()
+  })
+
+  it('fails closed without exposing configured update evidence details', () => {
+    const report = evaluateMacReleasePreflight({
+      environment: readyEnvironment(),
+      platform: 'darwin',
+      execFileSync: commandFixture(),
+      checkReleaseDependencies: () => ({ electron: '41.10.3' }),
+      verifyAiOperationsEvidence,
+      verifyUpdateEvidence: () => {
+        throw new Error('evidence /private/secret/update.json contained token')
+      },
+    })
+    const formatted = formatMacReleasePreflight(report)
+
+    expect(report.verdict).toBe('HOLD')
+    expect(report.checks).toContainEqual(expect.objectContaining({ id: 'update', status: 'FAIL' }))
+    expect(formatted).not.toContain('/private/secret')
+    expect(formatted).not.toContain('token')
   })
 })

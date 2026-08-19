@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 
 import { checkReleaseDependencies } from './check-release-dependencies.mjs'
 import { verifyAiOperationsEvidence } from './check-ai-operations-evidence.mjs'
+import { verifyUpdateEvidence } from './check-update-evidence.mjs'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
@@ -25,6 +26,7 @@ export function evaluateMacReleasePreflight(options = {}) {
       execFileSync(command, args, { encoding: 'utf8', ...runOptions }).trim())
   const dependencyCheck = options.checkReleaseDependencies ?? checkReleaseDependencies
   const aiEvidenceCheck = options.verifyAiOperationsEvidence ?? verifyAiOperationsEvidence
+  const updateEvidenceCheck = options.verifyUpdateEvidence ?? verifyUpdateEvidence
   const checks = []
 
   try {
@@ -104,11 +106,34 @@ export function evaluateMacReleasePreflight(options = {}) {
 
   try {
     const updateUrl = normalizeUpdateUrl(environment.GENOFFICE_UPDATE_URL)
-    checks.push(
-      updateUrl
-        ? check('update', 'PASS', 'credential-free HTTPS update channel is configured')
-        : check('update', 'HOLD', 'GENOFFICE_UPDATE_URL is not configured'),
-    )
+    const updateEvidencePath = environment.GENOFFICE_UPDATE_EVIDENCE?.trim() ?? ''
+    if (!updateUrl) {
+      checks.push(
+        updateEvidencePath
+          ? check('update', 'FAIL', 'update evidence is configured without a release channel')
+          : check('update', 'HOLD', 'GENOFFICE_UPDATE_URL is not configured'),
+      )
+    } else if (!updateEvidencePath) {
+      checks.push(
+        check(
+          'update',
+          'HOLD',
+          'HTTPS channel is configured but source-bound success and failure evidence is required',
+        ),
+      )
+    } else if (!isAbsolute(updateEvidencePath) || !SHA_PATTERN.test(declaredSha)) {
+      checks.push(check('update', 'FAIL', 'update evidence configuration is invalid'))
+    } else {
+      try {
+        updateEvidenceCheck(updateEvidencePath, {
+          expectedSourceSha: declaredSha,
+          expectedUpdateUrl: updateUrl,
+        })
+        checks.push(check('update', 'PASS', 'source-bound N-to-N+1 update exercise is verified'))
+      } catch {
+        checks.push(check('update', 'FAIL', 'update evidence failed verification'))
+      }
+    }
   } catch {
     checks.push(check('update', 'FAIL', 'update channel URL violates release policy'))
   }

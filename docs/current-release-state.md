@@ -1,7 +1,41 @@
 # GenOffice macOS package release state
 
 Last verified: 2026-08-19 (Asia/Seoul; P0 remote CI plus local P1 PDF lifecycle,
-AI operations gate, full repository regression, and LibreOffice corpus evidence)
+AI operations and updater evidence gates, full repository regression, and
+LibreOffice corpus evidence)
+
+## 2026-08-19 source-bound updater evidence gate
+
+- A valid HTTPS channel is no longer sufficient for release readiness. The
+  macOS preflight remains HOLD until `GENOFFICE_UPDATE_EVIDENCE` points to a
+  fresh packet bound to the exact release source SHA and normalized channel.
+- The packet binds the previous and next signed release ZIPs, extracted
+  `app-update.yml`, published `latest-mac.yml`, and redacted success/failure
+  observations to SHA-256. The verifier independently checks the next ZIP's
+  SHA-512 against `latest-mac.yml`, requires a strictly newer stable version,
+  and rejects unsafe URLs, unknown fields, stale observations, traversal,
+  symlinks, duplicates, oversized files, or incomplete preservation claims.
+- The updater now refuses an install action until `update-downloaded` has been
+  received for the exact latest offered version, ignores duplicate concurrent
+  download actions and stale completion/progress events, and allows retry after
+  a rejected download. Unit coverage proves a failed or stale download cannot
+  call `quitAndInstall`; the retry path must reach the matching downloaded state
+  first.
+- This is local implementation and evidence-contract proof only. No update was
+  published and no signed N-to-N+1 exercise occurred, so the external update
+  gate remains HOLD.
+- Fresh regression evidence for this checkpoint: 3,875 JavaScript/TypeScript
+  tests passed with two intentional skips; Sheets Rust 53/53 passed; all
+  workspace typechecks passed; lint reported zero errors and eight existing
+  React Hook warnings; all five production builds passed; Electron E2E passed
+  17/17 in the permitted GUI environment; LibreOffice structural round-trip
+  passed 3/3; and formatting plus `git diff --check` passed.
+- Codex Security diff scan
+  `1c924587-1fcf-4fc0-9197-f8266066f407` reviewed all four changed runtime/tool
+  surfaces with complete coverage and zero reportable findings. Measured usage
+  was 3,204,302 total tokens, 3,197,340 input tokens, and 3,154,560 cached input
+  tokens. TAC access was not granted, but that advisory status did not gate the
+  local scan.
 
 ## 2026-08-19 P1 integration and AI operations gate
 

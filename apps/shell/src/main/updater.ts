@@ -313,16 +313,30 @@ export function initAutoUpdater(getWindow: () => BrowserWindow | null): void {
   autoUpdater.disableDifferentialDownload = true
 
   let latestSeenVersion: string | null = null
+  let nextDownloadId = 0
+  let activeDownload: { id: number; version: string } | null = null
+  let downloadReadyVersion: string | null = null
 
   const actions = {
     onDownload: () => {
+      const version = latestSeenVersion
+      if (!version || activeDownload || downloadReadyVersion === version) return
+      const download = { id: ++nextDownloadId, version }
+      activeDownload = download
       pushUpdateState({ phase: 'downloading', percent: 0 })
       autoUpdater.downloadUpdate().catch((err) => {
+        if (activeDownload?.id !== download.id) return
+        activeDownload = null
+        if (latestSeenVersion !== download.version) return
         log('download failed:', err?.message ?? err)
         pushUpdateState({ phase: 'error' })
       })
     },
     onInstall: () => {
+      if (!latestSeenVersion || downloadReadyVersion !== latestSeenVersion) {
+        log('install ignored: no verified download is ready')
+        return
+      }
       closeUpdateWindow()
       // let the window fully close before tearing the app down
       setImmediate(() => autoUpdater.quitAndInstall(true, true))
@@ -341,16 +355,30 @@ export function initAutoUpdater(getWindow: () => BrowserWindow | null): void {
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     if (info.version === dismissedVersion) return
+    if (
+      info.version === latestSeenVersion &&
+      (activeDownload?.version === info.version || downloadReadyVersion === info.version)
+    ) {
+      return
+    }
+    downloadReadyVersion = null
     latestSeenVersion = info.version
     log('update available:', info.version)
     showUpdateWindow(getWindow(), initialState(info.version), actions)
   })
 
   autoUpdater.on('download-progress', (progress) => {
+    if (activeDownload?.version !== latestSeenVersion) return
     pushUpdateState({ phase: 'downloading', percent: progress.percent })
   })
 
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    if (activeDownload?.version === info.version) activeDownload = null
+    if (info.version !== latestSeenVersion) {
+      log('stale download ignored:', info.version)
+      return
+    }
+    downloadReadyVersion = info.version
     log('downloaded:', info.version)
     pushUpdateState({ phase: 'downloaded', percent: 100 })
   })
