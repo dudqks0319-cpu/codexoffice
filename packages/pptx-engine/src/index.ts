@@ -531,7 +531,7 @@ export async function savePptxToFile(opened: OpenedPptx, filePath: string): Prom
     type: 'nodebuffer',
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
-    streamFiles: true,
+    streamFiles: false,
   })
   await pipeline(source, createWriteStream(filePath))
 }
