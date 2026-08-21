@@ -346,7 +346,7 @@ describe('electron-builder signing defaults', () => {
       GENOFFICE_SIGNING_TIMESTAMP_MODE: 'secure',
     })
 
-    expect(config.mac.identity).toBe(identity)
+    expect(config.mac.identity).toBe('Fixture (FIXTURETEAM)')
     expect(config.dmg.sign).toBe(true)
     expect(config.mac.notarize).toBe(false)
   })

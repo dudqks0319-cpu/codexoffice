@@ -76,11 +76,12 @@ function createBuilderConfig(
 ) {
   const updateUrl = normalizeUpdateUrl(environment.GENOFFICE_UPDATE_URL)
   const identity = typeof environment.CSC_NAME === 'string' ? environment.CSC_NAME.trim() : ''
+  const builderIdentity = identity.replace(/^Developer ID Application:\s*/, '')
   const timestampMode = environment.GENOFFICE_SIGNING_TIMESTAMP_MODE
   const signingEnabled =
     environment.CSC_IDENTITY_AUTO_DISCOVERY !== 'false' &&
     environment.GENOFFICE_SIGNING_AUTHORIZED === '1' &&
-    identity.length > 0 &&
+    builderIdentity.length > 0 &&
     timestampMode === 'secure'
   const notarizationRequested = environment.GENOFFICE_NOTARIZATION_AUTHORIZED === '1'
   const notarizationCredentialsAvailable =
@@ -147,7 +148,7 @@ function createBuilderConfig(
       gatekeeperAssess: false,
       entitlements: 'build/entitlements.mac.plist',
       entitlementsInherit: 'build/entitlements.mac.plist',
-      identity: signingEnabled ? identity : null,
+      identity: signingEnabled ? builderIdentity : null,
       notarize: notarizationRequested,
       extraResources: [
         {
