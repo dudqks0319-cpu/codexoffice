@@ -68,9 +68,11 @@ Electron application pages with the explicit manual-QA lane:
 ```sh
 GENOFFICE_OFFICE_EXCEL_OUTPUT=/absolute/path/to/excel-roundtrip.xlsx \
 GENOFFICE_OFFICE_POWERPOINT_OUTPUT=/absolute/path/to/powerpoint-roundtrip.pptx \
+GENOFFICE_OFFICE_WORD_OUTPUT=/absolute/path/to/word-roundtrip.docx \
 GENOFFICE_OFFICE_REOPEN_EVIDENCE=/absolute/path/to/evidence/reopen \
 GENOFFICE_OFFICE_EXCEL_MARKER=unique-excel-marker \
 GENOFFICE_OFFICE_POWERPOINT_MARKER=unique-powerpoint-marker \
+GENOFFICE_OFFICE_WORD_MARKER=unique-word-marker \
   npm run test:e2e:office-reopen
 ```
 

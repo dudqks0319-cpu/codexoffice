@@ -19,13 +19,16 @@ if (process.platform !== 'darwin') {
 
 const excelPath = requiredEnvironment('GENOFFICE_OFFICE_EXCEL_OUTPUT')
 const powerpointPath = requiredEnvironment('GENOFFICE_OFFICE_POWERPOINT_OUTPUT')
+const wordPath = requiredEnvironment('GENOFFICE_OFFICE_WORD_OUTPUT')
 const evidenceDir = requiredEnvironment('GENOFFICE_OFFICE_REOPEN_EVIDENCE')
 const excelMarker = requiredEnvironment('GENOFFICE_OFFICE_EXCEL_MARKER')
 const powerpointMarker = requiredEnvironment('GENOFFICE_OFFICE_POWERPOINT_MARKER')
+const wordMarker = requiredEnvironment('GENOFFICE_OFFICE_WORD_MARKER')
 
 for (const [name, marker] of [
   ['GENOFFICE_OFFICE_EXCEL_MARKER', excelMarker],
   ['GENOFFICE_OFFICE_POWERPOINT_MARKER', powerpointMarker],
+  ['GENOFFICE_OFFICE_WORD_MARKER', wordMarker],
 ]) {
   if (marker.trim() !== marker || marker.length > 512) {
     throw new Error(`${name} must be a trimmed marker of at most 512 characters`)
@@ -35,6 +38,7 @@ for (const [name, marker] of [
 for (const [name, value] of [
   ['GENOFFICE_OFFICE_EXCEL_OUTPUT', excelPath],
   ['GENOFFICE_OFFICE_POWERPOINT_OUTPUT', powerpointPath],
+  ['GENOFFICE_OFFICE_WORD_OUTPUT', wordPath],
   ['GENOFFICE_OFFICE_REOPEN_EVIDENCE', evidenceDir],
 ]) {
   if (!isAbsolute(value)) throw new Error(`${name} must be an absolute path`)
@@ -55,11 +59,19 @@ function xlsxMarkerParts(workbookPath: string): string {
   ).toString()
 }
 
+function docxMarkerParts(documentPath: string): string {
+  return execFileSync('unzip', ['-p', documentPath, 'word/document.xml', 'word/footnotes.xml'], {
+    maxBuffer: MAX_MARKER_PART_BYTES,
+    timeout: 10_000,
+  }).toString()
+}
+
 test.describe('Office-authored documents reopen in CodexOffice', () => {
   test.beforeAll(async () => {
     for (const [name, path] of [
       ['GENOFFICE_OFFICE_EXCEL_OUTPUT', excelPath],
       ['GENOFFICE_OFFICE_POWERPOINT_OUTPUT', powerpointPath],
+      ['GENOFFICE_OFFICE_WORD_OUTPUT', wordPath],
     ]) {
       const stat = await lstat(path)
       if (stat.isSymbolicLink() || !stat.isFile() || stat.size <= 0) {
@@ -73,6 +85,24 @@ test.describe('Office-authored documents reopen in CodexOffice', () => {
     const evidenceStat = await lstat(evidenceDir)
     if (evidenceStat.isSymbolicLink() || !evidenceStat.isDirectory()) {
       throw new Error('GENOFFICE_OFFICE_REOPEN_EVIDENCE must be a real directory')
+    }
+  })
+
+  test('Word output renders all footnote references and the edited marker', async () => {
+    expect(docxMarkerParts(wordPath)).toContain(wordMarker)
+    const launched = await launchShell({
+      onboardingSeen: true,
+      videoDir: 'office-word-reopen',
+      openFile: wordPath,
+    })
+    try {
+      const docs = await waitForPageWithUrl(launched.app, 'docs/out')
+      await expect(docs.locator('.doc-page.ProseMirror')).toBeVisible({ timeout: 30_000 })
+      await expect(docs.locator('.doc-note-ref[data-note-kind="footnote"]')).toHaveCount(20)
+      await expect(docs.locator('body')).toContainText(wordMarker)
+      await docs.screenshot({ path: `${evidenceDir}/codexoffice-word-reopen.png` })
+    } finally {
+      await closeAndSaveVideo(launched, 'office-word-reopen')
     }
   })
 
