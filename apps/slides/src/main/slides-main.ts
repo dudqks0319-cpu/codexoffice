@@ -100,6 +100,7 @@ import {
   getSlideAnimations,
   setSlideAnimations,
   type SlideAnimation,
+  assertPptxInputSize,
   openPptx,
   parseTheme,
   pasteElements,
@@ -673,7 +674,11 @@ async function openAndBuild(
   fitWidthPx: number,
 ): Promise<OpenResult> {
   invalidateThemeImport(wc.id)
+  const sourceStat = await stat(path)
+  if (!sourceStat.isFile()) throw new Error('pptx: input path is not a file')
+  assertPptxInputSize(sourceStat.size)
   const raw = await readFile(path)
+  assertPptxInputSize(raw.byteLength)
   const { bytes, recovered } = await maybeRecoverBytes(path, new Uint8Array(raw))
   await shapedMetricsReady() // Lay out only after complex-script shaped metrics are ready, avoiding an init race falling back to estimation
   const opened = await openPptx(bytes)
