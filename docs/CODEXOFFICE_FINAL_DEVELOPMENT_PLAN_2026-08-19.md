@@ -285,10 +285,10 @@ CI와 PDF를 한 커밋에 섞지 않는다.
 - [x] Microsoft Office·LibreOffice 수동 증거 검증기와 canonical release preflight 연결
 - [x] 수동 QA release ZIP 내부 source identity·실제 `app.asar` 해시 검증 및 구형 후보 거부
 - [x] Electron 필수 locale를 제품 19개 언어와 정확히 맞춰 macOS 번들 크기 게이트 통과
-- [x] Excel·PowerPoint 실제 Office 부분 round-trip 구조 검증
-- [x] Office-authored XLSX·PPTX 전용 CodexOffice 재열기 E2E lane 2/2 검증
-- [ ] Microsoft Office 수동 QA
-- [ ] LibreOffice 수동 QA
+- [x] Microsoft Word·Excel·PowerPoint exact-SHA 수동 round-trip 구조·시각 검증
+- [x] Microsoft Office 및 LibreOffice 작성본 CodexOffice 재열기 E2E 각 3/3 검증
+- [x] Microsoft Office 수동 QA
+- [x] LibreOffice 수동 QA
 - [ ] Developer ID 서명·공증·Gatekeeper 검증
 - [ ] 서명된 실제 N→N+1 업데이트 성공·실패 롤백 검증
 - [ ] AI 비용 상한·알림·차단·키 보호 검증

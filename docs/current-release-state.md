@@ -1,8 +1,50 @@
 # GenOffice macOS package release state
 
-Last verified: 2026-08-22 (Asia/Seoul; PPTX LibreOffice packaging repair,
-Word/Excel/PowerPoint reopen coverage, exact-SHA Developer ID package, and
-external release-gate recheck)
+Last verified: 2026-08-22 (Asia/Seoul; exact-SHA Microsoft Office and stable
+LibreOffice bidirectional visual packets, PPTX resource bounds, Developer ID
+package, and external release-gate recheck)
+
+## 2026-08-22 exact-SHA Microsoft Office and LibreOffice packets
+
+- The retained local evidence root is
+  `/private/tmp/codexoffice-evidence-77ac8da`. Both schema-v2 manifests bind the
+  signed `Codexoffice-0.5.0-arm64.zip` (SHA-256
+  `c7ef565f2d937fd00f0bc8a8023acf5df958233b5fe4841a1d718648f7225441`)
+  to source `77ac8da53dd2ff1cdebe9b072f7c2e8ebca784c0` and the packaged
+  `release-identity.json`. `microsoft-office.json` has SHA-256
+  `805039f4725bbf7c004f3c309311939ba38998376c77cbdae6fc1ed383df372d`;
+  `libreoffice.json` has SHA-256
+  `05e5f0ec01cf3fc520d8e511eb622447dffc7f371b41feec70d793b98c732e17`.
+- Microsoft Word 16.112.1 (`16.112.26081720`), Excel 16.105.3
+  (`16.105.26020123`), and PowerPoint 16.105.1 (`16.105.26011816`) opened the
+  exact-source CodexOffice outputs without a repair prompt. Word retained 20
+  footnote references and saved separate body and footnote markers. Excel
+  retained three sheets, two charts, and 135 formulas and saved a separate cell
+  marker. PowerPoint retained five slides, one master, and one media part and
+  saved a separate title marker. The first long PowerPoint marker exposed a
+  three-line wrap in CodexOffice; the shorter `RT-77ac8da` marker was saved and
+  rerun so the final visual evidence remains inside the original two-line title
+  box.
+- Stable LibreOffice 26.2.5.2
+  (`cd7284b4cbbfeb507e630c1aac019f4157393acb`) independently opened the same
+  exact-source DOCX/XLSX/PPTX outputs without repair. Writer saved body and
+  footnote markers while retaining 20 references; Calc retained three sheets,
+  two charts, and 135 formulas while saving a cell marker; Impress retained five
+  slides, one master, and one media part while saving a title marker. The fresh
+  structural corpus also passes 3/3 on this stable build.
+- The isolated CodexOffice authored-output lane passes 3/3 for the Microsoft
+  Office outputs and a second 3/3 for the LibreOffice outputs. It verifies the
+  Office/LibreOffice-authored markers, Word's 20 references, Excel's sheet/chart
+  surfaces, and PowerPoint's five-slide render while capturing app-only reopen
+  screenshots. `verify:office-evidence` and `verify:libreoffice-evidence` both
+  PASS against the exact source and signed ZIP.
+- With both manifest paths supplied, canonical `release:preflight` now reports
+  dependency, source SHA, clean worktree, Microsoft Office, and LibreOffice
+  PASS. The overall verdict remains HOLD only for external release operations:
+  an authorized Apple notarization/stapling submission, a credential-free HTTPS
+  signed N-to-N+1 update exercise, and provider-account AI hard-cap, alert,
+  kill-switch, and aggregate-spend evidence. No credential was created, read,
+  stored, or transmitted for these remaining gates.
 
 ## 2026-08-22 signed checkpoint, PPTX resource bound, and Office follow-up
 
