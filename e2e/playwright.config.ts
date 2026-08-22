@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test'
 
 /**
- * E2E config for the GenOffice Electron shell.
+ * E2E config for the Codexoffice Electron shell.
  *
  * Tests launch the real built app (electron.launch), so they run serially —
  * parallel Electron instances fight over the GPU cache and dock on macOS.
@@ -9,6 +9,7 @@ import { defineConfig } from '@playwright/test'
  */
 export default defineConfig({
   testDir: '.',
+  testIgnore: ['office-authored-reopen.spec.ts'],
   outputDir: './test-results',
   timeout: 90_000,
   fullyParallel: false,

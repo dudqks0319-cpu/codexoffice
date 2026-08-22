@@ -344,15 +344,15 @@ button {
   box-shadow: 0 2px 6px rgba(74, 92, 255, 0.25);
 }
 
-/* Genspark brand logo (Ribbon AI button / AI panel title / collapsed entry) */
-.genspark-badge {
+/* Codex brand logo (Ribbon AI button / AI panel title / collapsed entry) */
+.codex-badge {
   display: block;
   width: 22px;
   height: 22px;
   border-radius: 50%;
 }
 
-.ai-panel-title .genspark-badge {
+.ai-panel-title .codex-badge {
   width: 18px;
   height: 18px;
 }
@@ -448,7 +448,7 @@ button {
   color: #232425;
 }
 
-/* Home-tab Genspark AI entry: black circular "+" badge with a dropdown caret,
+/* Home-tab Codex AI entry: black circular "+" badge with a dropdown caret,
    brand label below (mirrors the sheets Home ribbon). */
 /* AI feature buttons next to the entry: purple glyphs, label below */
 .ai-feature-icon {
@@ -494,7 +494,7 @@ button {
   background: var(--active-bg);
 }
 
-/* The Genspark AI entry keeps a black label even while the panel is open. */
+/* The Codex AI entry keeps a black label even while the panel is open. */
 .rb-big.ai-entry.active {
   color: var(--text);
 }
@@ -3511,10 +3511,10 @@ body.vib .slide-list {
 }
 
 /* AI quick actions anchored right above the slide card (mirrors the Home-tab
-   Genspark AI group); absolute so it doesn't distort the zoom-box extent.
+   Codex AI group); absolute so it doesn't distort the zoom-box extent.
    z-index lifts it over the Konva stage's transparent 160px bleed, which
    otherwise swallows the clicks */
-/* Genspark SAS floating toolbar, matched to the reference stage-toolbar:
+/* Codex SAS floating toolbar, matched to the reference stage-toolbar:
    white bar (padding 3px 5px, ~35px tall); 24px borderless tool buttons
    with 12px #374151 labels; thin span dividers separate the groups; the
    assistant toggle shows a gray selected state while the panel is open */
@@ -3573,7 +3573,7 @@ body.vib .slide-list {
 
 .stage-ai-btn svg {
   flex-shrink: 0;
-  /* AI feature glyphs match the ribbon's blue; the Genspark brand mark
+  /* AI feature glyphs match the ribbon's blue; the Codex brand mark
      carries its own fills and ignores currentColor */
   color: #0f7fff;
 }
@@ -4109,6 +4109,146 @@ body.vib .slide-list {
   opacity: 0.75;
   color: inherit;
   mix-blend-mode: normal;
+}
+
+.theme-import-trigger {
+  margin-inline-start: 6px;
+  align-self: center;
+}
+
+.theme-import-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 48%);
+}
+
+.theme-import-dialog {
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 12px;
+  padding: 20px;
+  color: var(--text, #202124);
+  background: var(--panel, #fff);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 32%);
+}
+
+.theme-import-dialog header,
+.theme-import-dialog footer,
+.theme-import-fonts,
+.theme-import-swatch {
+  display: flex;
+  align-items: center;
+}
+
+.theme-import-dialog header {
+  justify-content: space-between;
+  gap: 20px;
+}
+.theme-import-dialog h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+.theme-import-dialog header p {
+  margin: 0;
+  color: var(--muted, #666);
+}
+.theme-import-close {
+  min-width: 36px;
+  min-height: 36px;
+  font-size: 24px;
+}
+.theme-import-scope {
+  line-height: 1.5;
+}
+.theme-import-warning {
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: #fff4ce;
+  color: #6b4e00;
+}
+.theme-import-dialog label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+.theme-import-dialog select {
+  min-height: 36px;
+  font: inherit;
+}
+.theme-import-fonts {
+  gap: 12px;
+  margin: 16px 0;
+}
+.theme-import-fonts div {
+  flex: 1;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 7px;
+}
+.theme-import-fonts span {
+  font-size: 15px;
+}
+.theme-import-swatches {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.theme-import-swatch {
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+}
+.theme-import-color {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 1px solid rgb(0 0 0 / 22%);
+  border-radius: 4px;
+}
+.theme-import-swatch code {
+  margin-inline-start: auto;
+  font-size: 11px;
+}
+.theme-import-error {
+  min-height: 20px;
+  margin-top: 12px;
+  color: #b42318;
+}
+.theme-import-dialog footer {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.theme-import-dialog footer button {
+  min-height: 40px;
+  padding: 0 16px;
+}
+.theme-import-dialog footer .primary {
+  border-color: #2563eb;
+  color: #fff;
+  background: #2563eb;
+}
+.theme-import-dialog footer .primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+@media (max-width: 600px) {
+  .theme-import-swatches {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.theme-import-dialog button:focus-visible,
+.theme-import-dialog select:focus-visible,
+.theme-import-trigger:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
 }
 
 /* ── Slide show (full-screen black playback) ──────────────────────── */
@@ -6487,4 +6627,74 @@ body.vib .slide-list {
 
 .ai-login-btn:hover {
   opacity: 0.88;
+}
+
+.ai-job-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border-default);
+  background: var(--color-bg-subtle);
+  scrollbar-width: none;
+}
+
+.ai-job-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.ai-job-state,
+.ai-job-chip {
+  flex: 0 0 auto;
+  max-width: 150px;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  background: var(--color-bg-page);
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-job-state {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.ai-job-state.running {
+  border-color: rgba(15, 127, 255, 0.4);
+  color: var(--color-brand-secondary);
+}
+
+.ai-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e8ded9;
+  background: #fff8f4;
+  font-size: 12px;
+}
+
+.ai-review-actions span {
+  flex: 1;
+}
+
+.ai-review-actions button {
+  border: 1px solid #c9b8b0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+
+.ai-review-actions button.primary {
+  border-color: #c74421;
+  background: #c74421;
+  color: #fff;
 }

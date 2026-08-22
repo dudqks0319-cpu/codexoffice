@@ -94,7 +94,7 @@ describe('runLayoutScript', () => {
 
   it('computes evenly spaced arrangement from real geometry', () => {
     const code = `
-      const cards = els.filter(e => /^[abc]$/.test(e.id));
+      const cards = els.filter(e => ['a', 'b', 'c'].includes(e.id));
       const margin = 80, gap = 30;
       const w = (canvas.w - 2*margin - (cards.length-1)*gap) / cards.length;
       cards.forEach((c, i) => setBox(c.id, { x: margin + i*(w+gap), y: 200, w, h: 320 }));

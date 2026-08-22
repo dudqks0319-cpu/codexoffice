@@ -1,8 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/core'
 import type { Block } from '@genoffice/docx-engine'
-import { AgentLoop, composeSkills, type AgentImage } from '@genoffice/agent-core'
-import type { AiSettings, AttachmentAddResult, AttachmentMeta } from '../../shared/ipc'
+import {
+  AgentLoop,
+  composeSkills,
+  JobLifecycle,
+  type AgentImage,
+  type JobSnapshot,
+  type JobState,
+} from '@genoffice/agent-core'
+import type {
+  AiJobBudgetTicket,
+  AiSettings,
+  AttachmentAddResult,
+  AttachmentMeta,
+} from '../../shared/ipc'
 import { ATTACHMENT_IMAGE_EXTS } from '../../shared/ipc'
 import type { PmNode } from '../editor/convert'
 import { findNumId, type NumIds } from './protocol'
@@ -12,10 +24,23 @@ import { applyRevisionsBy } from '../editor/revisions'
 import { DOCS_AGENT_MAX_TURNS, DOCS_CONTINUE_INSTRUCTION } from './continuation'
 import { createFilesSkill } from './files-skill'
 import { createElectronTransport } from './transport'
+import {
+  acceptsJobCallback,
+  affectedUnitsForTool,
+  createDocsJobMetadata,
+  createDocsProposal,
+  createIsolatedProposalEditor,
+  DOCS_AI_MAXIMUM_BUDGET,
+  documentRevision,
+  persistedToolActivity,
+  proposalSourceMatches,
+  transitionCurrentJob,
+  type DocsProposal,
+} from './docs-job'
 import { useI18n, t as tModule, aiLangDirective, type StringKey } from '../i18n/locale'
 import { Markdown } from '@genoffice/ui'
 import { AiComposer, AiTypingIndicator } from '@genoffice/ui'
-import { GensparkMark } from '../components/icons'
+import { CodexMark } from '../components/icons'
 import sendEnterOn from '../assets/send-enter-on.png'
 import sendEnterOff from '../assets/send-enter-off.png'
 import sendStop from '../assets/send-stop.png'
@@ -47,19 +72,6 @@ interface ToolActivity {
 /** Max characters of tool output in the UI expansion panel */
 const TOOL_OUTPUT_MAX_CHARS = 2000
 
-/** Cap on tool args/output persisted in the transcript (the store layer has another 16k truncation fallback) */
-const PERSIST_TOOL_FIELD_MAX = 16_000
-
-/** Tool args → JSON string (truncated; returns undefined on serialization failure, doesn't block persistence) */
-function safeJsonInput(input: unknown): string | undefined {
-  try {
-    const s = JSON.stringify(input)
-    return s && s !== '{}' ? s.slice(0, PERSIST_TOOL_FIELD_MAX) : undefined
-  } catch {
-    return undefined
-  }
-}
-
 interface ChatEntry {
   role: 'user' | 'assistant'
   text: string
@@ -68,7 +80,7 @@ interface ChatEntry {
   turnLimit?: boolean
   /** the run failed and this user message was rolled back out of the model context */
   undelivered?: boolean
-  /** the run failed because Genspark is signed out — render an inline sign-in button */
+  /** the run failed because Codex is signed out — render an inline sign-in button */
   loginRequired?: boolean
   /** tool executions performed during this assistant turn */
   tools?: ToolActivity[]
@@ -151,9 +163,11 @@ export function AiPanel({
   onCollapse,
   filePath,
 }: AiPanelProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [jobSnapshot, setJobSnapshot] = useState<JobSnapshot | null>(null)
+  const [proposal, setProposal] = useState<DocsProposal<PmNode> | null>(null)
   /** Wall-clock start of the current run, drives the elapsed badge */
   const runStartedAtRef = useRef(0)
   const [chat, setChat] = useState<ChatEntry[]>([])
@@ -209,8 +223,8 @@ export function AiPanel({
   trackChangesRef.current = trackChanges
 
   /** drop every aiChanged flag; silent = skip undo history (auto-accept path) */
-  const clearAiHighlights = (silent = false) => {
-    const view = editorRef.current.view
+  const clearAiHighlights = (silent = false, target = editorRef.current) => {
+    const view = target.view
     let tr = view.state.tr
     let touched = false
     view.state.doc.forEach((node, offset) => {
@@ -223,7 +237,7 @@ export function AiPanel({
     if (touched) {
       view.dispatch(tr)
       // AI-pipeline housekeeping, not a user edit: keep the freshness baseline current
-      markDocSeen(editorRef.current)
+      markDocSeen(target)
     }
   }
   /** instruction of the in-flight run, labels its rollback snapshot */
@@ -235,6 +249,44 @@ export function AiPanel({
   const runToolsRef = useRef<
     Array<{ name: string; summary: string; isError?: boolean; input?: string; output?: string }>
   >([])
+  const jobLifecycleRef = useRef<JobLifecycle | null>(null)
+  const proposalRef = useRef<DocsProposal<PmNode> | null>(null)
+  const preMutationSnapshotRef = useRef<PmNode | null>(null)
+  const executionEditorRef = useRef<Editor>(editor)
+  const affectedUnitsRef = useRef<string[]>([])
+  const currentGenerationRef = useRef(0)
+  const activeGenerationRef = useRef(0)
+
+  const publishJobSnapshot = (snapshot: JobSnapshot | null) => {
+    setJobSnapshot(snapshot)
+    return snapshot
+  }
+
+  const transitionJob = (next: JobState) => {
+    const snapshot = transitionCurrentJob(jobLifecycleRef.current, next)
+    if (snapshot) publishJobSnapshot(snapshot)
+    return snapshot
+  }
+
+  const callbackIsCurrent = () =>
+    acceptsJobCallback(
+      jobLifecycleRef.current,
+      activeGenerationRef.current,
+      currentGenerationRef.current,
+    )
+
+  const disposeExecutionEditor = () => {
+    const executionEditor = executionEditorRef.current
+    if (executionEditor !== editorRef.current && !executionEditor.isDestroyed)
+      executionEditor.destroy()
+    executionEditorRef.current = editorRef.current
+    preMutationSnapshotRef.current = null
+  }
+
+  const updateProposal = (next: DocsProposal<PmNode> | null) => {
+    proposalRef.current = next
+    setProposal(next)
+  }
 
   // ── Chat-history persistence ────────────────────────────────────────────
   useEffect(() => {
@@ -336,27 +388,39 @@ export function AiPanel({
   }
 
   const loopRef = useRef<AgentLoop<PmNode> | null>(null)
+  const aiJobTicketRef = useRef<AiJobBudgetTicket | null>(null)
+  const endAiJob = () => {
+    const ticket = aiJobTicketRef.current
+    aiJobTicketRef.current = null
+    if (ticket) void window.desktop.aiJobEnd(ticket).catch(() => {})
+  }
   if (!loopRef.current) {
     const numIds = (): NumIds => ({
       bullet: findNumId(blocksRef.current, 'bullet') ?? numIdFallbackRef.current?.bullet ?? null,
       ordered: findNumId(blocksRef.current, 'ordered') ?? numIdFallbackRef.current?.ordered ?? null,
     })
     loopRef.current = new AgentLoop<PmNode>({
-      transport: createElectronTransport(() => settingsRef.current),
+      transport: createElectronTransport(
+        () => settingsRef.current,
+        () => aiJobTicketRef.current,
+      ),
       systemSuffix: aiLangDirective,
       maxTurns: DOCS_AGENT_MAX_TURNS,
       skill: composeSkills('docs+files', '', [
         createDocsSkill(
-          () => editorRef.current,
+          () => executionEditorRef.current,
           numIds,
           () => (trackChangesRef.current ? { author: AI_REVISION_AUTHOR } : undefined),
         ),
         createFilesSkill(() => attachmentsRef.current),
       ]),
-      captureSnapshot: () => editorRef.current.getJSON() as PmNode,
+      captureSnapshot: () => executionEditorRef.current.getJSON() as PmNode,
       events: {
-        onText: (text) => patchLastAssistant({ text }),
+        onText: (text) => {
+          if (callbackIsCurrent()) patchLastAssistant({ text })
+        },
         onToolStart: (call) => {
+          if (!callbackIsCurrent()) return
           // Live "running" chip: replaced in place by onToolExecuted
           patchLastAssistant((last) => ({
             tools: [
@@ -366,31 +430,24 @@ export function AiPanel({
           }))
         },
         onToolExecuted: ({ call, execution, snapshotBefore }) => {
+          if (!callbackIsCurrent()) {
+            // The stale tool only had access to the disposable proposal editor.
+            return
+          }
           if (snapshotBefore) {
-            setSnapshots((prev) =>
-              [
-                {
-                  label: instructionRef.current.slice(0, 40),
-                  time: new Date().toLocaleTimeString(),
-                  json: snapshotBefore,
-                },
-                ...prev,
-              ].slice(0, 20),
-            )
+            preMutationSnapshotRef.current = snapshotBefore
           }
           if (execution.mutated) {
+            affectedUnitsRef.current.push(...affectedUnitsForTool(call))
             // tracking off: accept immediately (same tick, so the yellow never paints);
             // tracking on: revisions stay pending, handled in the Review tab
-            if (!trackChangesRef.current) clearAiHighlights(true)
+            if (!trackChangesRef.current) clearAiHighlights(true, executionEditorRef.current)
           }
           runToolsRef.current.push({
             name: call.name,
             summary: execution.summary,
             isError: execution.isError,
-            input: safeJsonInput(call.input),
-            output: execution.output
-              ? execution.output.slice(0, PERSIST_TOOL_FIELD_MAX)
-              : undefined,
+            output: execution.output,
           })
           patchLastAssistant((last) => {
             // Swap out the running placeholder pushed by onToolStart (parse-fail calls have none)
@@ -412,14 +469,43 @@ export function AiPanel({
           })
         },
         onTurnEnd: () => {
+          if (!callbackIsCurrent()) return
           patchLastAssistant({ streaming: false })
           setChat((prev) => [...prev, { role: 'assistant', text: '', streaming: true }])
         },
         onDone: ({ text, cancelled, turnLimit, truncated }) => {
+          endAiJob()
+          const lifecycle = jobLifecycleRef.current
+          const current = callbackIsCurrent()
+          const stopped = cancelled || lifecycle?.snapshot.state === 'CANCELLED' || !current
+          if (stopped) {
+            disposeExecutionEditor()
+            updateProposal(null)
+            if (lifecycle && lifecycle.snapshot.state !== 'CANCELLED') transitionJob('CANCELLED')
+          } else if (preMutationSnapshotRef.current) {
+            const before = preMutationSnapshotRef.current
+            const after = executionEditorRef.current.getJSON() as PmNode
+            const nextProposal = createDocsProposal({
+              proposalId:
+                lifecycle!.snapshot.metadata.proposalId ?? lifecycle!.snapshot.metadata.jobId,
+              before,
+              after,
+              affectedUnits: affectedUnitsRef.current,
+              warnings: turnLimit
+                ? ['The run stopped at its tool-turn limit. Review carefully.']
+                : [],
+            })
+            disposeExecutionEditor()
+            updateProposal(nextProposal)
+            transitionJob('REVIEW_READY')
+          } else {
+            disposeExecutionEditor()
+            transitionJob('COMPLETED')
+          }
           // module-level t: the loop instance is created only once; the component's t goes stale with the first-render closure
           const baseText = turnLimit
             ? [text, tModule('aiTurnLimit')].filter(Boolean).join('\n\n')
-            : text || (cancelled ? tModule('aiStopped') : '')
+            : text || (stopped ? tModule('aiStopped') : '')
           const finalText = truncated
             ? [baseText, tModule('aiTruncatedNote')].filter(Boolean).join('\n\n')
             : baseText
@@ -431,16 +517,27 @@ export function AiPanel({
             tools: last.tools?.filter((tl) => !tl.running),
           }))
           setBusy(false)
-          // App listens: a run that generated content into a never-saved document
-          // triggers a silent first save with a content-derived file name
-          window.dispatchEvent(new Event('ai-docs-run-done'))
+          // Only an explicitly applied proposal may enter the ordinary save pipeline.
+          if (!proposalRef.current && !stopped) {
+            window.dispatchEvent(new Event('ai-docs-run-done'))
+          }
           // persist outside the updater (a double-invoked updater would write history twice); tools stores the whole run's full activity.
           // Edits-only runs (tools ran, no text) persist too, or the whole turn vanishes from the restored transcript
-          if (!cancelled && (finalText || runToolsRef.current.length > 0)) {
-            persistMessage('assistant', finalText, runToolsRef.current)
+          if (!stopped && (finalText || runToolsRef.current.length > 0)) {
+            persistMessage('assistant', finalText, persistedToolActivity(runToolsRef.current))
           }
         },
-        onError: (error) => {
+        onError: (error, code) => {
+          endAiJob()
+          const lifecycle = jobLifecycleRef.current
+          const current = callbackIsCurrent()
+          disposeExecutionEditor()
+          updateProposal(null)
+          if (current) transitionJob(code === 'budget' ? 'BUDGET_BLOCKED' : 'FAILED')
+          if (!current || lifecycle?.snapshot.state === 'CANCELLED') {
+            setBusy(false)
+            return
+          }
           setChat((prev) => {
             const next = [...prev]
             // the loop rolled this run's user message out of the model context — surface that
@@ -463,9 +560,9 @@ export function AiPanel({
             return next
           })
           // Signed-out failures get an inline sign-in button; detected via
-          // gsk status rather than matching the localized error text
+          // codex status rather than matching the localized error text
           void window.desktop
-            .aiGskStatus()
+            .aiCodexStatus()
             .then((status) => {
               if (status.loggedIn) return
               setChat((prev) => {
@@ -547,7 +644,37 @@ export function AiPanel({
 
   const runWith = (instruction: string, displayInstruction = instruction) => {
     const loop = loopRef.current
-    if (!instruction || !loop || loop.busy) return
+    if (
+      !instruction ||
+      !loop ||
+      loop.busy ||
+      jobLifecycleRef.current?.snapshot.state === 'PREPARING'
+    )
+      return
+    const sourceSnapshot = editorRef.current.getJSON() as PmNode
+    const proposalEditor = createIsolatedProposalEditor(editorRef.current, sourceSnapshot)
+    executionEditorRef.current = proposalEditor
+    const generation = currentGenerationRef.current + 1
+    currentGenerationRef.current = generation
+    activeGenerationRef.current = generation
+    const provider = settingsRef.current.provider
+    const providerSettings = settingsRef.current.providers[provider]
+    const jobId = crypto.randomUUID()
+    const lifecycle = new JobLifecycle(
+      createDocsJobMetadata({
+        jobId,
+        proposalId: `proposal-${jobId}`,
+        model: providerSettings.model || `${provider} default`,
+        reasoning: providerSettings.reasoningEffort || 'default',
+        sourceHash: documentRevision(sourceSnapshot),
+      }),
+    )
+    jobLifecycleRef.current = lifecycle
+    publishJobSnapshot(lifecycle.snapshot)
+    transitionJob('PREPARING')
+    updateProposal(null)
+    preMutationSnapshotRef.current = null
+    affectedUnitsRef.current = []
     setInput('')
     instructionRef.current = instruction
     lastInstructionRef.current = instruction
@@ -562,25 +689,59 @@ export function AiPanel({
     setBusy(true)
     persistMessage('user', instruction, undefined, attachmentsRef.current)
     // a rejected image read must not strand the run (busy would stay true forever): degrade to a no-image send
-    void collectImageAttachments()
-      .catch((): AgentImage[] => {
+    void Promise.all([
+      collectImageAttachments().catch((): AgentImage[] => {
         setAttachNotice(t('aiImagesSendFailed'))
         window.setTimeout(() => setAttachNotice(null), 5000)
         return []
+      }),
+      window.desktop.aiJobBegin(jobId),
+    ])
+      .then(([images, ticket]) => {
+        if (
+          !acceptsJobCallback(lifecycle, generation, currentGenerationRef.current, ['PREPARING'])
+        ) {
+          void window.desktop.aiJobEnd(ticket).catch(() => {})
+          return
+        }
+        aiJobTicketRef.current = ticket
+        transitionJob('RUNNING')
+        loop.run(instruction, images)
       })
-      .then((images) => loop.run(instruction, images))
+      .catch(() => {
+        if (!acceptsJobCallback(lifecycle, generation, currentGenerationRef.current, ['PREPARING']))
+          return
+        disposeExecutionEditor()
+        updateProposal(null)
+        transitionJob('FAILED')
+        patchLastAssistant({ streaming: false, error: tModule('aiUnknownError') })
+        setBusy(false)
+      })
   }
 
-  const cancel = () => loopRef.current?.cancel()
+  const cancel = () => {
+    currentGenerationRef.current += 1
+    transitionJob('CANCELLED')
+    loopRef.current?.cancel()
+    endAiJob()
+    if (!loopRef.current?.busy) disposeExecutionEditor()
+    updateProposal(null)
+    setBusy(false)
+  }
 
   const retry = () => runWith(lastInstructionRef.current)
 
   const continueRun = () => runWith(DOCS_CONTINUE_INSTRUCTION, t('aiContinue'))
 
   const newChat = () => {
+    if (busy) cancel()
     loopRef.current?.reset()
+    disposeExecutionEditor()
     setBusy(false)
     setChat([])
+    jobLifecycleRef.current = null
+    publishJobSnapshot(null)
+    updateProposal(null)
     inputRef.current?.focus()
   }
 
@@ -610,25 +771,21 @@ export function AiPanel({
     e.preventDefault()
     e.stopPropagation()
     setDragOver(false)
-    const paths = Array.from(e.dataTransfer.files)
-      .map((f) => window.desktop.getPathForFile(f))
-      .filter(Boolean)
-    if (paths.length > 0) mergeAttachments(await window.desktop.addAttachmentPaths(paths))
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length > 0) mergeAttachments(await window.desktop.addAttachmentFiles(files))
   }
 
   /** Files pasted into the input: ones with a local path go through regular attachments; pure bitmaps like screenshots hit a temp file first */
   const onPasteFiles = async (files: File[]) => {
-    const paths: string[] = []
     for (const f of files) {
-      const p = window.desktop.getPathForFile(f)
-      if (p) {
-        paths.push(p)
+      const local = await window.desktop.addAttachmentFiles([f])
+      if (local.accepted.length > 0 || local.rejected.length > 0) {
+        mergeAttachments(local)
         continue
       }
       const ext = PASTE_MIME_EXT[f.type] ?? f.name.split('.').pop()?.toLowerCase() ?? 'bin'
       mergeAttachments(await window.desktop.addPastedImage(await f.arrayBuffer(), ext))
     }
-    if (paths.length > 0) mergeAttachments(await window.desktop.addAttachmentPaths(paths))
   }
 
   const removeAttachment = (path: string) =>
@@ -649,7 +806,53 @@ export function AiPanel({
 
   const rollback = (snapshot: Snapshot) => {
     editor.commands.setContent(snapshot.json as never)
+    markDocSeen(editor)
     setSnapshots((prev) => prev.filter((s) => s !== snapshot))
+    if (jobLifecycleRef.current?.snapshot.state === 'COMMITTED') transitionJob('RESTORED')
+  }
+
+  const rejectProposal = () => {
+    if (!proposalRef.current) return
+    updateProposal(null)
+    if (jobLifecycleRef.current?.snapshot.state === 'SOURCE_CHANGED') {
+      jobLifecycleRef.current = null
+      publishJobSnapshot(null)
+    } else {
+      transitionJob('CANCELLED')
+    }
+  }
+
+  const applyProposal = () => {
+    const pending = proposalRef.current
+    if (!pending || jobLifecycleRef.current?.snapshot.state !== 'REVIEW_READY') return
+    if (!proposalSourceMatches(pending, editorRef.current.getJSON())) {
+      transitionJob('SOURCE_CHANGED')
+      return
+    }
+    if (!transitionJob('APPLYING')) return
+    try {
+      if (!editorRef.current.commands.setContent(pending.after as never)) {
+        throw new Error('The proposal could not be applied.')
+      }
+      markDocSeen(editorRef.current)
+      setSnapshots((prev) =>
+        [
+          {
+            label: instructionRef.current.slice(0, 40),
+            time: new Date().toLocaleTimeString(),
+            json: pending.before,
+          },
+          ...prev,
+        ].slice(0, 20),
+      )
+      updateProposal(null)
+      transitionJob('COMMITTED')
+      window.dispatchEvent(new Event('ai-docs-run-done'))
+    } catch {
+      transitionJob('RECOVERY_REQUIRED')
+      editorRef.current.commands.setContent(pending.before as never)
+      markDocSeen(editorRef.current)
+    }
   }
 
   const resizeCleanupRef = useRef<(() => void) | null>(null)
@@ -691,11 +894,56 @@ export function AiPanel({
     resizer.setPointerCapture(e.pointerId)
   }
 
+  const selection = editor.state.selection
+  let selectedBlocks = 0
+  if (!selection.empty) {
+    editor.state.doc.forEach((node, offset) => {
+      const start = offset + 1
+      const end = start + node.nodeSize
+      if (selection.from < end && selection.to > start) selectedBlocks += 1
+    })
+  }
+  const scopeLabel = selection.empty
+    ? t(docEmpty ? 'aiScopeEmptyDoc' : 'aiScopeCursor')
+    : t('aiScopeSelected', { count: selectedBlocks })
+  const providerSettings = settings.providers[settings.provider]
+  const modelLabel =
+    jobSnapshot?.metadata.model ?? (providerSettings.model || `${settings.provider} default`)
+  const reasoningLabel =
+    jobSnapshot?.metadata.reasoning ?? providerSettings.reasoningEffort ?? 'default'
+  const labels =
+    lang === 'ko'
+      ? {
+          affected: '영향 범위',
+          warnings: '주의사항',
+          apply: '적용',
+          reject: '거절',
+          review: '적용 전 검토',
+          stale: '문서가 변경되어 적용할 수 없습니다.',
+        }
+      : lang === 'zh' || lang === 'zh-TW'
+        ? {
+            affected: '影响范围',
+            warnings: '注意事项',
+            apply: '应用',
+            reject: '拒绝',
+            review: '应用前审阅',
+            stale: '文档已更改，无法应用。',
+          }
+        : {
+            affected: 'Affected units',
+            warnings: 'Warnings',
+            apply: 'Apply',
+            reject: 'Reject',
+            review: 'Review before applying',
+            stale: 'The document changed, so this proposal cannot be applied.',
+          }
+
   // collapsed: rail only — after all hooks, so the instance and its state survive
   if (!open) {
     return (
       <button className="ai-rail" title={t('appExpandAiPanel')} onClick={onExpand}>
-        <GensparkMark size={22} />
+        <CodexMark size={22} />
       </button>
     )
   }
@@ -726,7 +974,7 @@ export function AiPanel({
       />
       <div className="ai-panel-header">
         <span className="ai-panel-title">
-          <GensparkMark size={22} />
+          <CodexMark size={22} />
           {t('aiPanelTitle')}
         </span>
         <div className="ai-panel-header-actions">
@@ -741,6 +989,27 @@ export function AiPanel({
             </button>
           )}
         </div>
+      </div>
+
+      <div className="ai-job-strip" aria-label="AI job status">
+        <span
+          className={`ai-job-state${jobSnapshot?.state === 'REVIEW_READY' ? ' review' : busy ? ' running' : ''}`}
+        >
+          {jobSnapshot?.state ?? (busy ? 'RUNNING' : 'READY')}
+        </span>
+        <span className="ai-job-chip" title={modelLabel}>
+          {modelLabel}
+        </span>
+        <span className="ai-job-chip">{reasoningLabel}</span>
+        <span className="ai-job-chip" title={scopeLabel}>
+          {scopeLabel}
+        </span>
+        <span className="ai-job-chip">
+          ≤{' '}
+          {jobSnapshot?.metadata.maximumBudget.amount.toLocaleString() ??
+            DOCS_AI_MAXIMUM_BUDGET.toLocaleString()}{' '}
+          {jobSnapshot?.metadata.maximumBudget.unit ?? 'tokens'}
+        </span>
       </div>
 
       <div ref={logRef} className="ai-chat" onScroll={onLogScroll}>
@@ -826,8 +1095,11 @@ export function AiPanel({
                 <div className="ai-msg-error">{t('aiErrorPrefix', { error: entry.error })}</div>
               )}
               {entry.loginRequired && (
-                <button className="ai-login-btn" onClick={() => void window.desktop.aiGskLogin()}>
-                  {t('aiGskLoginBtn')}
+                <button
+                  className="ai-login-btn"
+                  onClick={() => void window.desktop.aiCodexLogin().catch(() => undefined)}
+                >
+                  {t('aiCodexLoginBtn')}
                 </button>
               )}
               {showToolbar && (
@@ -883,6 +1155,49 @@ export function AiPanel({
           )
         })}
       </div>
+
+      {(proposal || jobSnapshot?.state === 'SOURCE_CHANGED') && (
+        <section className="ai-proposal-card" aria-label={labels.review}>
+          <div className="ai-proposal-title">{labels.review}</div>
+          {jobSnapshot?.state === 'SOURCE_CHANGED' ? (
+            <>
+              <div className="ai-proposal-warning">{labels.stale}</div>
+              <div className="ai-proposal-actions">
+                <button type="button" className="ai-proposal-reject" onClick={rejectProposal}>
+                  {labels.reject}
+                </button>
+              </div>
+            </>
+          ) : proposal ? (
+            <>
+              <div className="ai-proposal-heading">{labels.affected}</div>
+              <ul>
+                {proposal.affectedUnits.map((unit) => (
+                  <li key={unit}>{unit}</li>
+                ))}
+              </ul>
+              {proposal.warnings.length > 0 && (
+                <>
+                  <div className="ai-proposal-heading">{labels.warnings}</div>
+                  <ul className="ai-proposal-warning">
+                    {proposal.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <div className="ai-proposal-actions">
+                <button type="button" className="ai-proposal-reject" onClick={rejectProposal}>
+                  {labels.reject}
+                </button>
+                <button type="button" className="ai-proposal-apply" onClick={applyProposal}>
+                  {labels.apply}
+                </button>
+              </div>
+            </>
+          ) : null}
+        </section>
+      )}
 
       {snapshots.length > 0 && (
         <div className="ai-versions">

@@ -13,6 +13,7 @@ interface FakeSettings {
 function setup(
   startImpl?: (request: IpcStreamStart<FakeSettings>) => void | Promise<unknown>,
   creditsErrorText?: () => string,
+  silenceTimeoutMs?: (settings: FakeSettings) => number,
 ) {
   let listener: ((chunk: IpcStreamChunk) => void) | undefined
   const unsubscribe = vi.fn(() => {
@@ -30,10 +31,16 @@ function setup(
       return startImpl?.(request)
     },
     cancel: (requestId) => cancelled.push(requestId),
-    getSettings: () => ({ provider: 'genspark' }),
+    getSettings: () => ({ provider: 'codex' }),
+    getJobTicket: () => ({
+      jobId: 'job-1',
+      capability: 'main-issued-secret',
+      maximumOutputTokens: 8_192,
+    }),
     unknownErrorText: () => 'unknown error',
     timeoutErrorText: () => 'timed out',
     ...(creditsErrorText ? { creditsErrorText } : {}),
+    ...(silenceTimeoutMs ? { silenceTimeoutMs } : {}),
   })
   const cb = {
     onDelta: vi.fn(),
@@ -52,8 +59,10 @@ describe('createIpcTransport', () => {
   it('starts one request with settings and forwards deltas and tool calls', () => {
     const { started, cb, emit } = setup()
     expect(started).toHaveLength(1)
-    expect(started[0]!.settings).toEqual({ provider: 'genspark' })
+    expect(started[0]!.settings).toEqual({ provider: 'codex' })
     expect(started[0]!.system).toBe('sys')
+    expect(started[0]!.job.jobId).toBe('job-1')
+    expect(started[0]!.maxTokens).toBe(2_048)
 
     emit({ type: 'delta', text: 'hi' })
     emit({ type: 'delta' })
@@ -100,27 +109,43 @@ describe('createIpcTransport', () => {
   it('maps a timeout error code to the localized timeout message', () => {
     const { cb, emit } = setup()
     emit({ type: 'error', error: 'AI request timed out: no data received', errorCode: 'timeout' })
-    expect(cb.onError).toHaveBeenCalledWith('timed out')
+    expect(cb.onError).toHaveBeenCalledWith('timed out', 'timeout')
   })
 
   it('maps a credits error code to the localized credits message', () => {
     const { cb, emit } = setup(undefined, () => 'credits used up')
     emit({
       type: 'error',
-      error: 'Your Genspark credits have been exhausted.',
+      error: 'Your provider usage limit has been reached.',
       errorCode: 'credits',
     })
-    expect(cb.onError).toHaveBeenCalledWith('credits used up')
+    expect(cb.onError).toHaveBeenCalledWith('credits used up', 'credits')
   })
 
   it('a credits error code without creditsErrorText falls back to the carried text', () => {
     const { cb, emit } = setup()
     emit({
       type: 'error',
-      error: 'Your Genspark credits have been exhausted.',
+      error: 'Your provider usage limit has been reached.',
       errorCode: 'credits',
     })
-    expect(cb.onError).toHaveBeenCalledWith('Your Genspark credits have been exhausted.')
+    expect(cb.onError).toHaveBeenCalledWith(
+      'Your provider usage limit has been reached.',
+      'credits',
+    )
+  })
+
+  it('forwards the server budget error code with its safe message', () => {
+    const { cb, emit } = setup()
+    emit({
+      type: 'error',
+      error: 'This AI task reached its 8,192-token budget.',
+      errorCode: 'budget',
+    })
+    expect(cb.onError).toHaveBeenCalledWith(
+      'This AI task reached its 8,192-token budget.',
+      'budget',
+    )
   })
 
   it('fails the run after prolonged silence; pings re-arm the watchdog', () => {
@@ -135,6 +160,21 @@ describe('createIpcTransport', () => {
       vi.advanceTimersByTime(IPC_STREAM_SILENCE_TIMEOUT_MS)
       expect(cb.onError).toHaveBeenCalledWith('timed out')
       expect(cancelled).toEqual([started[0]!.requestId])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses a bounded settings-aware silence timeout when provided', () => {
+    vi.useFakeTimers()
+    try {
+      const configured = vi.fn(() => 120_000)
+      const { cb } = setup(undefined, undefined, configured)
+      vi.advanceTimersByTime(90_000)
+      expect(cb.onError).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(30_000)
+      expect(cb.onError).toHaveBeenCalledWith('timed out')
+      expect(configured).toHaveBeenCalledWith({ provider: 'codex' })
     } finally {
       vi.useRealTimers()
     }

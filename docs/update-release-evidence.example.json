@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "sourceSha": "0000000000000000000000000000000000000000",
+  "verifiedAt": "2026-08-19T00:00:00.000Z",
+  "updateUrl": "https://updates.example.com/codexoffice",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "fromVersion": "0.1.0",
+  "toVersion": "0.2.0",
+  "artifacts": [
+    {
+      "kind": "previous-release",
+      "path": "Codexoffice-0.1.0-arm64-mac.zip",
+      "sha256": "replace-with-sha256"
+    },
+    {
+      "kind": "next-release",
+      "path": "Codexoffice-0.2.0-arm64-mac.zip",
+      "sha256": "replace-with-sha256"
+    },
+    {
+      "kind": "app-update-yml",
+      "path": "app-update.yml",
+      "sha256": "replace-with-sha256"
+    },
+    {
+      "kind": "latest-mac-yml",
+      "path": "latest-mac.yml",
+      "sha256": "replace-with-sha256"
+    },
+    {
+      "kind": "success-evidence",
+      "path": "success-observation-redacted.json",
+      "sha256": "replace-with-sha256"
+    },
+    {
+      "kind": "failure-evidence",
+      "path": "failure-observation-redacted.json",
+      "sha256": "replace-with-sha256"
+    }
+  ],
+  "success": {
+    "status": "PASS",
+    "observedAt": "2026-08-19T00:00:00.000Z",
+    "startedVersion": "0.1.0",
+    "offeredVersion": "0.2.0",
+    "downloadCompleted": true,
+    "signatureVerified": true,
+    "installCompleted": true,
+    "relaunchVersion": "0.2.0",
+    "userDataPreserved": true
+  },
+  "failure": {
+    "status": "PASS",
+    "observedAt": "2026-08-19T00:00:00.000Z",
+    "mode": "signature",
+    "startedVersion": "0.1.0",
+    "attemptedVersion": "0.2.0",
+    "installAttempted": false,
+    "quitAndInstallCalled": false,
+    "runningVersionAfterFailure": "0.1.0",
+    "previousArtifactPreserved": true,
+    "userDataPreserved": true,
+    "retrySucceeded": true
+  }
+}

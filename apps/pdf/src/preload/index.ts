@@ -1,16 +1,33 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Lang } from '@genoffice/i18n'
 import type { AiStreamChunk } from '@genoffice/ai-provider'
+import {
+  parseAiJobBudgetTicket,
+  parseAiJobId,
+  parseAiRequestId,
+  parseAiStreamRequest,
+} from '@genoffice/ai-provider'
+import {
+  parseExportImagesRequest,
+  parseExtractPagesRequest,
+  parseInsertPdfRequest,
+  parseSavePdfRequest,
+} from '../main/save-validation'
 import { AI_CHANNELS, PDF_CHANNELS } from '../shared/ipc'
 import type { PdfApi } from '../shared/ipc'
 
 const api: PdfApi = {
   consumePending: () => ipcRenderer.invoke(PDF_CHANNELS.consumePending),
   readFile: (path) => ipcRenderer.invoke(PDF_CHANNELS.readFile, path),
-  save: (request) => ipcRenderer.invoke(PDF_CHANNELS.save, request),
-  extractPages: (request) => ipcRenderer.invoke(PDF_CHANNELS.extractPages, request),
-  insertPdf: (request) => ipcRenderer.invoke(PDF_CHANNELS.insertPdf, request),
-  exportImages: (request) => ipcRenderer.invoke(PDF_CHANNELS.exportImages, request),
+  save: (request) => ipcRenderer.invoke(PDF_CHANNELS.save, parseSavePdfRequest(request)),
+  writeRecovery: (request) =>
+    ipcRenderer.invoke(PDF_CHANNELS.writeRecovery, parseSavePdfRequest(request)),
+  extractPages: (request) =>
+    ipcRenderer.invoke(PDF_CHANNELS.extractPages, parseExtractPagesRequest(request)),
+  insertPdf: (request) =>
+    ipcRenderer.invoke(PDF_CHANNELS.insertPdf, parseInsertPdfRequest(request)),
+  exportImages: (request) =>
+    ipcRenderer.invoke(PDF_CHANNELS.exportImages, parseExportImagesRequest(request)),
   setDirty: (dirty) => ipcRenderer.send(PDF_CHANNELS.dirtyChanged, dirty),
   onCloseSaveRequest: (handler) => {
     const listener = () => handler()
@@ -36,8 +53,13 @@ const api: PdfApi = {
     return () => ipcRenderer.removeListener(PDF_CHANNELS.languageChanged, listener)
   },
   getAiSettings: () => ipcRenderer.invoke(AI_CHANNELS.getSettings),
-  aiStream: (request) => ipcRenderer.invoke(AI_CHANNELS.stream, request),
-  aiStreamCancel: (requestId) => ipcRenderer.invoke(AI_CHANNELS.streamCancel, requestId),
+  aiJobBegin: async (jobId) =>
+    parseAiJobBudgetTicket(await ipcRenderer.invoke(AI_CHANNELS.jobBegin, parseAiJobId(jobId))),
+  aiJobEnd: (ticket) =>
+    ipcRenderer.invoke(AI_CHANNELS.jobEnd, parseAiJobBudgetTicket(ticket)).then(() => undefined),
+  aiStream: (request) => ipcRenderer.invoke(AI_CHANNELS.stream, parseAiStreamRequest(request)),
+  aiStreamCancel: (requestId) =>
+    ipcRenderer.invoke(AI_CHANNELS.streamCancel, parseAiRequestId(requestId)),
   onAiStream: (handler) => {
     const listener = (_e: Electron.IpcRendererEvent, chunk: AiStreamChunk) => handler(chunk)
     ipcRenderer.on(AI_CHANNELS.streamChunk, listener)

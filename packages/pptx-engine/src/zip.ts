@@ -8,9 +8,94 @@
  */
 import JSZip from 'jszip'
 import { createHash } from 'node:crypto'
+import type { Readable } from 'node:stream'
 import { XMLParser } from 'fast-xml-parser'
 import type { SlideSize } from './types'
 import { asXmlNode, xmlArray } from './xml-utils'
+
+export const PPTX_MAX_INPUT_BYTES = 256 * 1024 * 1024
+export const PPTX_MAX_ARCHIVE_ENTRIES = 10_000
+export const PPTX_MAX_ARCHIVE_PART_BYTES = 128 * 1024 * 1024
+export const PPTX_MAX_ARCHIVE_EXPANDED_BYTES = 512 * 1024 * 1024
+
+type SizedZipEntry = JSZip.JSZipObject & {
+  _data?: { uncompressedSize?: number }
+}
+
+export function assertPptxInputSize(size: number): void {
+  if (!Number.isSafeInteger(size) || size < 0) throw new Error('pptx: invalid input file size')
+  if (size > PPTX_MAX_INPUT_BYTES) throw new Error('pptx: input file is too large')
+}
+
+export function assertPptxArchiveWithinLimits(zip: JSZip): void {
+  const entries = Object.entries(zip.files)
+  if (entries.length > PPTX_MAX_ARCHIVE_ENTRIES) {
+    throw new Error('pptx: archive contains too many entries')
+  }
+
+  let expandedBytes = 0
+  for (const [name, rawEntry] of entries) {
+    const normalized = name.replaceAll('\\', '/')
+    if (
+      name.includes('\0') ||
+      normalized.startsWith('/') ||
+      normalized.split('/').some((part) => part === '.' || part === '..')
+    ) {
+      throw new Error('pptx: archive contains an unsafe path')
+    }
+    const entry = rawEntry as SizedZipEntry
+    if (entry.dir) continue
+    const size = entry._data?.uncompressedSize
+    if (!Number.isSafeInteger(size) || size === undefined || size < 0) {
+      throw new Error('pptx: archive entry size is invalid')
+    }
+    if (size > PPTX_MAX_ARCHIVE_PART_BYTES) {
+      throw new Error('pptx: archive part is too large')
+    }
+    expandedBytes += size
+    if (expandedBytes > PPTX_MAX_ARCHIVE_EXPANDED_BYTES) {
+      throw new Error('pptx: expanded archive is too large')
+    }
+  }
+}
+
+async function readPptxEntry(
+  file: JSZip.JSZipObject,
+  remainingExpandedBytes: number,
+): Promise<Uint8Array> {
+  const stream = file.nodeStream('nodebuffer') as Readable
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let total = 0
+    let settled = false
+    const finish = (error?: Error) => {
+      if (settled) return
+      settled = true
+      if (error) {
+        stream.destroy()
+        reject(error)
+      } else {
+        const merged = Buffer.concat(chunks, total)
+        resolve(new Uint8Array(merged.buffer, merged.byteOffset, merged.byteLength))
+      }
+    }
+    stream.on('data', (chunk: Buffer | Uint8Array) => {
+      const copy = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      total += copy.byteLength
+      if (total > PPTX_MAX_ARCHIVE_PART_BYTES) {
+        finish(new Error('pptx: archive part is too large'))
+        return
+      }
+      if (total > remainingExpandedBytes) {
+        finish(new Error('pptx: expanded archive is too large'))
+        return
+      }
+      chunks.push(copy)
+    })
+    stream.once('end', () => finish())
+    stream.once('error', (error: Error) => finish(error))
+  })
+}
 
 const relsParser = new XMLParser({
   ignoreAttributes: false,
@@ -34,14 +119,19 @@ export class PackageArchive {
   ) {}
 
   static async open(bytes: Uint8Array): Promise<PackageArchive> {
+    assertPptxInputSize(bytes.byteLength)
     const originalHash = createHash('sha256').update(bytes).digest('hex')
     const zip = await JSZip.loadAsync(bytes)
+    assertPptxArchiveWithinLimits(zip)
     const entries = new Map<string, Uint8Array>()
     const names = Object.keys(zip.files)
+    let expandedBytes = 0
     for (const name of names) {
       const file = zip.files[name]
       if (file.dir) continue
-      entries.set(name, await file.async('uint8array'))
+      const data = await readPptxEntry(file, PPTX_MAX_ARCHIVE_EXPANDED_BYTES - expandedBytes)
+      expandedBytes += data.byteLength
+      entries.set(name, data)
     }
     return new PackageArchive(zip, entries, originalHash)
   }
@@ -124,7 +214,11 @@ export class PackageArchive {
   }
 
   /** Resolve a slide's layout / master part paths (via the rels chain). */
-  resolveSlideChain(slidePath: string): { layoutPath?: string; masterPath?: string; themePath?: string } {
+  resolveSlideChain(slidePath: string): {
+    layoutPath?: string
+    masterPath?: string
+    themePath?: string
+  } {
     const slideRels = this.readRels(slidePath)
     let layoutPath: string | undefined
     for (const rel of slideRels.values()) {

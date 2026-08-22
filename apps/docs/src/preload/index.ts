@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
+import {
+  parseAiJobBudgetTicket,
+  parseAiJobId,
+  parseAiRequestId,
+  parseAiStreamRequest,
+} from '@genoffice/ai-provider'
 import type {
   AiChatRequest,
   AiSettings,
@@ -65,23 +71,36 @@ const api: DesktopApi = {
   getAiSettings: () => ipcRenderer.invoke('ai:get-settings'),
   setAiSettings: (settings: AiSettings) => ipcRenderer.invoke('ai:set-settings', settings),
   aiChat: (request: AiChatRequest) => ipcRenderer.invoke('ai:chat', request),
-  aiStream: (request: AiStreamRequest) => ipcRenderer.invoke('ai:stream', request),
-  aiStreamCancel: (requestId: string) => ipcRenderer.invoke('ai:stream-cancel', requestId),
-  aiGskStatus: (withEmail?: boolean) => ipcRenderer.invoke('ai:gsk-status', withEmail),
-  aiGskLogin: () => ipcRenderer.invoke('ai:gsk-login'),
+  aiJobBegin: async (jobId: string) =>
+    parseAiJobBudgetTicket(await ipcRenderer.invoke('ai:job-begin', parseAiJobId(jobId))),
+  aiJobEnd: (ticket) =>
+    ipcRenderer.invoke('ai:job-end', parseAiJobBudgetTicket(ticket)).then(() => undefined),
+  aiStream: (request: AiStreamRequest) =>
+    ipcRenderer.invoke('ai:stream', parseAiStreamRequest(request)),
+  aiStreamCancel: (requestId: string) =>
+    ipcRenderer.invoke('ai:stream-cancel', parseAiRequestId(requestId)),
+  aiCodexStatus: () => ipcRenderer.invoke('ai:codex-status'),
+  aiCodexLogin: () => ipcRenderer.invoke('ai:codex-login'),
   webSearch: (query: string, maxResults?: number) =>
     ipcRenderer.invoke('ai:web-search', query, maxResults),
   imageSearch: (query: string, maxResults?: number) =>
     ipcRenderer.invoke('ai:image-search', query, maxResults),
   fetchImage: (url: string) => ipcRenderer.invoke('ai:fetch-image', url),
   pickAttachments: () => ipcRenderer.invoke('files:pick'),
-  addAttachmentPaths: (paths: string[]) => ipcRenderer.invoke('files:add', paths),
+  addAttachmentFiles: (files: File[]) =>
+    ipcRenderer.invoke(
+      'files:add',
+      files
+        .slice(0, 50)
+        .map((file) => webUtils.getPathForFile(file))
+        .filter(Boolean),
+    ),
+  refreshAttachments: (paths: string[]) => ipcRenderer.invoke('files:refresh', paths),
   addPastedImage: (data: ArrayBuffer, ext: string) =>
     ipcRenderer.invoke('files:add-pasted-image', data, ext),
   readAttachment: (path: string, offset: number, maxChars: number) =>
     ipcRenderer.invoke('files:read', path, offset, maxChars),
   readAttachmentImage: (path: string) => ipcRenderer.invoke('files:read-image', path),
-  getPathForFile: (file: File) => webUtils.getPathForFile(file),
   openNewTab: (openPath?: string | null) => ipcRenderer.invoke('win:new', openPath ?? null),
   listDocsTabs: () => ipcRenderer.invoke('win:list'),
   focusDocsTab: (id: string) => ipcRenderer.invoke('win:focus', id),

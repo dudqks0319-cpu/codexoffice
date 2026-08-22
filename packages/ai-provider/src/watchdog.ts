@@ -9,6 +9,28 @@ export const AI_CONNECT_TIMEOUT_MS = 60_000
 export const AI_IDLE_TIMEOUT_MS = 60_000
 /** Non-streaming chat waits for the full generation before headers arrive */
 export const AI_CHAT_RESPONSE_TIMEOUT_MS = 180_000
+/** High-effort Codex turns can legitimately emit no event while reasoning. */
+export const AI_HIGH_REASONING_IDLE_TIMEOUT_MS = 120_000
+export const AI_XHIGH_REASONING_IDLE_TIMEOUT_MS = 600_000
+export const AI_MAX_REASONING_IDLE_TIMEOUT_MS = 900_000
+export const AI_DEFAULT_TURN_TIMEOUT_MS = 180_000
+export const AI_HIGH_REASONING_TURN_TIMEOUT_MS = 300_000
+export const AI_XHIGH_REASONING_TURN_TIMEOUT_MS = 900_000
+export const AI_MAX_REASONING_TURN_TIMEOUT_MS = 1_200_000
+
+export function aiIdleTimeoutMsForReasoning(effort: unknown): number {
+  if (effort === 'max') return AI_MAX_REASONING_IDLE_TIMEOUT_MS
+  if (effort === 'xhigh') return AI_XHIGH_REASONING_IDLE_TIMEOUT_MS
+  if (effort === 'high') return AI_HIGH_REASONING_IDLE_TIMEOUT_MS
+  return AI_IDLE_TIMEOUT_MS
+}
+
+export function aiTurnTimeoutMsForReasoning(effort: unknown): number {
+  if (effort === 'max') return AI_MAX_REASONING_TURN_TIMEOUT_MS
+  if (effort === 'xhigh') return AI_XHIGH_REASONING_TURN_TIMEOUT_MS
+  if (effort === 'high') return AI_HIGH_REASONING_TURN_TIMEOUT_MS
+  return AI_DEFAULT_TURN_TIMEOUT_MS
+}
 
 export class AiTimeoutError extends Error {
   constructor(ms: number) {

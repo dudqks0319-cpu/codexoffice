@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import logoLockup from './assets/genoffice-logo.svg'
+import appIcon from './assets/app-icon.png'
 import iconDocx from './assets/file-docx.svg'
 import iconXlsx from './assets/file-xlsx.svg'
 import iconPptx from './assets/file-pptx.svg'
@@ -386,7 +386,7 @@ function ProjectPanel({ projects, selectedId, onSelect, onRefresh }: ProjectPane
 }
 
 // ── Account entry (bottom-left) ──────────────────────────
-// Currently the Genspark (gsk) login entry; to be upgraded to a signup/account system later.
+// App-private Codex account entry. Authentication stays within this app.
 // Language switching also lives in this popup menu.
 
 const LOGIN_POLL_MS = 2500
@@ -421,14 +421,9 @@ function AccountEntry() {
   const { lang, setLang, t } = useI18n()
   const [status, setStatus] = useState<AccountStatus | null>(null)
   const [waiting, setWaiting] = useState(false)
-  // incremented on login retry, resetting the polling timer
-  const [loginNonce, setLoginNonce] = useState(0)
   const [loginError, setLoginError] = useState<
     'timeout' | 'launch' | 'network' | 'expired' | 'failed' | null
   >(null)
-  // auth URL reported by the login CLI — rescue entry when the browser did not open
-  const [authUrl, setAuthUrl] = useState<string | null>(null)
-  const [urlCopied, setUrlCopied] = useState(false)
   const loginDeadline = useRef(0)
   const [menuOpen, setMenuOpen] = useState(false)
   // language flyout: opens on hover, fixed-position so it can escape the
@@ -455,23 +450,18 @@ function AccountEntry() {
     }
   }, [])
 
-  // login progress pushed from main (gsk login CLI output)
+  // normalized login progress pushed from the main process
   useEffect(() => {
     const off = window.aiOffice.onAccountLogin?.((ev) => {
-      if (ev.phase === 'url') {
-        if (ev.url) setAuthUrl(ev.url)
-        if (ev.expiresInSec) loginDeadline.current = Date.now() + ev.expiresInSec * 1000
-      } else if (ev.phase === 'success') {
+      if (ev.phase === 'success') {
         void window.aiOffice.accountStatus().then((s) => {
           if (s.loggedIn) {
             setStatus(s)
             setWaiting(false)
-            setAuthUrl(null)
           }
         })
       } else if (ev.phase === 'error') {
         setWaiting(false)
-        setAuthUrl(null)
         setLoginError(
           ev.error === 'network' ? 'network' : ev.error === 'expired' ? 'expired' : 'failed',
         )
@@ -488,16 +478,14 @@ function AccountEntry() {
         if (s.loggedIn) {
           setStatus(s)
           setWaiting(false)
-          setAuthUrl(null)
         } else if (Date.now() > loginDeadline.current) {
           setWaiting(false)
-          setAuthUrl(null)
           setLoginError('timeout')
         }
       })
     }, LOGIN_POLL_MS)
     return () => clearInterval(timer)
-  }, [waiting, loginNonce])
+  }, [waiting])
 
   // close the menu on outside click
   useEffect(() => {
@@ -514,8 +502,10 @@ function AccountEntry() {
   }, [menuOpen])
 
   const loggedIn = status?.loggedIn ?? false
-  const email = status?.email ?? ''
-  const initial = email ? email[0].toUpperCase() : loggedIn ? 'G' : '?'
+  const authMethod =
+    status?.authMethod === 'chatgpt' ? 'ChatGPT' : status?.authMethod === 'api-key' ? 'API key' : ''
+  const accountDetail = authMethod ? `${t('codexAccount')} · ${authMethod}` : t('codexAccount')
+  const initial = loggedIn ? 'C' : '?'
   const errorText = loginError
     ? {
         timeout: t('loginTimeout'),
@@ -568,29 +558,16 @@ function AccountEntry() {
   }, [langFly])
 
   const startLogin = () => {
-    // clicking again while waiting = relaunch the login (main kills the stale CLI, so the new device code is the live one)
+    if (waiting) return
     setLoginError(null)
     setWaiting(true)
-    setAuthUrl(null)
-    setUrlCopied(false)
     loginDeadline.current = Date.now() + LOGIN_MAX_WAIT_MS
-    setLoginNonce((n) => n + 1)
     closeMenu()
     void window.aiOffice.accountLogin().then((launched) => {
       if (!launched) {
         setWaiting(false)
         setLoginError('launch')
       }
-    })
-  }
-
-  const openLoginUrl = () => void window.aiOffice.openLoginUrl?.()
-
-  const copyLoginUrl = () => {
-    if (!authUrl) return
-    void navigator.clipboard.writeText(authUrl).then(() => {
-      setUrlCopied(true)
-      window.setTimeout(() => setUrlCopied(false), 2000)
     })
   }
 
@@ -605,9 +582,10 @@ function AccountEntry() {
         <div className="account-menu" role="menu">
           {loggedIn ? (
             <div className="account-menu-info">
-              <span className="account-menu-email" title={email}>
-                {email || t('loggedIn')}
+              <span className="account-menu-title" title={accountDetail}>
+                {t('loggedInCodex')}
               </span>
+              <span className="account-sub">{accountDetail}</span>
             </div>
           ) : (
             <>
@@ -615,28 +593,11 @@ function AccountEntry() {
                 className="account-menu-item"
                 role="menuitem"
                 onClick={startLogin}
+                disabled={waiting}
                 title={waiting ? t('waitingLogin') : undefined}
               >
-                {waiting ? t('waitingShort') : t('loginGenspark')}
+                {waiting ? t('waitingShort') : t('loginCodex')}
               </button>
-              {waiting && authUrl && (
-                <>
-                  <button
-                    className="account-menu-item login-rescue"
-                    role="menuitem"
-                    onClick={openLoginUrl}
-                  >
-                    {t('loginOpenManually')}
-                  </button>
-                  <button
-                    className="account-menu-item login-rescue"
-                    role="menuitem"
-                    onClick={copyLoginUrl}
-                  >
-                    {urlCopied ? t('loginCopied') : t('loginCopyUrl')}
-                  </button>
-                </>
-              )}
             </>
           )}
           <div className="account-menu-divider" />
@@ -736,11 +697,15 @@ function AccountEntry() {
               disabled={loggingOut}
               onClick={() => {
                 setLoggingOut(true)
-                void window.aiOffice.accountLogout().then(() => {
-                  setLoggingOut(false)
-                  closeMenu()
-                  setStatus({ loggedIn: false })
-                })
+                void window.aiOffice
+                  .accountLogout()
+                  .then((didLogout) => {
+                    if (!didLogout) return
+                    closeMenu()
+                    setStatus({ loggedIn: false })
+                  })
+                  .catch(() => undefined)
+                  .finally(() => setLoggingOut(false))
               }}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -763,26 +728,16 @@ function AccountEntry() {
           )}
         </div>
       )}
-      {!menuOpen && waiting && authUrl && (
-        <div className="login-hint" role="status">
-          <button className="login-hint-open" onClick={openLoginUrl}>
-            {t('loginOpenManually')}
-          </button>
-          <button className="login-hint-copy" onClick={copyLoginUrl}>
-            {urlCopied ? t('loginCopied') : t('loginCopyUrl')}
-          </button>
-        </div>
-      )}
       <button
         className="account-btn"
         onClick={handleClick}
         aria-expanded={menuOpen}
         title={
           loggedIn
-            ? email || t('loggedInGenspark')
+            ? t('loggedInCodex')
             : waiting
               ? t('waitingLogin')
-              : (errorText ?? t('loginGenspark'))
+              : (errorText ?? t('loginCodex'))
         }
         aria-label={loggedIn ? t('account') : t('login')}
       >
@@ -816,16 +771,16 @@ function AccountEntry() {
         <span className="account-text">
           {loggedIn ? (
             <>
-              <span className="account-name">{email ? email.split('@')[0] : t('loggedIn')}</span>
-              <span className="account-sub" title={email}>
-                {email || 'Genspark'}
+              <span className="account-name">{t('loggedIn')}</span>
+              <span className="account-sub" title={accountDetail}>
+                {accountDetail}
               </span>
             </>
           ) : (
             <>
               <span className="account-name">{waiting ? t('waitingShort') : t('login')}</span>
               <span className={`account-sub${!waiting && errorText ? ' error' : ''}`}>
-                {!waiting && errorText ? errorText : t('accountGenspark')}
+                {!waiting && errorText ? errorText : t('accountCodex')}
               </span>
             </>
           )}
@@ -853,18 +808,9 @@ export function Home() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [renaming, setRenaming] = useState<{ path: string; value: string } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null)
-  // name in the greeting; omitted when logged out
-  const [accountName, setAccountName] = useState('')
   const [greetAskKey] = useState(
     () => GREET_ASK_KEYS[Math.floor(Math.random() * GREET_ASK_KEYS.length)]!,
   )
-
-  useEffect(() => {
-    void window.aiOffice.accountStatus?.().then((s) => {
-      const name = s?.loggedIn ? (s.email ?? '').split('@')[0] : ''
-      if (name) setAccountName(name[0].toUpperCase() + name.slice(1))
-    })
-  }, [])
 
   // ── Project state ──
   const [projects, setProjects] = useState<ProjectSummaryEntry[]>([])
@@ -1587,7 +1533,7 @@ export function Home() {
             ? 'greetAfternoon'
             : 'greetEvening'
     const cjk = lang === 'zh' || lang === 'zh-TW' || lang === 'ja'
-    const greeting = `${t(greetKey)}${accountName ? (cjk ? '，' : ', ') + accountName : ''}${cjk ? '。' : '. '}`
+    const greeting = `${t(greetKey)}${cjk ? '。' : '. '}`
     return (
       <main className="content">
         <section className="quick-start" aria-label={t('secQuickStart')}>
@@ -1710,7 +1656,8 @@ export function Home() {
     <div className="home">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <img className="logo-lockup" src={logoLockup} alt="GenOffice" />
+          <img className="logo-mark" src={appIcon} alt="" aria-hidden="true" />
+          <span className="logo-wordmark">Codexoffice</span>
         </div>
 
         <nav className="sidebar-nav">

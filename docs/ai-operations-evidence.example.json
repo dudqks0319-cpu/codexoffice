@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "sourceSha": "0000000000000000000000000000000000000000",
+  "verifiedAt": "2026-08-19T00:00:00.000Z",
+  "provider": "openai-codex",
+  "accountFingerprint": "replace-with-sha256-of-a-private-account-identifier-plus-private-salt",
+  "hardCap": {
+    "providerEnforced": true,
+    "currency": "USD",
+    "period": "monthly",
+    "amountCents": 10000
+  },
+  "alert": {
+    "enabled": true,
+    "thresholdPercent": 80
+  },
+  "killSwitch": {
+    "providerVerified": true,
+    "applicationVerified": true,
+    "exercisedAt": "2026-08-19T00:00:00.000Z"
+  },
+  "distributedAccounting": {
+    "providerAccountAggregate": true,
+    "multiClientVerified": true
+  },
+  "artifacts": [
+    {
+      "kind": "provider-hard-cap",
+      "path": "provider-hard-cap-redacted.png",
+      "sha256": "replace-with-sha256"
+    },
+    {
+      "kind": "usage-alert",
+      "path": "usage-alert-redacted.png",
+      "sha256": "replace-with-sha256"
+    },
+    {
+      "kind": "kill-switch",
+      "path": "kill-switch-test-redacted.json",
+      "sha256": "replace-with-sha256"
+    },
+    {
+      "kind": "cost-attribution-log",
+      "path": "cost-attribution-redacted.json",
+      "sha256": "replace-with-sha256"
+    }
+  ]
+}

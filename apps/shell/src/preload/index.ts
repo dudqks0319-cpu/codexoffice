@@ -125,11 +125,9 @@ const homeApi: HomeApi = {
     ipcRenderer.on(HOME_CHANNELS.accountLoginEvent, listener)
     return () => ipcRenderer.removeListener(HOME_CHANNELS.accountLoginEvent, listener)
   },
-  async openLoginUrl() {
-    await ipcRenderer.invoke(HOME_CHANNELS.accountLoginOpenUrl)
-  },
   async accountLogout() {
-    await ipcRenderer.invoke(HOME_CHANNELS.accountLogout)
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.accountLogout)
+    return result === true
   },
   async getAppVersion() {
     const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.getAppVersion)
@@ -141,9 +139,6 @@ const homeApi: HomeApi = {
   },
   async setOnboardingSeen() {
     await ipcRenderer.invoke(HOME_CHANNELS.setOnboardingSeen)
-  },
-  async openGenTeam() {
-    await ipcRenderer.invoke(HOME_CHANNELS.openGenTeam)
   },
 }
 

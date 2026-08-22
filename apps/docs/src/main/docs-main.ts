@@ -4,17 +4,19 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { copyFile, mkdir, readFile, readdir, stat, unlink } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { BrowserWindow, Menu, WebContentsView, app, dialog, ipcMain, shell } from 'electron'
 import {
   appMenuLabels,
   contextMenuLabels,
-  fetchWithSsrfGuard,
+  fetchBoundedRemoteImage,
   installContextMenu,
   installNavigationGuard,
   safeExternalUrl,
@@ -29,29 +31,41 @@ import type {
   SaveDialogOptions,
   WebContents,
 } from 'electron'
-import { parseFileToText } from '@genoffice/file-parse'
+import { AttachmentPathGrants, parseFileToText } from '@genoffice/file-parse'
 import {
+  acquireAiRequest,
+  AiJobBudgetError,
+  aiTurnTimeoutMsForReasoning,
   AiCreditsError,
   AiTimeoutError,
   chatForProvider,
-  defaultAiSettings,
-  resolveAiSettings,
+  configureAiRequestGateStorage,
+  configureCodexExecutable,
+  configureCodexHome,
+  createAiTurnController,
+  estimateAiStreamInputTokens,
+  estimateAiStreamOutputTokens,
+  getCodexAccountStatus,
+  listCodexModels,
+  loginCodex,
+  globalAiJobBudgetGate,
+  parseAiJobBudgetTicket,
+  parseAiJobId,
+  parseCodexSettingsInput,
+  packagedCodexExecutablePath,
+  parseAiChatRequest,
+  parseAiRequestId,
+  parseAiStreamRequest,
+  restoreCodexSettings,
+  runIfAiTurnActive,
+  serializableCodexSettings,
   streamForProvider,
-  type AiChatRequest,
   type AiSettings,
   type AiStreamChunk,
-  type AiStreamRequest,
-  type GenSparkAccountStatus,
-  type LegacyAiSettings,
-} from '@genoffice/ai-provider'
-import {
-  gskApiKey,
-  gskLogin,
-  gskLoginInfo,
-  hasGskAuth,
-  webSearch,
-  imageSearch,
-} from '@genoffice/ai-search'
+  type CodexAccountStatus,
+  type CodexModelSummary,
+} from '@genoffice/ai-provider/node'
+import { webSearch, imageSearch } from '@genoffice/ai-search'
 import type {
   AttachmentAddResult,
   AttachmentImageResult,
@@ -110,7 +124,7 @@ const tMain = createI18n({
     errParseFailed: '文件解析失败',
     errImageNoText: '图片附件不提供文本,已作为图像随用户消息发送,直接看图即可',
     errNotImage: '不是支持的图片类型',
-    errGskNotLoggedIn: '未登录 Genspark:请点击下方「登录 Genspark」完成登录后重试',
+    errCodexNotLoggedIn: 'Not signed in to the local Codex account. Sign in below, then retry.',
     errNoApiKey: '未配置 {provider} 的 API Key',
     errNoModel: '未配置模型名称',
     menuFile: '文件',
@@ -167,7 +181,7 @@ const tMain = createI18n({
     menuMacros: '宏',
     menuWindow: '窗口',
     menuHelp: '帮助',
-    menuDocsHelp: 'GenOffice Docs 帮助',
+    menuDocsHelp: 'Codexoffice Docs 帮助',
   },
   en: {
     dlgOpenDoc: 'Open Document',
@@ -203,8 +217,8 @@ const tMain = createI18n({
     errParseFailed: 'Failed to parse file',
     errImageNoText: 'Image attachments have no text; the image is sent along with the user message',
     errNotImage: 'not a supported image type',
-    errGskNotLoggedIn:
-      'Not signed in to Genspark: click “Sign in to Genspark” below, sign in, then retry',
+    errCodexNotLoggedIn:
+      'Not signed in to Codex: click “Sign in to Codex” below, sign in, then retry',
     errNoApiKey: 'No API key configured for {provider}',
     errNoModel: 'No model name configured',
     menuFile: 'File',
@@ -261,7 +275,7 @@ const tMain = createI18n({
     menuMacros: 'Macros',
     menuWindow: 'Window',
     menuHelp: 'Help',
-    menuDocsHelp: 'GenOffice Docs Help',
+    menuDocsHelp: 'Codexoffice Docs Help',
   },
   ja: {
     dlgOpenDoc: '文書を開く',
@@ -297,8 +311,8 @@ const tMain = createI18n({
     errImageNoText:
       '画像の添付ファイルはテキストを提供しません。画像としてユーザーメッセージと一緒に送信されるため、そのまま画像をご確認ください',
     errNotImage: 'サポートされていない画像形式です',
-    errGskNotLoggedIn:
-      'Genspark にサインインしていません。下の「Genspark にサインイン」からサインインして再試行してください',
+    errCodexNotLoggedIn:
+      'Codex にサインインしていません。下の「Codex にサインイン」からサインインして再試行してください',
     errNoApiKey: '{provider} の API キーが設定されていません',
     errNoModel: 'モデル名が設定されていません',
     menuFile: 'ファイル',
@@ -355,7 +369,7 @@ const tMain = createI18n({
     menuMacros: 'マクロ',
     menuWindow: 'ウィンドウ',
     menuHelp: 'ヘルプ',
-    menuDocsHelp: 'GenOffice Docs ヘルプ',
+    menuDocsHelp: 'Codexoffice Docs ヘルプ',
   },
   ko: {
     dlgOpenDoc: '문서 열기',
@@ -392,8 +406,8 @@ const tMain = createI18n({
     errImageNoText:
       '이미지 첨부 파일은 텍스트를 제공하지 않으며, 이미지 형태로 사용자 메시지와 함께 전송되므로 이미지를 직접 확인하면 됩니다',
     errNotImage: '지원되지 않는 이미지 형식입니다',
-    errGskNotLoggedIn:
-      'Genspark에 로그인되어 있지 않습니다. 아래 "Genspark 로그인"을 눌러 로그인한 뒤 다시 시도하세요',
+    errCodexNotLoggedIn:
+      'Codex에 로그인되어 있지 않습니다. 아래 "Codex 로그인"을 눌러 로그인한 뒤 다시 시도하세요',
     errNoApiKey: '{provider}의 API 키가 설정되지 않았습니다',
     errNoModel: '모델 이름이 설정되지 않았습니다',
     menuFile: '파일',
@@ -450,7 +464,7 @@ const tMain = createI18n({
     menuMacros: '매크로',
     menuWindow: '창',
     menuHelp: '도움말',
-    menuDocsHelp: 'GenOffice Docs 도움말',
+    menuDocsHelp: 'Codexoffice Docs 도움말',
   },
   fr: {
     dlgOpenDoc: 'Ouvrir un document',
@@ -488,8 +502,8 @@ const tMain = createI18n({
     errImageNoText:
       "Les pièces jointes image ne fournissent pas de texte ; l'image est envoyée avec le message de l'utilisateur, consultez-la directement",
     errNotImage: "type d'image non pris en charge",
-    errGskNotLoggedIn:
-      'Non connecté à Genspark : cliquez sur « Se connecter à Genspark » ci-dessous, connectez-vous puis réessayez',
+    errCodexNotLoggedIn:
+      'Non connecté à Codex : cliquez sur « Se connecter à Codex » ci-dessous, connectez-vous puis réessayez',
     errNoApiKey: 'Aucune clé API configurée pour {provider}',
     errNoModel: 'Aucun nom de modèle configuré',
     menuFile: 'Fichier',
@@ -546,7 +560,7 @@ const tMain = createI18n({
     menuMacros: 'Macros',
     menuWindow: 'Fenêtre',
     menuHelp: 'Aide',
-    menuDocsHelp: 'Aide GenOffice Docs',
+    menuDocsHelp: 'Aide Codexoffice Docs',
   },
   de: {
     dlgOpenDoc: 'Dokument öffnen',
@@ -584,8 +598,8 @@ const tMain = createI18n({
     errImageNoText:
       'Bildanlagen liefern keinen Text; das Bild wird mit der Benutzernachricht gesendet und kann direkt betrachtet werden',
     errNotImage: 'kein unterstütztes Bildformat',
-    errGskNotLoggedIn:
-      'Nicht bei Genspark angemeldet: Klicken Sie unten auf „Bei Genspark anmelden“, melden Sie sich an und versuchen Sie es erneut',
+    errCodexNotLoggedIn:
+      'Nicht bei Codex angemeldet: Klicken Sie unten auf „Bei Codex anmelden“, melden Sie sich an und versuchen Sie es erneut',
     errNoApiKey: 'Kein API-Schlüssel für {provider} konfiguriert',
     errNoModel: 'Kein Modellname konfiguriert',
     menuFile: 'Datei',
@@ -642,7 +656,7 @@ const tMain = createI18n({
     menuMacros: 'Makros',
     menuWindow: 'Fenster',
     menuHelp: 'Hilfe',
-    menuDocsHelp: 'GenOffice Docs-Hilfe',
+    menuDocsHelp: 'Codexoffice Docs-Hilfe',
   },
   es: {
     dlgOpenDoc: 'Abrir documento',
@@ -679,8 +693,8 @@ const tMain = createI18n({
     errImageNoText:
       'Las imágenes adjuntas no proporcionan texto; la imagen se envía junto con el mensaje del usuario, puedes verla directamente',
     errNotImage: 'no es un tipo de imagen compatible',
-    errGskNotLoggedIn:
-      'No has iniciado sesión en Genspark: pulsa «Iniciar sesión en Genspark» abajo, inicia sesión y vuelve a intentarlo',
+    errCodexNotLoggedIn:
+      'No has iniciado sesión en Codex: pulsa «Iniciar sesión en Codex» abajo, inicia sesión y vuelve a intentarlo',
     errNoApiKey: 'No hay clave de API configurada para {provider}',
     errNoModel: 'No se ha configurado el nombre del modelo',
     menuFile: 'Archivo',
@@ -737,7 +751,7 @@ const tMain = createI18n({
     menuMacros: 'Macros',
     menuWindow: 'Ventana',
     menuHelp: 'Ayuda',
-    menuDocsHelp: 'Ayuda de GenOffice Docs',
+    menuDocsHelp: 'Ayuda de Codexoffice Docs',
   },
   th: {
     dlgOpenDoc: 'เปิดเอกสาร',
@@ -773,8 +787,8 @@ const tMain = createI18n({
     errImageNoText:
       'สิ่งที่แนบเป็นรูปภาพไม่มีข้อความ รูปจะถูกส่งไปพร้อมข้อความของผู้ใช้ ดูรูปได้โดยตรง',
     errNotImage: 'ไม่ใช่ชนิดรูปภาพที่รองรับ',
-    errGskNotLoggedIn:
-      'ยังไม่ได้ลงชื่อเข้าใช้ Genspark: แตะ “ลงชื่อเข้าใช้ Genspark” ด้านล่าง แล้วลองอีกครั้ง',
+    errCodexNotLoggedIn:
+      'ยังไม่ได้ลงชื่อเข้าใช้ Codex: แตะ “ลงชื่อเข้าใช้ Codex” ด้านล่าง แล้วลองอีกครั้ง',
     errNoApiKey: 'ยังไม่ได้ตั้งค่า API Key ของ {provider}',
     errNoModel: 'ยังไม่ได้ตั้งค่าชื่อโมเดล',
     menuFile: 'ไฟล์',
@@ -831,7 +845,7 @@ const tMain = createI18n({
     menuMacros: 'แมโคร',
     menuWindow: 'หน้าต่าง',
     menuHelp: 'วิธีใช้',
-    menuDocsHelp: 'วิธีใช้ GenOffice Docs',
+    menuDocsHelp: 'วิธีใช้ Codexoffice Docs',
   },
   id: {
     dlgOpenDoc: 'Buka Dokumen',
@@ -868,7 +882,7 @@ const tMain = createI18n({
     errImageNoText:
       'Lampiran gambar tidak menyediakan teks; gambar dikirim bersama pesan pengguna dan dapat dilihat langsung',
     errNotImage: 'bukan jenis gambar yang didukung',
-    errGskNotLoggedIn: 'Belum masuk ke Genspark: klik “Masuk ke Genspark” di bawah, lalu coba lagi',
+    errCodexNotLoggedIn: 'Not signed in to the local Codex account. Sign in below, then retry.',
     errNoApiKey: 'API Key untuk {provider} belum dikonfigurasi',
     errNoModel: 'Nama model belum dikonfigurasi',
     menuFile: 'File',
@@ -925,7 +939,7 @@ const tMain = createI18n({
     menuMacros: 'Makro',
     menuWindow: 'Jendela',
     menuHelp: 'Bantuan',
-    menuDocsHelp: 'Bantuan GenOffice Docs',
+    menuDocsHelp: 'Bantuan Codexoffice Docs',
   },
   ru: {
     dlgOpenDoc: 'Открыть документ',
@@ -962,8 +976,8 @@ const tMain = createI18n({
     errImageNoText:
       'Вложенные изображения не содержат текста; изображение отправляется вместе с сообщением пользователя, смотрите его напрямую',
     errNotImage: 'неподдерживаемый тип изображения',
-    errGskNotLoggedIn:
-      'Вы не вошли в Genspark: нажмите «Войти в Genspark» ниже, войдите и повторите попытку',
+    errCodexNotLoggedIn:
+      'Вы не вошли в Codex: нажмите «Войти в Codex» ниже, войдите и повторите попытку',
     errNoApiKey: 'API-ключ для {provider} не настроен',
     errNoModel: 'Не указано имя модели',
     menuFile: 'Файл',
@@ -1020,7 +1034,7 @@ const tMain = createI18n({
     menuMacros: 'Макросы',
     menuWindow: 'Окно',
     menuHelp: 'Справка',
-    menuDocsHelp: 'Справка GenOffice Docs',
+    menuDocsHelp: 'Справка Codexoffice Docs',
   },
   ar: {
     dlgOpenDoc: 'فتح مستند',
@@ -1057,8 +1071,8 @@ const tMain = createI18n({
     errImageNoText:
       'مرفقات الصور لا توفر نصًا؛ تُرسل الصورة مع رسالة المستخدم ويمكن الاطلاع عليها مباشرة',
     errNotImage: 'ليس نوع صورة مدعومًا',
-    errGskNotLoggedIn:
-      'لم تسجّل الدخول إلى Genspark: انقر على «تسجيل الدخول إلى Genspark» أدناه ثم أعد المحاولة',
+    errCodexNotLoggedIn:
+      'لم تسجّل الدخول إلى Codex: انقر على «تسجيل الدخول إلى Codex» أدناه ثم أعد المحاولة',
     errNoApiKey: 'لم يتم تكوين مفتاح API لـ {provider}',
     errNoModel: 'لم يتم تكوين اسم النموذج',
     menuFile: 'ملف',
@@ -1115,7 +1129,7 @@ const tMain = createI18n({
     menuMacros: 'وحدات الماكرو',
     menuWindow: 'نافذة',
     menuHelp: 'تعليمات',
-    menuDocsHelp: 'تعليمات GenOffice Docs',
+    menuDocsHelp: 'تعليمات Codexoffice Docs',
   },
   pt: {
     dlgOpenDoc: 'Abrir Documento',
@@ -1152,8 +1166,8 @@ const tMain = createI18n({
     errImageNoText:
       'Anexos de imagem não fornecem texto; a imagem é enviada junto com a mensagem do usuário, basta vê-la diretamente',
     errNotImage: 'não é um tipo de imagem suportado',
-    errGskNotLoggedIn:
-      'Não conectado ao Genspark: clique em “Entrar no Genspark” abaixo, entre e tente novamente',
+    errCodexNotLoggedIn:
+      'Não conectado ao Codex: clique em “Entrar no Codex” abaixo, entre e tente novamente',
     errNoApiKey: 'Nenhuma chave de API configurada para {provider}',
     errNoModel: 'Nenhum nome de modelo configurado',
     menuFile: 'Arquivo',
@@ -1210,7 +1224,7 @@ const tMain = createI18n({
     menuMacros: 'Macros',
     menuWindow: 'Janela',
     menuHelp: 'Ajuda',
-    menuDocsHelp: 'Ajuda do GenOffice Docs',
+    menuDocsHelp: 'Ajuda do Codexoffice Docs',
   },
   it: {
     dlgOpenDoc: 'Apri documento',
@@ -1247,8 +1261,8 @@ const tMain = createI18n({
     errImageNoText:
       "Gli allegati immagine non forniscono testo; l'immagine viene inviata insieme al messaggio dell'utente, basta guardarla direttamente",
     errNotImage: 'tipo di immagine non supportato',
-    errGskNotLoggedIn:
-      'Accesso a Genspark non effettuato: fai clic su “Accedi a Genspark” qui sotto, accedi e riprova',
+    errCodexNotLoggedIn:
+      'Accesso a Codex non effettuato: fai clic su “Accedi a Codex” qui sotto, accedi e riprova',
     errNoApiKey: 'Nessuna chiave API configurata per {provider}',
     errNoModel: 'Nessun nome di modello configurato',
     menuFile: 'File',
@@ -1305,7 +1319,7 @@ const tMain = createI18n({
     menuMacros: 'Macro',
     menuWindow: 'Finestra',
     menuHelp: 'Aiuto',
-    menuDocsHelp: 'Guida di GenOffice Docs',
+    menuDocsHelp: 'Guida di Codexoffice Docs',
   },
   pl: {
     dlgOpenDoc: 'Otwórz dokument',
@@ -1342,8 +1356,8 @@ const tMain = createI18n({
     errImageNoText:
       'Załączniki graficzne nie zawierają tekstu; obraz jest wysyłany razem z wiadomością użytkownika, wystarczy na niego spojrzeć',
     errNotImage: 'nieobsługiwany typ obrazu',
-    errGskNotLoggedIn:
-      'Nie zalogowano do Genspark: kliknij „Zaloguj się do Genspark” poniżej, zaloguj się i spróbuj ponownie',
+    errCodexNotLoggedIn:
+      'Nie zalogowano do Codex: kliknij „Zaloguj się do Codex” poniżej, zaloguj się i spróbuj ponownie',
     errNoApiKey: 'Nie skonfigurowano klucza API dla {provider}',
     errNoModel: 'Nie skonfigurowano nazwy modelu',
     menuFile: 'Plik',
@@ -1400,7 +1414,7 @@ const tMain = createI18n({
     menuMacros: 'Makra',
     menuWindow: 'Okno',
     menuHelp: 'Pomoc',
-    menuDocsHelp: 'Pomoc GenOffice Docs',
+    menuDocsHelp: 'Pomoc Codexoffice Docs',
   },
   nl: {
     dlgOpenDoc: 'Document openen',
@@ -1437,8 +1451,8 @@ const tMain = createI18n({
     errImageNoText:
       'Afbeeldingsbijlagen bevatten geen tekst; de afbeelding wordt samen met het gebruikersbericht verzonden en kan direct worden bekeken',
     errNotImage: 'geen ondersteund afbeeldingstype',
-    errGskNotLoggedIn:
-      'Niet aangemeld bij Genspark: klik hieronder op “Aanmelden bij Genspark”, meld u aan en probeer het opnieuw',
+    errCodexNotLoggedIn:
+      'Niet aangemeld bij Codex: klik hieronder op “Aanmelden bij Codex”, meld u aan en probeer het opnieuw',
     errNoApiKey: 'Geen API-sleutel geconfigureerd voor {provider}',
     errNoModel: 'Geen modelnaam geconfigureerd',
     menuFile: 'Bestand',
@@ -1495,7 +1509,7 @@ const tMain = createI18n({
     menuMacros: "Macro's",
     menuWindow: 'Venster',
     menuHelp: 'Help',
-    menuDocsHelp: 'GenOffice Docs Help',
+    menuDocsHelp: 'Codexoffice Docs Help',
   },
   ms: {
     dlgOpenDoc: 'Buka Dokumen',
@@ -1532,8 +1546,8 @@ const tMain = createI18n({
     errImageNoText:
       'Lampiran imej tidak menyediakan teks; imej dihantar bersama mesej pengguna dan boleh dilihat terus',
     errNotImage: 'bukan jenis imej yang disokong',
-    errGskNotLoggedIn:
-      'Belum log masuk ke Genspark: klik “Log masuk ke Genspark” di bawah, kemudian cuba lagi',
+    errCodexNotLoggedIn:
+      'Belum log masuk ke Codex: klik “Log masuk ke Codex” di bawah, kemudian cuba lagi',
     errNoApiKey: 'Kunci API untuk {provider} belum dikonfigurasikan',
     errNoModel: 'Nama model belum dikonfigurasikan',
     menuFile: 'Fail',
@@ -1590,7 +1604,7 @@ const tMain = createI18n({
     menuMacros: 'Makro',
     menuWindow: 'Tetingkap',
     menuHelp: 'Bantuan',
-    menuDocsHelp: 'Bantuan GenOffice Docs',
+    menuDocsHelp: 'Bantuan Codexoffice Docs',
   },
   he: {
     dlgOpenDoc: 'פתיחת מסמך',
@@ -1626,7 +1640,7 @@ const tMain = createI18n({
     errImageNoText:
       'קבצים מצורפים מסוג תמונה אינם מספקים טקסט; התמונה נשלחת יחד עם הודעת המשתמש וניתן לצפות בה ישירות',
     errNotImage: 'סוג תמונה שאינו נתמך',
-    errGskNotLoggedIn: 'לא מחובר ל-Genspark: לחץ על "התחבר ל-Genspark" למטה, התחבר ונסה שוב',
+    errCodexNotLoggedIn: 'Not signed in to the local Codex account. Sign in below, then retry.',
     errNoApiKey: 'לא הוגדר מפתח API עבור {provider}',
     errNoModel: 'לא הוגדר שם מודל',
     menuFile: 'קובץ',
@@ -1683,7 +1697,7 @@ const tMain = createI18n({
     menuMacros: 'פקודות מאקרו',
     menuWindow: 'חלון',
     menuHelp: 'עזרה',
-    menuDocsHelp: 'עזרה של GenOffice Docs',
+    menuDocsHelp: 'עזרה של Codexoffice Docs',
   },
   hi: {
     dlgOpenDoc: 'दस्तावेज़ खोलें',
@@ -1720,8 +1734,8 @@ const tMain = createI18n({
     errImageNoText:
       'छवि अनुलग्नक टेक्स्ट प्रदान नहीं करते; छवि उपयोगकर्ता संदेश के साथ भेजी जाती है, उसे सीधे देखें',
     errNotImage: 'समर्थित छवि प्रकार नहीं है',
-    errGskNotLoggedIn:
-      'Genspark में साइन इन नहीं है: नीचे “Genspark में साइन इन करें” पर क्लिक करें, साइन इन करें और फिर से कोशिश करें',
+    errCodexNotLoggedIn:
+      'Codex में साइन इन नहीं है: नीचे “Codex में साइन इन करें” पर क्लिक करें, साइन इन करें और फिर से कोशिश करें',
     errNoApiKey: '{provider} के लिए कोई API कुंजी कॉन्फ़िगर नहीं है',
     errNoModel: 'कोई मॉडल नाम कॉन्फ़िगर नहीं है',
     menuFile: 'फ़ाइल',
@@ -1778,7 +1792,7 @@ const tMain = createI18n({
     menuMacros: 'मैक्रो',
     menuWindow: 'विंडो',
     menuHelp: 'सहायता',
-    menuDocsHelp: 'GenOffice Docs सहायता',
+    menuDocsHelp: 'Codexoffice Docs सहायता',
   },
   'zh-TW': {
     dlgOpenDoc: '開啟文件',
@@ -1813,7 +1827,7 @@ const tMain = createI18n({
     errParseFailed: '檔案解析失敗',
     errImageNoText: '圖片附件不提供文字,已作為影像隨使用者訊息傳送,直接看圖即可',
     errNotImage: '不是支援的圖片類型',
-    errGskNotLoggedIn: '未登入 Genspark:請點擊下方「登入 Genspark」完成登入後重試',
+    errCodexNotLoggedIn: 'Not signed in to the local Codex account. Sign in below, then retry.',
     errNoApiKey: '未設定 {provider} 的 API Key',
     errNoModel: '未設定模型名稱',
     menuFile: '檔案',
@@ -1870,7 +1884,7 @@ const tMain = createI18n({
     menuMacros: '巨集',
     menuWindow: '視窗',
     menuHelp: '說明',
-    menuDocsHelp: 'GenOffice Docs 說明',
+    menuDocsHelp: 'Codexoffice Docs 說明',
   },
 })
 const tm = (key: Parameters<typeof tMain>[1], params?: Parameters<typeof tMain>[2]) =>
@@ -1949,7 +1963,7 @@ async function saveDialog(event: IpcMainInvokeEvent, options: SaveDialogOptions)
 
 /** default folder where new files land on their first (silent) save; shared with the other editors via shell */
 export function defaultSaveDir(): string {
-  const dir = join(app.getPath('documents'), 'GenOffice')
+  const dir = join(app.getPath('documents'), 'Codexoffice')
   mkdirSync(dir, { recursive: true })
   return dir
 }
@@ -1998,6 +2012,46 @@ function readJson<T>(path: string, fallback: T): T {
 function writeJson(path: string, value: unknown): void {
   mkdirSync(join(path, '..'), { recursive: true })
   writeFileSync(path, JSON.stringify(value, null, 2))
+}
+
+// ---- shared AI settings persistence (the unified shell registers this once) ----
+
+const aiSettingsPath = () => userDataPath('ai-settings.json')
+let cachedAiSettings: AiSettings | null = null
+
+function getAiSettings(): AiSettings {
+  if (cachedAiSettings) return cachedAiSettings
+  let stored: unknown = null
+  try {
+    if (existsSync(aiSettingsPath())) stored = JSON.parse(readFileSync(aiSettingsPath(), 'utf-8'))
+  } catch {
+    /* corrupted state file: restore the SDK default model */
+  }
+  cachedAiSettings = restoreCodexSettings(stored)
+  return cachedAiSettings
+}
+
+function setAiSettings(input: unknown): AiSettings {
+  const next = parseCodexSettingsInput(input)
+  const path = aiSettingsPath()
+  const tempPath = `${path}.${process.pid}.tmp`
+  mkdirSync(dirname(path), { recursive: true })
+  try {
+    writeFileSync(tempPath, JSON.stringify(serializableCodexSettings(next)), {
+      encoding: 'utf8',
+      mode: 0o600,
+    })
+    renameSync(tempPath, path)
+  } catch (error) {
+    try {
+      unlinkSync(tempPath)
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw error
+  }
+  cachedAiSettings = next
+  return next
 }
 
 // ---- recent files ----
@@ -2362,13 +2416,30 @@ const ATTACHMENT_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 
 /** extracted text cache keyed by path; invalidated by mtime+size */
 const attachmentTextCache = new Map<string, { stamp: string; text: string }>()
+const attachmentPathGrants = new AttachmentPathGrants()
+const attachmentGrantOwners = new Set<number>()
+
+function attachmentOwner(event: IpcMainInvokeEvent): number {
+  const ownerId = event.sender.id
+  if (!attachmentGrantOwners.has(ownerId)) {
+    attachmentGrantOwners.add(ownerId)
+    event.sender.once('destroyed', () => {
+      attachmentGrantOwners.delete(ownerId)
+      attachmentPathGrants.clear(ownerId)
+    })
+  }
+  return ownerId
+}
 
 function statAttachment(filePath: string): { meta?: AttachmentMeta; error?: string } {
-  const name = basename(filePath)
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  if (!ATTACHMENT_EXTS.has(ext)) return { error: `${name}: ${tm('errUnsupportedExt', { ext })}` }
   try {
-    const stat = statSync(filePath)
+    const canonicalPath = realpathSync.native(filePath)
+    const name = basename(canonicalPath)
+    const ext = name.split('.').pop()?.toLowerCase() ?? ''
+    if (!ATTACHMENT_EXTS.has(ext)) {
+      return { error: `${name}: ${tm('errUnsupportedExt', { ext })}` }
+    }
+    const stat = statSync(canonicalPath)
     if (!stat.isFile()) return { error: `${name}: ${tm('errNotFile')}` }
     if (stat.size > ATTACHMENT_MAX_BYTES) {
       return {
@@ -2378,9 +2449,9 @@ function statAttachment(filePath: string): { meta?: AttachmentMeta; error?: stri
     if (ATTACHMENT_IMAGE_EXTS.has(ext) && stat.size > ATTACHMENT_IMAGE_MAX_BYTES) {
       return { error: `${name}: ${tm('errImageTooLarge')}` }
     }
-    return { meta: { path: filePath, name, ext, sizeBytes: stat.size } }
+    return { meta: { path: canonicalPath, name, ext, sizeBytes: stat.size } }
   } catch {
-    return { error: `${name}: ${tm('errUnreadable')}` }
+    return { error: `${basename(filePath)}: ${tm('errUnreadable')}` }
   }
 }
 
@@ -2393,6 +2464,51 @@ function collectAttachments(paths: string[]): AttachmentAddResult {
     else if (error) rejected.push(error)
   }
   return { accepted, rejected }
+}
+
+function collectAndGrantAttachments(ownerId: number, paths: string[]): AttachmentAddResult {
+  const result = collectAttachments(paths)
+  const granted = new Set(
+    attachmentPathGrants.grant(
+      ownerId,
+      result.accepted.map((attachment) => attachment.path),
+    ),
+  )
+  const disappeared = result.accepted.filter((attachment) => !granted.has(attachment.path))
+  return {
+    accepted: result.accepted.filter((attachment) => granted.has(attachment.path)),
+    rejected: [
+      ...result.rejected,
+      ...disappeared.map((attachment) => `${attachment.name}: ${tm('errUnreadable')}`),
+    ],
+  }
+}
+
+function collectGrantedAttachments(ownerId: number, paths: string[]): AttachmentAddResult {
+  const accepted: AttachmentMeta[] = []
+  const rejected: string[] = []
+  for (const path of paths) {
+    const grantedPath = attachmentPathGrants.resolve(ownerId, path)
+    if (!grantedPath) {
+      rejected.push(`${basename(path)}: attachment path is not authorized`)
+      continue
+    }
+    const { meta, error } = statAttachment(grantedPath)
+    if (meta) accepted.push(meta)
+    else if (error) rejected.push(error)
+  }
+  return { accepted, rejected }
+}
+
+function attachmentPaths(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > 50 ||
+    value.some((path) => typeof path !== 'string' || path.length === 0 || path.length > 4096)
+  ) {
+    return []
+  }
+  return value
 }
 
 /** save clipboard-pasted image bytes to a temp file (screenshots/bitmaps with no local path); returns null for non-images or empty data */
@@ -2426,7 +2542,7 @@ function savePastedImage(data: unknown, ext: unknown): string | null {
       : ArrayBuffer.isView(data)
         ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
         : null
-  if (!bytes || bytes.byteLength === 0) return null
+  if (!bytes || bytes.byteLength === 0 || bytes.byteLength > ATTACHMENT_IMAGE_MAX_BYTES) return null
   const dir = join(app.getPath('temp'), 'genoffice-pasted')
   mkdirSync(dir, { recursive: true })
   prunePastedImages(dir)
@@ -2464,9 +2580,38 @@ const TWIPS_PER_INCH = 1440
 // provider metadata, settings defaults/migration, and per-provider streaming/chat
 // implementations live in @genoffice/ai-provider, shared with apps/sheets.
 
-const SETTINGS_PATH = () => userDataPath('ai-settings.json')
-
 const activeAiStreams = new Map<string, AbortController>()
+const aiBudgetOwners = new Set<number>()
+
+function bindAiBudgetOwner(sender: WebContents): void {
+  const senderId = sender.id
+  if (aiBudgetOwners.has(senderId)) return
+  aiBudgetOwners.add(senderId)
+  const owner = String(senderId)
+  sender.once('destroyed', () => {
+    aiBudgetOwners.delete(senderId)
+    globalAiJobBudgetGate.clearOwner(owner)
+  })
+}
+let aiChatSequence = 0
+const SAFE_AI_ERROR = 'AI request unavailable. Try again.'
+const CODEX_ACCOUNT_CHECK_ERROR = "Unable to verify this app's Codex account. Try again."
+
+async function checkCodexAccount(): Promise<{ loggedIn: boolean; error?: string }> {
+  try {
+    return await getCodexAccountStatus()
+  } catch {
+    return { loggedIn: false, error: CODEX_ACCOUNT_CHECK_ERROR }
+  }
+}
+
+async function loginCodexAccount(signal?: AbortSignal): Promise<CodexAccountStatus> {
+  try {
+    return await loginCodex(signal)
+  } catch {
+    return { loggedIn: false }
+  }
+}
 
 /**
  * AI settings + chat/stream proxy handlers. Split out so the shell can
@@ -2475,59 +2620,79 @@ const activeAiStreams = new Map<string, AbortController>()
  */
 export function registerAiIpc(): void {
   ipcMain.handle('ai:get-settings', (): AiSettings => {
-    const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
-    const settings = resolveAiSettings(stored, defaultAiSettings())
-    // AI features all go through Genspark (gsk login); legacy settings with another provider are reset
-    settings.provider = 'genspark'
-    return settings
+    return getAiSettings()
   })
 
-  // Genspark account (gsk login state): auth source for AI features; the frontend uses it to prompt login when logged out
-  ipcMain.handle(
-    'ai:gsk-status',
-    async (_event, withEmail?: boolean): Promise<GenSparkAccountStatus> => {
-      if (!hasGskAuth()) return { loggedIn: false }
-      if (!withEmail) return { loggedIn: true }
-      const info = await gskLoginInfo()
-      return info?.email ? { loggedIn: true, email: info.email } : { loggedIn: true }
-    },
-  )
+  ipcMain.handle('ai:codex-status', (): Promise<CodexAccountStatus> => checkCodexAccount())
 
-  ipcMain.handle('ai:gsk-login', () => {
-    gskLogin()
-  })
+  ipcMain.handle('ai:codex-models', (): Promise<CodexModelSummary[]> => listCodexModels())
 
-  ipcMain.handle('ai:set-settings', (_event, settings: AiSettings) => {
-    writeJson(SETTINGS_PATH(), settings)
-  })
-
-  ipcMain.handle('ai:stream', async (event, request: AiStreamRequest) => {
-    const { requestId, settings, system, messages } = request
-    const tools = request.tools ?? []
-    const maxTokens = request.maxTokens ?? 8192
-    const provider = settings.provider
-    let config = settings.providers?.[provider]
-    // the genspark key never enters the settings file; requests take it from the gsk login state
-    if (provider === 'genspark' && config && !config.apiKey) {
-      config = { ...config, apiKey: gskApiKey() }
+  ipcMain.handle('ai:codex-login', async (event): Promise<CodexAccountStatus> => {
+    const controller = new AbortController()
+    const abortOnDestroyed = () => controller.abort()
+    event.sender.once('destroyed', abortOnDestroyed)
+    try {
+      return await loginCodexAccount(controller.signal)
+    } finally {
+      event.sender.removeListener('destroyed', abortOnDestroyed)
     }
+  })
+
+  ipcMain.handle('ai:set-settings', (_event, input: unknown): AiSettings => setAiSettings(input))
+
+  ipcMain.handle('ai:job-begin', (event, input: unknown) => {
+    bindAiBudgetOwner(event.sender)
+    return globalAiJobBudgetGate.begin(String(event.sender.id), parseAiJobId(input))
+  })
+
+  ipcMain.handle('ai:job-end', (event, input: unknown) => {
+    globalAiJobBudgetGate.end(String(event.sender.id), parseAiJobBudgetTicket(input))
+  })
+
+  ipcMain.handle('ai:stream', async (event, input: unknown) => {
+    const request = parseAiStreamRequest(input)
+    const { requestId, system, messages } = request
+    const tools = request.tools ?? []
+    const provider = 'codex' as const
+    const config = getAiSettings().providers.codex
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send('ai:stream-chunk', chunk)
     }
-    if (!config?.apiKey) {
-      send({
+    const owner = String(event.sender.id)
+    const inputTokens = estimateAiStreamInputTokens(request)
+    let budgetLease: ReturnType<typeof globalAiJobBudgetGate.acquireTurn>
+    try {
+      budgetLease = globalAiJobBudgetGate.acquireTurn(
+        owner,
+        request.job,
         requestId,
-        type: 'error',
-        error: provider === 'genspark' ? tm('errGskNotLoggedIn') : tm('errNoApiKey', { provider }),
-      })
-      return
+        inputTokens,
+        request.maxTokens ?? 2_048,
+      )
+    } catch (err) {
+      if (err instanceof AiJobBudgetError) {
+        send({
+          requestId,
+          type: 'error',
+          error: 'This AI task reached its 8,192-token budget. Start a new request to continue.',
+          errorCode: 'budget',
+        })
+        return
+      }
+      throw err
     }
-    if (!config.model) {
-      send({ requestId, type: 'error', error: tm('errNoModel') })
-      return
-    }
-    const controller = new AbortController()
-    activeAiStreams.set(requestId, controller)
+    const maxTokens = budgetLease.maxTokens
+    let requestLease: ReturnType<typeof acquireAiRequest> | undefined
+    let providerStarted = false
+    let completed = false
+    let outputText = ''
+    const outputToolCalls: NonNullable<AiStreamChunk['toolCall']>[] = []
+    const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
+    const controller = deadline.controller
+    const streamKey = `${event.sender.id}:${requestId}`
+    const abortOnDestroyed = () => controller.abort()
+    event.sender.once('destroyed', abortOnDestroyed)
+    activeAiStreams.set(streamKey, controller)
     // wire-activity keepalive: lets the renderer's silence watchdog tell a slow turn from a dead one
     let lastPing = 0
     const ping = () => {
@@ -2537,25 +2702,50 @@ export function registerAiIpc(): void {
       send({ requestId, type: 'ping' })
     }
     try {
+      const account = await checkCodexAccount()
+      if (!account.loggedIn) {
+        send({ requestId, type: 'error', error: account.error ?? tm('errCodexNotLoggedIn') })
+        return
+      }
+      requestLease = acquireAiRequest(requestId, inputTokens + maxTokens)
       let stopReason: string | undefined
-      await streamForProvider(provider, config, system, messages, tools, maxTokens, {
-        signal: controller.signal,
-        onDelta: (text) => send({ requestId, type: 'delta', text }),
-        onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
-        onActivity: ping,
-        onStopReason: (reason) => {
-          stopReason = reason
+      const started = await runIfAiTurnActive(
+        controller.signal,
+        () => event.sender.isDestroyed(),
+        () => {
+          providerStarted = true
+          return streamForProvider(provider, config, system, messages, tools, maxTokens, {
+            signal: controller.signal,
+            onDelta: (text) => {
+              outputText += text
+              send({ requestId, type: 'delta', text })
+            },
+            onToolCall: (toolCall) => {
+              outputToolCalls.push(toolCall)
+              send({ requestId, type: 'tool-call', toolCall })
+            },
+            onActivity: ping,
+            onStopReason: (reason) => {
+              stopReason = reason
+            },
+          })
         },
-      })
+      )
+      if (!started) return
+      completed = true
       send({ requestId, type: 'done', stopReason })
     } catch (err) {
       if (controller.signal.aborted) {
-        send({ requestId, type: 'done' })
+        send(
+          deadline.timedOut
+            ? { requestId, type: 'error', error: SAFE_AI_ERROR, errorCode: 'timeout' }
+            : { requestId, type: 'done' },
+        )
       } else {
         send({
           requestId,
           type: 'error',
-          error: err instanceof Error ? err.message : String(err),
+          error: SAFE_AI_ERROR,
           ...(err instanceof AiTimeoutError
             ? { errorCode: 'timeout' as const }
             : err instanceof AiCreditsError
@@ -2564,74 +2754,86 @@ export function registerAiIpc(): void {
         })
       }
     } finally {
-      activeAiStreams.delete(requestId)
+      activeAiStreams.delete(streamKey)
+      event.sender.removeListener('destroyed', abortOnDestroyed)
+      deadline.release()
+      if (providerStarted) requestLease?.release()
+      else requestLease?.rollback()
+      budgetLease.settle({
+        providerStarted,
+        completed,
+        ...(completed
+          ? { outputTokens: estimateAiStreamOutputTokens(outputText, outputToolCalls) }
+          : {}),
+      })
     }
   })
 
-  ipcMain.handle('ai:stream-cancel', (_event, requestId: string) => {
-    activeAiStreams.get(requestId)?.abort()
+  ipcMain.handle('ai:stream-cancel', (event, input: unknown) => {
+    activeAiStreams.get(`${event.sender.id}:${parseAiRequestId(input)}`)?.abort()
   })
 
   // shared search tools (content + images): Serper with DuckDuckGo fallback (same source as slides/sheets)
   ipcMain.handle('ai:web-search', async (_event, query: string, maxResults?: number) => {
     try {
       return await webSearch(String(query), typeof maxResults === 'number' ? maxResults : 6)
-    } catch (err) {
-      return { results: [], method: 'error', error: String(err) }
+    } catch {
+      return { results: [], method: 'error', error: SAFE_AI_ERROR }
     }
   })
   ipcMain.handle('ai:image-search', async (_event, query: string, maxResults?: number) => {
     try {
       return await imageSearch(String(query), typeof maxResults === 'number' ? maxResults : 8)
-    } catch (err) {
-      return { images: [], method: 'error', error: String(err) }
+    } catch {
+      return { images: [], method: 'error', error: SAFE_AI_ERROR }
     }
   })
 
   // download image from URL → base64+mime (download in the main process avoids CORS; the renderer builds the image node and measures size itself)
   ipcMain.handle(
     'ai:fetch-image',
-    async (_event, url: string): Promise<{ base64: string; mime: string } | null> => {
+    async (_event, input: unknown): Promise<{ base64: string; mime: string } | null> => {
       try {
+        if (typeof input !== 'string' || input.length === 0 || input.length > 2_048) return null
         // the URL originates from AI tool calls (prompt-injectable via web search
         // results), so refuse non-http schemes and private/link-local targets;
         // redirects are followed manually so every hop is validated too
-        const resp = await fetchWithSsrfGuard(String(url), {
+        const image = await fetchBoundedRemoteImage(input, {
+          maxBytes: 10 * 1024 * 1024,
+          timeoutMs: 15_000,
           headers: { 'User-Agent': 'Mozilla/5.0' },
         })
-        if (!resp || !resp.ok) return null
-        const buf = Buffer.from(await resp.arrayBuffer())
-        const ct = resp.headers.get('content-type') ?? ''
-        const mime = ct.includes('png')
-          ? 'image/png'
-          : ct.includes('gif')
-            ? 'image/gif'
-            : 'image/jpeg'
-        return { base64: buf.toString('base64'), mime }
+        if (!image) return null
+        return { base64: Buffer.from(image.bytes).toString('base64'), mime: image.mime }
       } catch {
         return null
       }
     },
   )
 
-  ipcMain.handle('ai:chat', async (_event, request: AiChatRequest) => {
-    const { settings, system, user } = request
-    const provider = settings.provider
-    let config = settings.providers?.[provider]
-    if (provider === 'genspark' && config && !config.apiKey) {
-      config = { ...config, apiKey: gskApiKey() }
-    }
-    if (!config?.apiKey) {
-      return {
-        ok: false,
-        error: provider === 'genspark' ? tm('errGskNotLoggedIn') : tm('errNoApiKey', { provider }),
-      }
-    }
-    if (!config.model) return { ok: false, error: tm('errNoModel') }
+  ipcMain.handle('ai:chat', async (event, input: unknown) => {
+    const request = parseAiChatRequest(input)
+    const { system, user } = request
+    const provider = 'codex' as const
+    const config = getAiSettings().providers.codex
+    let lease: ReturnType<typeof acquireAiRequest> | undefined
+    let providerStarted = false
+    const deadline = createAiTurnController(aiTurnTimeoutMsForReasoning(config.reasoningEffort))
+    const abortOnDestroyed = () => deadline.controller.abort()
+    event.sender.once('destroyed', abortOnDestroyed)
     try {
-      return await chatForProvider(provider, config, system, user)
-    } catch (err) {
-      return { ok: false, error: String(err) }
+      const account = await checkCodexAccount()
+      if (!account.loggedIn) return { ok: false, error: account.error ?? tm('errCodexNotLoggedIn') }
+      lease = acquireAiRequest(`docs-chat-${++aiChatSequence}`, 8192)
+      providerStarted = true
+      return await chatForProvider(provider, config, system, user, deadline.controller.signal)
+    } catch {
+      return { ok: false, error: SAFE_AI_ERROR }
+    } finally {
+      event.sender.removeListener('destroyed', abortOnDestroyed)
+      deadline.release()
+      if (providerStarted) lease?.release()
+      else lease?.rollback()
     }
   })
 }
@@ -3013,6 +3215,7 @@ export function registerDocsIpc(): void {
   })
 
   ipcMain.handle('files:pick', async (event): Promise<AttachmentAddResult | null> => {
+    const ownerId = attachmentOwner(event)
     const result = await openDialog(event, {
       title: tm('dlgAddAttachment'),
       filters: [
@@ -3022,27 +3225,37 @@ export function registerDocsIpc(): void {
       properties: ['openFile', 'multiSelections'],
     })
     if (result.canceled || result.filePaths.length === 0) return null
-    return collectAttachments(result.filePaths)
+    return collectAndGrantAttachments(ownerId, result.filePaths)
   })
 
-  ipcMain.handle('files:add', (_event, paths: string[]) => collectAttachments(paths))
+  // Only the context-isolated preload can turn genuine dropped File objects
+  // into OS paths before invoking this channel.
+  ipcMain.handle('files:add', (event, paths: unknown) =>
+    collectAndGrantAttachments(attachmentOwner(event), attachmentPaths(paths)),
+  )
+
+  ipcMain.handle('files:refresh', (event, paths: unknown) =>
+    collectGrantedAttachments(attachmentOwner(event), attachmentPaths(paths)),
+  )
 
   ipcMain.handle(
     'files:read',
     async (
-      _event,
+      event,
       filePath: string,
       offset: number,
       maxChars: number,
     ): Promise<AttachmentReadResult> => {
-      const name = basename(filePath)
+      const authorizedPath = attachmentPathGrants.resolve(attachmentOwner(event), filePath)
+      if (!authorizedPath) return { ok: false, error: 'Attachment path is not authorized.' }
+      const name = basename(authorizedPath)
       const ext = name.split('.').pop()?.toLowerCase() ?? ''
       if (!ATTACHMENT_EXTS.has(ext)) return { ok: false, error: tm('errUnsupportedExt', { ext }) }
       if (ATTACHMENT_IMAGE_EXTS.has(ext)) {
         return { ok: false, error: tm('errImageNoText') }
       }
       try {
-        const text = await extractAttachmentText(filePath)
+        const text = await extractAttachmentText(authorizedPath)
         const start = Math.max(0, Math.floor(offset) || 0)
         const size = Math.min(Math.max(1, Math.floor(maxChars) || 1), 48_000)
         return {
@@ -3059,17 +3272,19 @@ export function registerDocsIpc(): void {
   )
 
   // image attachments read raw bytes → base64; AiPanel puts them into the user message's images for multimodal
-  ipcMain.handle('files:read-image', (_event, filePath: string): AttachmentImageResult => {
-    const name = basename(filePath)
+  ipcMain.handle('files:read-image', (event, filePath: string): AttachmentImageResult => {
+    const authorizedPath = attachmentPathGrants.resolve(attachmentOwner(event), filePath)
+    if (!authorizedPath) return { ok: false, error: 'Attachment path is not authorized.' }
+    const name = basename(authorizedPath)
     const ext = name.split('.').pop()?.toLowerCase() ?? ''
     const mime = ATTACHMENT_IMAGE_MIME[ext]
     if (!mime) return { ok: false, error: `${name}: ${tm('errNotImage')}` }
     try {
-      const stat = statSync(filePath)
+      const stat = statSync(authorizedPath)
       if (stat.size > ATTACHMENT_IMAGE_MAX_BYTES) {
         return { ok: false, error: `${name}: ${tm('errImageTooLarge')}` }
       }
-      return { ok: true, base64: readFileSync(filePath).toString('base64'), mime }
+      return { ok: true, base64: readFileSync(authorizedPath).toString('base64'), mime }
     } catch {
       return { ok: false, error: `${name}: ${tm('errUnreadable')}` }
     }
@@ -3078,10 +3293,10 @@ export function registerDocsIpc(): void {
   // clipboard-pasted images (screenshots and other bitmaps with no local path): saved to a temp file then use the regular attachment path
   ipcMain.handle(
     'files:add-pasted-image',
-    (_event, data: unknown, ext: unknown): AttachmentAddResult => {
+    (event, data: unknown, ext: unknown): AttachmentAddResult => {
       const filePath = savePastedImage(data, ext)
       return filePath
-        ? collectAttachments([filePath])
+        ? collectAndGrantAttachments(attachmentOwner(event), [filePath])
         : { accepted: [], rejected: [tm('errNotImage')] }
     },
   )
@@ -3464,7 +3679,7 @@ export function createDocsWindow(openPath?: string): BrowserWindow {
     height: 900,
     minWidth: 980,
     minHeight: 600,
-    title: 'GenOffice Docs',
+    title: 'Codexoffice Docs',
     // Word-like custom title bar (document name centered, quick-access buttons)
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const }
@@ -3737,8 +3952,18 @@ export function startDocsStandalone(): void {
   installContextMenu(app, () => contextMenuLabels(getUiLang()))
   // dev runs must not share the packaged app's userData (recent files, AI settings)
   // or its single-instance lock — otherwise `npm run dev` silently quits whenever
-  // the installed GenOffice Docs is open and forwards its argv there instead.
-  if (isDev) app.setPath('userData', join(app.getPath('appData'), 'GenOffice Docs Dev'))
+  // the installed Codexoffice Docs is open and forwards its argv there instead.
+  app.setPath(
+    'userData',
+    join(app.getPath('appData'), isDev ? 'GenOffice Docs Dev' : 'GenOffice Docs'),
+  )
+  configureAiRequestGateStorage(
+    app.isPackaged ? join(app.getPath('appData'), 'GenOffice') : app.getPath('userData'),
+  )
+  configureCodexHome(join(app.getPath('userData'), 'codex'))
+  configureCodexExecutable(
+    app.isPackaged ? packagedCodexExecutablePath(process.resourcesPath) : undefined,
+  )
 
   const hasSingleInstanceLock = app.requestSingleInstanceLock()
   if (!hasSingleInstanceLock) {

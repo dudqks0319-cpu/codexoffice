@@ -21,11 +21,14 @@ export const IPC_CHANNELS = {
   aiGetSettings: 'ai:get-settings',
   aiSetSettings: 'ai:set-settings',
   aiChat: 'ai:chat',
+  aiJobBegin: 'ai:job-begin',
+  aiJobEnd: 'ai:job-end',
   aiStream: 'ai:stream',
   aiStreamCancel: 'ai:stream-cancel',
   aiStreamChunk: 'ai:stream-chunk',
-  aiGskStatus: 'ai:gsk-status',
-  aiGskLogin: 'ai:gsk-login',
+  aiCodexStatus: 'ai:codex-status',
+  aiCodexLogin: 'ai:codex-login',
+  aiCodexModels: 'ai:codex-models',
   // Chat attachments (sheets: prefix — docs already registers global files:* in
   // the shell; avoids collisions)
   filesPick: 'sheets:files-pick',

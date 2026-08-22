@@ -1,6 +1,6 @@
 {
   "name": "@genoffice/sheets",
-  "productName": "GenOffice Sheets",
+  "productName": "Codexoffice Sheets",
   "version": "0.1.0",
   "private": true,
   "description": "Cross-platform AI-native spreadsheet compatibility prototype",
@@ -54,12 +54,12 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.4",
-    "electron": "^41.0.3",
+    "electron": "41.10.3",
     "electron-vite": "^5.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^4.1.0"
   },
-  "author": "GenOffice"
+  "author": "Codexoffice contributors"
 }

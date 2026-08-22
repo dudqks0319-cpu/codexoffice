@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import {
   CaretIcon,
-  GensparkMark,
+  CodexMark,
   RIBBON_GLYPH_ICONS,
   RedoIcon,
   SaveIcon,
@@ -18,8 +18,11 @@ import { type SelectionFormat } from './selection-format'
 
 import type { ChartSeriesVisualState } from '../domain/chart-visual'
 import type { ChangePlan } from '../domain/workbook.types'
-import type { AttachmentMeta } from '../shared/desktop-api'
+import type { AiSettings } from '@genoffice/ai-provider'
+import type { AttachmentAddResult, AttachmentMeta } from '../shared/desktop-api'
 import { AiChatPanel, type AiChatMessage } from './ai/AiChatPanel'
+import type { QAFinding } from './qa-scanner'
+import type { JobSnapshot } from '@genoffice/agent-core'
 import {
   PivotDialog,
   type PivotEditSeed,
@@ -120,6 +123,13 @@ function ToolSymbol({ symbol }: { readonly symbol: string }): React.JSX.Element 
 interface ExcelShellProps {
   readonly prompt: string
   readonly preview: ChangePlan | null
+  readonly onApplyPreview: () => void
+  readonly onRejectPreview: () => void
+  readonly qaFindings: readonly QAFinding[] | null
+  readonly qaBusy: boolean
+  readonly onRunQa: () => void
+  readonly onSelectQaFinding: (finding: QAFinding) => void
+  readonly jobSnapshot: JobSnapshot | null
   readonly selectionFormat: SelectionFormat | null
   /// True when the workbook has any cell content (the one-click AI action
   /// buttons are greyed out on an empty sheet).
@@ -133,7 +143,7 @@ interface ExcelShellProps {
   readonly attachments: readonly AttachmentMeta[]
   readonly attachNotice: string | null
   readonly onPickAttachments: () => void
-  readonly onAddAttachmentPaths: (paths: readonly string[]) => void
+  readonly onAddAttachmentFiles: (files: readonly File[]) => Promise<AttachmentAddResult>
   readonly onAddPastedImage: (data: ArrayBuffer, ext: string) => void
   readonly onRemoveAttachment: (path: string) => void
   readonly onPromptChange: (prompt: string) => void
@@ -142,6 +152,8 @@ interface ExcelShellProps {
   readonly onStop: () => void
   readonly onNewChat: () => void
   readonly onUndo: () => void
+  readonly aiSettings: AiSettings | null
+  readonly onAiSettingsSave: (settings: AiSettings) => Promise<void>
   readonly onCommand: (command: string) => void
   /// Left side of the status bar (ready / streaming / AI progress messages).
   readonly statusMessage: string
@@ -218,6 +230,13 @@ export interface PageLayoutEcho {
 export function ExcelShell({
   prompt,
   preview,
+  onApplyPreview,
+  onRejectPreview,
+  qaFindings,
+  qaBusy,
+  onRunQa,
+  onSelectQaFinding,
+  jobSnapshot,
   selectionFormat,
   sheetHasContent,
   aiBusy,
@@ -226,7 +245,7 @@ export function ExcelShell({
   attachments,
   attachNotice,
   onPickAttachments,
-  onAddAttachmentPaths,
+  onAddAttachmentFiles,
   onAddPastedImage,
   onRemoveAttachment,
   onGetSortColumns,
@@ -255,6 +274,8 @@ export function ExcelShell({
   onStop,
   onNewChat,
   onUndo,
+  aiSettings,
+  onAiSettingsSave,
   onCommand,
   statusMessage,
   zoomPercent,
@@ -410,6 +431,10 @@ export function ExcelShell({
             setIsCopilotOpen(true)
             onSend(nextPrompt)
           }}
+          onQaCheck={() => {
+            setIsCopilotOpen(true)
+            onRunQa()
+          }}
           aiOpen={isCopilotOpen}
           onAiToggle={() => setIsCopilotOpen((open) => !open)}
         />
@@ -425,17 +450,26 @@ export function ExcelShell({
           attachments={attachments}
           attachNotice={attachNotice}
           onPickAttachments={onPickAttachments}
-          onAddAttachmentPaths={onAddAttachmentPaths}
+          onAddAttachmentFiles={onAddAttachmentFiles}
           onAddPastedImage={onAddPastedImage}
           onRemoveAttachment={onRemoveAttachment}
           prompt={prompt}
           preview={preview}
+          onApplyPreview={onApplyPreview}
+          onRejectPreview={onRejectPreview}
+          qaFindings={qaFindings}
+          qaBusy={qaBusy}
+          onSelectQaFinding={onSelectQaFinding}
+          jobSnapshot={jobSnapshot}
+          sourceScope={activeCellA1 || 'A1'}
           aiBusy={aiBusy}
           onPromptChange={onPromptChange}
           onSend={onSend}
           onStop={onStop}
           onNewChat={onNewChat}
           onUndo={onUndo}
+          aiSettings={aiSettings}
+          onAiSettingsSave={onAiSettingsSave}
           onExpand={() => setIsCopilotOpen(true)}
           onCollapse={() => setIsCopilotOpen(false)}
         />
@@ -973,6 +1007,7 @@ function Ribbon({
   selectedChart,
   onCommand,
   onAiRun,
+  onQaCheck,
   aiOpen,
   onAiToggle,
   onRefreshPivot,
@@ -987,6 +1022,7 @@ function Ribbon({
   readonly onCommand: (command: string) => void
   /** Open the AI panel and immediately send the given prompt */
   readonly onAiRun: (prompt: string) => void
+  readonly onQaCheck: () => void
   /** AI side panel visibility (docs/slides parity: the entry button toggles it) */
   readonly aiOpen: boolean
   readonly onAiToggle: () => void
@@ -2059,17 +2095,17 @@ function Ribbon({
           onClick={onAiToggle}
         >
           <span className="tool-icon-row">
-            <GensparkMark size={26} />
+            <CodexMark size={26} />
           </span>
           <span>
-            <strong>Genspark AI</strong>
+            <strong>Codex AI</strong>
           </span>
         </button>
         <button
           className="ribbon-tool as-button large ai-entry"
           disabled={!sheetHasContent}
           title={t('aiCheckPrompt')}
-          onClick={() => onAiRun(t('aiCheckPrompt'))}
+          onClick={onQaCheck}
         >
           <span className="tool-icon-row">
             <span className="ai-feature-icon" aria-hidden="true">
@@ -2520,14 +2556,14 @@ function Ribbon({
           </div>
         </div>
       </RibbonGroup>
-      <div className="ribbon-genspark-sep" aria-hidden />
+      <div className="ribbon-codex-sep" aria-hidden />
       <button
-        className="ribbon-genspark-btn"
+        className="ribbon-codex-btn"
         title={t('aiOpenAssistant')}
         onClick={() => onCommand('ai-toggle-panel')}
       >
-        <GensparkMark size={28} />
-        <span>Genspark</span>
+        <CodexMark size={28} />
+        <span>Codex</span>
       </button>
     </div>
   )

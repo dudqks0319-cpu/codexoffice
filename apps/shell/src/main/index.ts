@@ -8,7 +8,7 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, dirname, extname, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import {
   BrowserWindow,
   Menu,
@@ -39,14 +39,14 @@ import {
 import { readAppSettings, writeAppSetting } from './app-settings'
 import { ProjectStore } from '@genoffice/project-store'
 import {
-  gskConvertPdfToDocx,
-  gskLogin,
-  gskLoginStart,
-  gskLoginInfo,
-  gskLogout,
-  hasGskAuth,
-  resolveGskEntry,
-} from '@genoffice/ai-search'
+  configureCodexExecutable,
+  configureCodexHome,
+  configureAiRequestGateStorage,
+  getCodexAccountStatus,
+  loginCodex,
+  logoutCodex,
+  packagedCodexExecutablePath,
+} from '@genoffice/ai-provider/node'
 
 import {
   buildDocsMenu,
@@ -107,11 +107,18 @@ import {
   configurePdfRuntime,
   flushPdfSave,
   pdfIsDirty,
+  repairInterruptedPdfCommitSync,
   requestPdfClose,
   requestPdfSaveAs,
   setPdfSaveAsInFlight,
 } from '../../../pdf/src/main/pdf-main'
-import type { AccountLoginEvent, RecentEntry, RecentPage, RenameResult } from '../shared/home-api'
+import type {
+  AccountLoginEvent,
+  AccountStatus,
+  RecentEntry,
+  RecentPage,
+  RenameResult,
+} from '../shared/home-api'
 import { HOME_CHANNELS } from '../shared/home-api'
 import type { TabKind } from '../shared/tabs-api'
 import { TABS_CHANNELS } from '../shared/tabs-api'
@@ -120,7 +127,7 @@ import { TabManager } from './tab-manager'
 import { initAutoUpdater } from './updater'
 
 /**
- * GenOffice unified shell: ONE Electron app, ONE BrowserWindow, hosting the
+ * Codexoffice unified shell: ONE Electron app, ONE BrowserWindow, hosting the
  * docs and sheets modules as WebContentsView tabs behind a WPS-style tab
  * strip. The shell owns the lifecycle — single-instance lock, file-
  * association routing by extension, and per-active-tab menu switching.
@@ -130,21 +137,30 @@ import { initAutoUpdater } from './updater'
 
 // ANY unpacked run (`npm run shell`, `npm run dev`, `npx electron .`) must not
 // share the installed app's userData or single-instance lock — otherwise a dev
-// run silently quits and forwards its argv to the running installed GenOffice.
-// GENOFFICE_USER_DATA: test drivers point this at a scratch dir so an
-// automated instance can run alongside the dev instance (separate lock).
-if (!app.isPackaged)
-  app.setPath(
-    'userData',
-    process.env.GENOFFICE_USER_DATA ?? join(app.getPath('appData'), 'GenOffice Dev'),
-  )
+// run silently quits and forwards its argv to the running installed Codexoffice.
+// GENOFFICE_USER_DATA: unpacked test drivers may point this at a scratch dir so
+// an automated instance can run alongside the dev instance (separate lock).
+// Packaged builds always use the canonical path below so a launcher-controlled
+// environment cannot reset the durable AI cost ledger.
+const requestedUserData = process.env.GENOFFICE_USER_DATA
+const userDataOverride =
+  !app.isPackaged && requestedUserData && isAbsolute(requestedUserData)
+    ? requestedUserData
+    : undefined
 
-// The product rename from "AI Office" to GenOffice changed the userData path; migrate old user data once
+if (!app.isPackaged) {
+  app.setPath('userData', userDataOverride ?? join(app.getPath('appData'), 'GenOffice Dev'))
+}
+
+// Keep the established packaged path even though the display name is now Codexoffice.
+// Older AI Office installs are copied only when that established target is absent or empty.
 if (app.isPackaged) {
-  const oldDir = join(app.getPath('appData'), 'AI Office')
-  const newDir = app.getPath('userData')
-  const newEmpty = !existsSync(newDir) || readdirSync(newDir).length === 0
-  if (newEmpty && existsSync(oldDir)) cpSync(oldDir, newDir, { recursive: true })
+  const appData = app.getPath('appData')
+  const userData = join(appData, 'GenOffice')
+  const olderUserData = join(appData, 'AI Office')
+  app.setPath('userData', userData)
+  const targetEmpty = !existsSync(userData) || readdirSync(userData).length === 0
+  if (targetEmpty && existsSync(olderUserData)) cpSync(olderUserData, userData, { recursive: true })
 }
 
 // module build outputs: packaged builds carry them as extraResources
@@ -168,6 +184,12 @@ const SIDECAR_BIN = app.isPackaged
   ? join(process.resourcesPath, 'native', SIDECAR_EXE)
   : join(APPS_ROOT, 'sheets', 'native', 'xlsx-engine', 'target', 'release', SIDECAR_EXE)
 
+configureCodexHome(join(app.getPath('userData'), 'codex'))
+configureAiRequestGateStorage(app.getPath('userData'))
+configureCodexExecutable(
+  app.isPackaged ? packagedCodexExecutablePath(process.resourcesPath) : undefined,
+)
+
 configureDocsRuntime({
   preloadPath: join(DOCS_OUT, 'preload', 'index.js'),
   rendererUrl: process.env.DOCS_RENDERER_URL,
@@ -186,6 +208,7 @@ configureSlidesRuntime({
 })
 configurePdfRuntime({
   preloadPath: join(PDF_OUT, 'preload', 'index.js'),
+  jobPreloadPath: join(PDF_OUT, 'preload', 'job.js'),
   rendererUrl: process.env.PDF_RENDERER_URL,
   rendererFile: join(PDF_OUT, 'renderer', 'index.html'),
 })
@@ -218,22 +241,16 @@ function persistLang(lang: Lang): void {
   writeAppSetting(APP_SETTINGS_PATH(), 'language', lang)
 }
 
-// ---- first-run onboarding ----
-// The GenTeam community page opened from the onboarding's second slide.
-// Stable short link served by the genspark.ai site; it 302s to the tokened
-// invite link, which stays out of this repo and rotates server-side.
-const GENTEAM_URL = 'https://www.genspark.ai/genoffice/join'
-
 const tMain = createI18n({
   zh: {
     menuFile: '文件',
     menuSectionNew: '新建',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: '未命名表格',
     untitledDoc: '未命名文档',
     untitledDeck: '未命名演示文稿',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: '打开…',
     menuSave: '保存',
     menuSaveAs: '另存为…',
@@ -257,28 +274,17 @@ const tMain = createI18n({
     copySuffix: '副本',
     menuHelp: '帮助',
     thirdPartyNotices: '第三方软件声明',
-    menuExportDocx: '导出为 Word…',
-    pdfDocxLoginMsg: '导出为 Word 需要登录 Genspark 账号。',
-    pdfDocxLoginDetail: '点击“登录”将打开浏览器完成授权，完成后请重新点击导出。',
-    pdfDocxBtnLogin: '登录',
-    pdfDocxConfirmMsg: '将此 PDF 上传到 Genspark 云端转换为 Word？',
-    pdfDocxConfirmDetail: '本次转换将消耗 5 credits，文件将上传至云端处理。',
-    pdfDocxConfirmBalance: '当前余额 {balance} credits。',
-    pdfDocxBtnConvert: '继续',
     btnCancel: '取消',
-    pdfDocxFailedMsg: '导出为 Word 失败',
-    pdfDocxNoCliMsg: '无法登录 Genspark：缺少必需组件（gsk），请重新安装应用。',
-    pdfDocxBusyMsg: '正在转换中，请等待当前导出完成。',
   },
   en: {
     menuFile: 'File',
     menuSectionNew: 'New',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Untitled Spreadsheet',
     untitledDoc: 'Untitled Document',
     untitledDeck: 'Untitled Presentation',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Open…',
     menuSave: 'Save',
     menuSaveAs: 'Save As…',
@@ -302,31 +308,17 @@ const tMain = createI18n({
     copySuffix: 'copy',
     menuHelp: 'Help',
     thirdPartyNotices: 'Third-Party Notices',
-    menuExportDocx: 'Export as Word…',
-    pdfDocxLoginMsg: 'Exporting as Word requires signing in to Genspark.',
-    pdfDocxLoginDetail:
-      'Clicking “Sign In” opens your browser to authorize; once done, click Export again.',
-    pdfDocxBtnLogin: 'Sign In',
-    pdfDocxConfirmMsg: 'Upload this PDF to Genspark cloud and convert it to Word?',
-    pdfDocxConfirmDetail:
-      'The conversion costs 5 credits. The file will be uploaded for cloud processing.',
-    pdfDocxConfirmBalance: 'Current balance: {balance} credits.',
-    pdfDocxBtnConvert: 'Continue',
     btnCancel: 'Cancel',
-    pdfDocxFailedMsg: 'Export as Word failed',
-    pdfDocxNoCliMsg:
-      'Cannot sign in to Genspark: a required component (gsk) is missing. Please reinstall the app.',
-    pdfDocxBusyMsg: 'A Word export is already in progress. Please wait for it to finish.',
   },
   ja: {
     menuFile: 'ファイル',
     menuSectionNew: '新規作成',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: '無題のスプレッドシート',
     untitledDoc: '無題のドキュメント',
     untitledDeck: '無題のプレゼンテーション',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: '開く…',
     menuSave: '保存',
     menuSaveAs: '名前を付けて保存…',
@@ -350,31 +342,17 @@ const tMain = createI18n({
     copySuffix: 'コピー',
     menuHelp: 'ヘルプ',
     thirdPartyNotices: 'サードパーティソフトウェアに関する通知',
-    menuExportDocx: 'Word として書き出す…',
-    pdfDocxLoginMsg: 'Word への書き出しには Genspark へのログインが必要です。',
-    pdfDocxLoginDetail:
-      '「ログイン」をクリックするとブラウザで認証します。完了後、もう一度書き出しを実行してください。',
-    pdfDocxBtnLogin: 'ログイン',
-    pdfDocxConfirmMsg: 'この PDF を Genspark クラウドにアップロードして Word に変換しますか？',
-    pdfDocxConfirmDetail:
-      '変換には 5 クレジットを消費します。ファイルはクラウドにアップロードされ処理されます。',
-    pdfDocxConfirmBalance: '現在の残高：{balance} クレジット。',
-    pdfDocxBtnConvert: '続行',
     btnCancel: 'キャンセル',
-    pdfDocxFailedMsg: 'Word への書き出しに失敗しました',
-    pdfDocxNoCliMsg:
-      'Genspark にサインインできません：必要なコンポーネント（gsk）が見つかりません。アプリを再インストールしてください。',
-    pdfDocxBusyMsg: 'Word への書き出しが進行中です。完了までお待ちください。',
   },
   ko: {
     menuFile: '파일',
     menuSectionNew: '새로 만들기',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: '제목 없는 스프레드시트',
     untitledDoc: '제목 없는 문서',
     untitledDeck: '제목 없는 프레젠테이션',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: '열기…',
     menuSave: '저장',
     menuSaveAs: '다른 이름으로 저장…',
@@ -398,31 +376,17 @@ const tMain = createI18n({
     copySuffix: '복사본',
     menuHelp: '도움말',
     thirdPartyNotices: '타사 소프트웨어 고지',
-    menuExportDocx: 'Word로 내보내기…',
-    pdfDocxLoginMsg: 'Word로 내보내려면 Genspark 로그인이 필요합니다.',
-    pdfDocxLoginDetail:
-      '“로그인”을 클릭하면 브라우저에서 인증합니다. 완료 후 내보내기를 다시 클릭하세요.',
-    pdfDocxBtnLogin: '로그인',
-    pdfDocxConfirmMsg: '이 PDF를 Genspark 클라우드에 업로드하여 Word로 변환할까요?',
-    pdfDocxConfirmDetail:
-      '변환에는 5 크레딧이 소모됩니다. 파일은 클라우드로 업로드되어 처리됩니다.',
-    pdfDocxConfirmBalance: '현재 잔액: {balance} 크레딧.',
-    pdfDocxBtnConvert: '계속',
     btnCancel: '취소',
-    pdfDocxFailedMsg: 'Word로 내보내기 실패',
-    pdfDocxNoCliMsg:
-      'Genspark에 로그인할 수 없습니다. 필수 구성 요소(gsk)가 없습니다. 앱을 다시 설치해 주세요.',
-    pdfDocxBusyMsg: 'Word 내보내기가 이미 진행 중입니다. 완료될 때까지 기다려 주세요.',
   },
   fr: {
     menuFile: 'Fichier',
     menuSectionNew: 'Nouveau',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Feuille de calcul sans titre',
     untitledDoc: 'Document sans titre',
     untitledDeck: 'Présentation sans titre',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Ouvrir…',
     menuSave: 'Enregistrer',
     menuSaveAs: 'Enregistrer sous…',
@@ -446,31 +410,17 @@ const tMain = createI18n({
     copySuffix: 'copie',
     menuHelp: 'Aide',
     thirdPartyNotices: 'Mentions relatives aux logiciels tiers',
-    menuExportDocx: 'Exporter en Word…',
-    pdfDocxLoginMsg: "L'export en Word nécessite une connexion à Genspark.",
-    pdfDocxLoginDetail:
-      "Cliquez sur « Se connecter » pour autoriser dans le navigateur, puis relancez l'export.",
-    pdfDocxBtnLogin: 'Se connecter',
-    pdfDocxConfirmMsg: 'Téléverser ce PDF vers le cloud Genspark pour le convertir en Word ?',
-    pdfDocxConfirmDetail:
-      'La conversion coûte 5 crédits. Le fichier sera téléversé pour traitement dans le cloud.',
-    pdfDocxConfirmBalance: 'Solde actuel : {balance} crédits.',
-    pdfDocxBtnConvert: 'Continuer',
     btnCancel: 'Annuler',
-    pdfDocxFailedMsg: "Échec de l'export en Word",
-    pdfDocxNoCliMsg:
-      "Connexion à Genspark impossible : un composant requis (gsk) est manquant. Veuillez réinstaller l'application.",
-    pdfDocxBusyMsg: "Un export en Word est déjà en cours. Veuillez attendre qu'il se termine.",
   },
   de: {
     menuFile: 'Datei',
     menuSectionNew: 'Neu',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Unbenannte Tabelle',
     untitledDoc: 'Unbenanntes Dokument',
     untitledDeck: 'Unbenannte Präsentation',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Öffnen…',
     menuSave: 'Speichern',
     menuSaveAs: 'Speichern unter…',
@@ -494,31 +444,17 @@ const tMain = createI18n({
     copySuffix: 'Kopie',
     menuHelp: 'Hilfe',
     thirdPartyNotices: 'Hinweise zu Drittanbietersoftware',
-    menuExportDocx: 'Als Word exportieren…',
-    pdfDocxLoginMsg: 'Für den Word-Export ist eine Anmeldung bei Genspark erforderlich.',
-    pdfDocxLoginDetail:
-      'Klicken Sie auf „Anmelden“, um die Autorisierung im Browser abzuschließen, und starten Sie den Export danach erneut.',
-    pdfDocxBtnLogin: 'Anmelden',
-    pdfDocxConfirmMsg: 'Dieses PDF in die Genspark-Cloud hochladen und in Word konvertieren?',
-    pdfDocxConfirmDetail:
-      'Die Konvertierung kostet 5 Credits. Die Datei wird zur Verarbeitung in die Cloud hochgeladen.',
-    pdfDocxConfirmBalance: 'Aktuelles Guthaben: {balance} Credits.',
-    pdfDocxBtnConvert: 'Fortfahren',
     btnCancel: 'Abbrechen',
-    pdfDocxFailedMsg: 'Word-Export fehlgeschlagen',
-    pdfDocxNoCliMsg:
-      'Anmeldung bei Genspark nicht möglich: Eine erforderliche Komponente (gsk) fehlt. Bitte installieren Sie die App neu.',
-    pdfDocxBusyMsg: 'Ein Word-Export läuft bereits. Bitte warten Sie, bis er abgeschlossen ist.',
   },
   es: {
     menuFile: 'Archivo',
     menuSectionNew: 'Nuevo',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Hoja de cálculo sin título',
     untitledDoc: 'Documento sin título',
     untitledDeck: 'Presentación sin título',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Abrir…',
     menuSave: 'Guardar',
     menuSaveAs: 'Guardar como…',
@@ -542,31 +478,17 @@ const tMain = createI18n({
     copySuffix: 'copia',
     menuHelp: 'Ayuda',
     thirdPartyNotices: 'Avisos de software de terceros',
-    menuExportDocx: 'Exportar como Word…',
-    pdfDocxLoginMsg: 'Para exportar como Word es necesario iniciar sesión en Genspark.',
-    pdfDocxLoginDetail:
-      'Al hacer clic en «Iniciar sesión» se abrirá el navegador para autorizar; después, vuelve a hacer clic en Exportar.',
-    pdfDocxBtnLogin: 'Iniciar sesión',
-    pdfDocxConfirmMsg: '¿Subir este PDF a la nube de Genspark para convertirlo a Word?',
-    pdfDocxConfirmDetail:
-      'La conversión cuesta 5 créditos. El archivo se subirá para procesarse en la nube.',
-    pdfDocxConfirmBalance: 'Saldo actual: {balance} créditos.',
-    pdfDocxBtnConvert: 'Continuar',
     btnCancel: 'Cancelar',
-    pdfDocxFailedMsg: 'Error al exportar como Word',
-    pdfDocxNoCliMsg:
-      'No se puede iniciar sesión en Genspark: falta un componente necesario (gsk). Reinstale la aplicación.',
-    pdfDocxBusyMsg: 'Ya hay una exportación a Word en curso. Espera a que termine.',
   },
   th: {
     menuFile: 'ไฟล์',
     menuSectionNew: 'สร้างใหม่',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'สเปรดชีตไม่มีชื่อ',
     untitledDoc: 'เอกสารไม่มีชื่อ',
     untitledDeck: 'งานนำเสนอไม่มีชื่อ',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'เปิด…',
     menuSave: 'บันทึก',
     menuSaveAs: 'บันทึกเป็น…',
@@ -590,30 +512,17 @@ const tMain = createI18n({
     copySuffix: 'สำเนา',
     menuHelp: 'วิธีใช้',
     thirdPartyNotices: 'ประกาศเกี่ยวกับซอฟต์แวร์ของบุคคลที่สาม',
-    menuExportDocx: 'ส่งออกเป็น Word…',
-    pdfDocxLoginMsg: 'การส่งออกเป็น Word ต้องเข้าสู่ระบบ Genspark',
-    pdfDocxLoginDetail:
-      'คลิก “เข้าสู่ระบบ” เพื่อเปิดเบราว์เซอร์ยืนยันตัวตน เสร็จแล้วให้คลิกส่งออกอีกครั้ง',
-    pdfDocxBtnLogin: 'เข้าสู่ระบบ',
-    pdfDocxConfirmMsg: 'อัปโหลด PDF นี้ไปยังคลาวด์ Genspark เพื่อแปลงเป็น Word หรือไม่?',
-    pdfDocxConfirmDetail: 'การแปลงใช้ 5 เครดิต ไฟล์จะถูกอัปโหลดเพื่อประมวลผลบนคลาวด์',
-    pdfDocxConfirmBalance: 'ยอดคงเหลือปัจจุบัน: {balance} เครดิต',
-    pdfDocxBtnConvert: 'ดำเนินการต่อ',
     btnCancel: 'ยกเลิก',
-    pdfDocxFailedMsg: 'ส่งออกเป็น Word ไม่สำเร็จ',
-    pdfDocxNoCliMsg:
-      'ไม่สามารถลงชื่อเข้าใช้ Genspark ได้: ไม่พบคอมโพเนนต์ที่จำเป็น (gsk) โปรดติดตั้งแอปใหม่',
-    pdfDocxBusyMsg: 'กำลังส่งออกเป็น Word อยู่ โปรดรอให้เสร็จสิ้นก่อน',
   },
   id: {
     menuFile: 'File',
     menuSectionNew: 'Baru',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Spreadsheet tanpa judul',
     untitledDoc: 'Dokumen tanpa judul',
     untitledDeck: 'Presentasi tanpa judul',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Buka…',
     menuSave: 'Simpan',
     menuSaveAs: 'Simpan Sebagai…',
@@ -637,31 +546,17 @@ const tMain = createI18n({
     copySuffix: 'salinan',
     menuHelp: 'Bantuan',
     thirdPartyNotices: 'Pemberitahuan Perangkat Lunak Pihak Ketiga',
-    menuExportDocx: 'Ekspor sebagai Word…',
-    pdfDocxLoginMsg: 'Ekspor sebagai Word memerlukan login ke Genspark.',
-    pdfDocxLoginDetail:
-      'Klik “Masuk” untuk membuka browser dan memberi otorisasi; setelah selesai, klik Ekspor lagi.',
-    pdfDocxBtnLogin: 'Masuk',
-    pdfDocxConfirmMsg: 'Unggah PDF ini ke cloud Genspark untuk dikonversi ke Word?',
-    pdfDocxConfirmDetail:
-      'Konversi ini menggunakan 5 kredit. File akan diunggah untuk diproses di cloud.',
-    pdfDocxConfirmBalance: 'Saldo saat ini: {balance} kredit.',
-    pdfDocxBtnConvert: 'Lanjutkan',
     btnCancel: 'Batal',
-    pdfDocxFailedMsg: 'Gagal mengekspor sebagai Word',
-    pdfDocxNoCliMsg:
-      'Tidak dapat masuk ke Genspark: komponen yang diperlukan (gsk) tidak ditemukan. Silakan instal ulang aplikasi.',
-    pdfDocxBusyMsg: 'Ekspor ke Word sedang berlangsung. Harap tunggu hingga selesai.',
   },
   ru: {
     menuFile: 'Файл',
     menuSectionNew: 'Создать',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Таблица без названия',
     untitledDoc: 'Документ без названия',
     untitledDeck: 'Презентация без названия',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Открыть…',
     menuSave: 'Сохранить',
     menuSaveAs: 'Сохранить как…',
@@ -685,31 +580,17 @@ const tMain = createI18n({
     copySuffix: 'копия',
     menuHelp: 'Справка',
     thirdPartyNotices: 'Уведомления о стороннем ПО',
-    menuExportDocx: 'Экспортировать в Word…',
-    pdfDocxLoginMsg: 'Для экспорта в Word требуется вход в Genspark.',
-    pdfDocxLoginDetail:
-      'Нажмите «Войти», чтобы авторизоваться в браузере, затем снова запустите экспорт.',
-    pdfDocxBtnLogin: 'Войти',
-    pdfDocxConfirmMsg: 'Загрузить этот PDF в облако Genspark и конвертировать в Word?',
-    pdfDocxConfirmDetail:
-      'Конвертация стоит 5 кредитов. Файл будет загружен для обработки в облаке.',
-    pdfDocxConfirmBalance: 'Текущий баланс: {balance} кредитов.',
-    pdfDocxBtnConvert: 'Продолжить',
     btnCancel: 'Отмена',
-    pdfDocxFailedMsg: 'Не удалось экспортировать в Word',
-    pdfDocxNoCliMsg:
-      'Не удаётся войти в Genspark: отсутствует необходимый компонент (gsk). Переустановите приложение.',
-    pdfDocxBusyMsg: 'Экспорт в Word уже выполняется. Дождитесь его завершения.',
   },
   ar: {
     menuFile: 'ملف',
     menuSectionNew: 'جديد',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'جدول بيانات بلا عنوان',
     untitledDoc: 'مستند بدون عنوان',
     untitledDeck: 'عرض تقديمي بدون عنوان',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'فتح…',
     menuSave: 'حفظ',
     menuSaveAs: 'حفظ باسم…',
@@ -733,30 +614,17 @@ const tMain = createI18n({
     copySuffix: 'نسخة',
     menuHelp: 'تعليمات',
     thirdPartyNotices: 'إشعارات برامج الجهات الخارجية',
-    menuExportDocx: 'تصدير كملف Word…',
-    pdfDocxLoginMsg: 'يتطلب التصدير كملف Word تسجيل الدخول إلى Genspark.',
-    pdfDocxLoginDetail:
-      'انقر على «تسجيل الدخول» لفتح المتصفح وإتمام التفويض، ثم انقر على التصدير مرة أخرى.',
-    pdfDocxBtnLogin: 'تسجيل الدخول',
-    pdfDocxConfirmMsg: 'رفع هذا الـ PDF إلى سحابة Genspark وتحويله إلى Word؟',
-    pdfDocxConfirmDetail: 'يكلف التحويل 5 أرصدة. سيتم رفع الملف للمعالجة في السحابة.',
-    pdfDocxConfirmBalance: 'الرصيد الحالي: {balance} من الأرصدة.',
-    pdfDocxBtnConvert: 'متابعة',
     btnCancel: 'إلغاء',
-    pdfDocxFailedMsg: 'فشل التصدير كملف Word',
-    pdfDocxNoCliMsg:
-      'تعذّر تسجيل الدخول إلى Genspark: المكوّن المطلوب (gsk) مفقود. يُرجى إعادة تثبيت التطبيق.',
-    pdfDocxBusyMsg: 'يجري حاليًا تصدير إلى Word. يُرجى الانتظار حتى يكتمل.',
   },
   pt: {
     menuFile: 'Arquivo',
     menuSectionNew: 'Novo',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Planilha sem título',
     untitledDoc: 'Documento sem título',
     untitledDeck: 'Apresentação sem título',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Abrir…',
     menuSave: 'Salvar',
     menuSaveAs: 'Salvar Como…',
@@ -780,31 +648,17 @@ const tMain = createI18n({
     copySuffix: 'cópia',
     menuHelp: 'Ajuda',
     thirdPartyNotices: 'Avisos de software de terceiros',
-    menuExportDocx: 'Exportar como Word…',
-    pdfDocxLoginMsg: 'Exportar como Word requer login no Genspark.',
-    pdfDocxLoginDetail:
-      'Clique em “Entrar” para autorizar no navegador; depois, clique em Exportar novamente.',
-    pdfDocxBtnLogin: 'Entrar',
-    pdfDocxConfirmMsg: 'Enviar este PDF para a nuvem do Genspark e convertê-lo em Word?',
-    pdfDocxConfirmDetail:
-      'A conversão custa 5 créditos. O arquivo será enviado para processamento na nuvem.',
-    pdfDocxConfirmBalance: 'Saldo atual: {balance} créditos.',
-    pdfDocxBtnConvert: 'Continuar',
     btnCancel: 'Cancelar',
-    pdfDocxFailedMsg: 'Falha ao exportar como Word',
-    pdfDocxNoCliMsg:
-      'Não é possível iniciar sessão no Genspark: falta um componente necessário (gsk). Reinstale o aplicativo.',
-    pdfDocxBusyMsg: 'Já há uma exportação para Word em andamento. Aguarde a conclusão.',
   },
   it: {
     menuFile: 'File',
     menuSectionNew: 'Nuovo',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Foglio di calcolo senza titolo',
     untitledDoc: 'Documento senza titolo',
     untitledDeck: 'Presentazione senza titolo',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Apri…',
     menuSave: 'Salva',
     menuSaveAs: 'Salva con nome…',
@@ -828,31 +682,17 @@ const tMain = createI18n({
     copySuffix: 'copia',
     menuHelp: 'Aiuto',
     thirdPartyNotices: 'Note sul software di terze parti',
-    menuExportDocx: 'Esporta come Word…',
-    pdfDocxLoginMsg: 'Per esportare come Word è necessario accedere a Genspark.',
-    pdfDocxLoginDetail:
-      'Fai clic su “Accedi” per autorizzare nel browser; al termine, fai di nuovo clic su Esporta.',
-    pdfDocxBtnLogin: 'Accedi',
-    pdfDocxConfirmMsg: 'Caricare questo PDF sul cloud Genspark e convertirlo in Word?',
-    pdfDocxConfirmDetail:
-      "La conversione costa 5 crediti. Il file verrà caricato per l'elaborazione nel cloud.",
-    pdfDocxConfirmBalance: 'Saldo attuale: {balance} crediti.',
-    pdfDocxBtnConvert: 'Continua',
     btnCancel: 'Annulla',
-    pdfDocxFailedMsg: 'Esportazione in Word non riuscita',
-    pdfDocxNoCliMsg:
-      "Impossibile accedere a Genspark: manca un componente necessario (gsk). Reinstallare l'app.",
-    pdfDocxBusyMsg: "Un'esportazione in Word è già in corso. Attendi il completamento.",
   },
   pl: {
     menuFile: 'Plik',
     menuSectionNew: 'Nowy',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Arkusz bez tytułu',
     untitledDoc: 'Dokument bez tytułu',
     untitledDeck: 'Prezentacja bez tytułu',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Otwórz…',
     menuSave: 'Zapisz',
     menuSaveAs: 'Zapisz jako…',
@@ -876,31 +716,17 @@ const tMain = createI18n({
     copySuffix: 'kopia',
     menuHelp: 'Pomoc',
     thirdPartyNotices: 'Informacje o oprogramowaniu innych firm',
-    menuExportDocx: 'Eksportuj jako Word…',
-    pdfDocxLoginMsg: 'Eksport do formatu Word wymaga zalogowania do Genspark.',
-    pdfDocxLoginDetail:
-      'Kliknij „Zaloguj się”, aby autoryzować w przeglądarce; po zakończeniu kliknij Eksportuj ponownie.',
-    pdfDocxBtnLogin: 'Zaloguj się',
-    pdfDocxConfirmMsg: 'Przesłać ten PDF do chmury Genspark i przekonwertować na Word?',
-    pdfDocxConfirmDetail:
-      'Konwersja kosztuje 5 kredytów. Plik zostanie przesłany do przetworzenia w chmurze.',
-    pdfDocxConfirmBalance: 'Aktualne saldo: {balance} kredytów.',
-    pdfDocxBtnConvert: 'Kontynuuj',
     btnCancel: 'Anuluj',
-    pdfDocxFailedMsg: 'Eksport do formatu Word nie powiódł się',
-    pdfDocxNoCliMsg:
-      'Nie można zalogować się do Genspark: brakuje wymaganego komponentu (gsk). Zainstaluj aplikację ponownie.',
-    pdfDocxBusyMsg: 'Eksport do formatu Word już trwa. Poczekaj na jego zakończenie.',
   },
   nl: {
     menuFile: 'Bestand',
     menuSectionNew: 'Nieuw',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Naamloze spreadsheet',
     untitledDoc: 'Naamloos document',
     untitledDeck: 'Naamloze presentatie',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Openen…',
     menuSave: 'Opslaan',
     menuSaveAs: 'Opslaan als…',
@@ -924,31 +750,17 @@ const tMain = createI18n({
     copySuffix: 'kopie',
     menuHelp: 'Help',
     thirdPartyNotices: 'Kennisgevingen over software van derden',
-    menuExportDocx: 'Exporteren als Word…',
-    pdfDocxLoginMsg: 'Exporteren als Word vereist inloggen bij Genspark.',
-    pdfDocxLoginDetail:
-      'Klik op “Inloggen” om in de browser te autoriseren; klik daarna opnieuw op Exporteren.',
-    pdfDocxBtnLogin: 'Inloggen',
-    pdfDocxConfirmMsg: 'Deze PDF uploaden naar de Genspark-cloud en converteren naar Word?',
-    pdfDocxConfirmDetail:
-      'De conversie kost 5 credits. Het bestand wordt geüpload voor verwerking in de cloud.',
-    pdfDocxConfirmBalance: 'Huidig saldo: {balance} credits.',
-    pdfDocxBtnConvert: 'Doorgaan',
     btnCancel: 'Annuleren',
-    pdfDocxFailedMsg: 'Exporteren als Word mislukt',
-    pdfDocxNoCliMsg:
-      'Kan niet inloggen bij Genspark: een vereist onderdeel (gsk) ontbreekt. Installeer de app opnieuw.',
-    pdfDocxBusyMsg: 'Er is al een Word-export bezig. Wacht tot deze is voltooid.',
   },
   ms: {
     menuFile: 'Fail',
     menuSectionNew: 'Baharu',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'Hamparan tanpa tajuk',
     untitledDoc: 'Dokumen tanpa tajuk',
     untitledDeck: 'Persembahan tanpa tajuk',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'Buka…',
     menuSave: 'Simpan',
     menuSaveAs: 'Simpan Sebagai…',
@@ -972,31 +784,17 @@ const tMain = createI18n({
     copySuffix: 'salinan',
     menuHelp: 'Bantuan',
     thirdPartyNotices: 'Notis Perisian Pihak Ketiga',
-    menuExportDocx: 'Eksport sebagai Word…',
-    pdfDocxLoginMsg: 'Eksport sebagai Word memerlukan log masuk ke Genspark.',
-    pdfDocxLoginDetail:
-      'Klik “Log Masuk” untuk membuka pelayar dan memberi kebenaran; selepas selesai, klik Eksport sekali lagi.',
-    pdfDocxBtnLogin: 'Log Masuk',
-    pdfDocxConfirmMsg: 'Muat naik PDF ini ke awan Genspark untuk ditukar kepada Word?',
-    pdfDocxConfirmDetail:
-      'Penukaran ini menggunakan 5 kredit. Fail akan dimuat naik untuk diproses di awan.',
-    pdfDocxConfirmBalance: 'Baki semasa: {balance} kredit.',
-    pdfDocxBtnConvert: 'Teruskan',
     btnCancel: 'Batal',
-    pdfDocxFailedMsg: 'Gagal mengeksport sebagai Word',
-    pdfDocxNoCliMsg:
-      'Tidak dapat log masuk ke Genspark: komponen yang diperlukan (gsk) tiada. Sila pasang semula aplikasi.',
-    pdfDocxBusyMsg: 'Eksport ke Word sedang dijalankan. Sila tunggu sehingga selesai.',
   },
   he: {
     menuFile: 'קובץ',
     menuSectionNew: 'חדש',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'גיליון אלקטרוני ללא שם',
     untitledDoc: 'מסמך ללא שם',
     untitledDeck: 'מצגת ללא שם',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'פתיחה…',
     menuSave: 'שמירה',
     menuSaveAs: 'שמירה בשם…',
@@ -1020,28 +818,17 @@ const tMain = createI18n({
     copySuffix: 'עותק',
     menuHelp: 'עזרה',
     thirdPartyNotices: 'הודעות על תוכנות צד שלישי',
-    menuExportDocx: 'ייצוא כ-Word…',
-    pdfDocxLoginMsg: 'ייצוא כ-Word דורש התחברות ל-Genspark.',
-    pdfDocxLoginDetail: 'לחיצה על ”התחברות” תפתח את הדפדפן לאישור; בסיום, לחצו שוב על ייצוא.',
-    pdfDocxBtnLogin: 'התחברות',
-    pdfDocxConfirmMsg: 'להעלות את ה-PDF לענן של Genspark ולהמיר אותו ל-Word?',
-    pdfDocxConfirmDetail: 'ההמרה עולה 5 קרדיטים. הקובץ יועלה לעיבוד בענן.',
-    pdfDocxConfirmBalance: 'יתרה נוכחית: {balance} קרדיטים.',
-    pdfDocxBtnConvert: 'המשך',
     btnCancel: 'ביטול',
-    pdfDocxFailedMsg: 'הייצוא כ-Word נכשל',
-    pdfDocxNoCliMsg: 'לא ניתן להתחבר ל-Genspark: רכיב נדרש (gsk) חסר. נא להתקין מחדש את האפליקציה.',
-    pdfDocxBusyMsg: 'ייצוא ל-Word כבר מתבצע. נא להמתין לסיומו.',
   },
   hi: {
     menuFile: 'फ़ाइल',
     menuSectionNew: 'नया',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: 'शीर्षकहीन स्प्रेडशीट',
     untitledDoc: 'बिना शीर्षक दस्तावेज़',
     untitledDeck: 'बिना शीर्षक प्रस्तुति',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: 'खोलें…',
     menuSave: 'सहेजें',
     menuSaveAs: 'इस रूप में सहेजें…',
@@ -1065,31 +852,17 @@ const tMain = createI18n({
     copySuffix: 'प्रतिलिपि',
     menuHelp: 'सहायता',
     thirdPartyNotices: 'तृतीय-पक्ष सॉफ़्टवेयर सूचनाएँ',
-    menuExportDocx: 'Word के रूप में निर्यात करें…',
-    pdfDocxLoginMsg: 'Word के रूप में निर्यात करने के लिए Genspark में लॉगिन आवश्यक है।',
-    pdfDocxLoginDetail:
-      '“लॉगिन” पर क्लिक करने से ब्राउज़र में प्राधिकरण खुलेगा; पूरा होने पर फिर से निर्यात पर क्लिक करें।',
-    pdfDocxBtnLogin: 'लॉगिन',
-    pdfDocxConfirmMsg: 'इस PDF को Genspark क्लाउड पर अपलोड करके Word में बदलें?',
-    pdfDocxConfirmDetail:
-      'रूपांतरण में 5 क्रेडिट लगते हैं। फ़ाइल क्लाउड में प्रोसेसिंग के लिए अपलोड की जाएगी।',
-    pdfDocxConfirmBalance: 'वर्तमान शेष: {balance} क्रेडिट।',
-    pdfDocxBtnConvert: 'जारी रखें',
     btnCancel: 'रद्द करें',
-    pdfDocxFailedMsg: 'Word के रूप में निर्यात विफल रहा',
-    pdfDocxNoCliMsg:
-      'Genspark में साइन इन नहीं किया जा सकता: आवश्यक घटक (gsk) मौजूद नहीं है। कृपया ऐप को फिर से इंस्टॉल करें।',
-    pdfDocxBusyMsg: 'Word के रूप में निर्यात पहले से चल रहा है। कृपया पूरा होने तक प्रतीक्षा करें।',
   },
   'zh-TW': {
     menuFile: '檔案',
     menuSectionNew: '新增',
-    menuNewDoc: 'AI Docs',
-    menuNewSheet: 'AI Sheets',
+    menuNewDoc: 'Codexoffice Docs',
+    menuNewSheet: 'Codexoffice Sheets',
     untitledSheet: '未命名試算表',
     untitledDoc: '未命名文件',
     untitledDeck: '未命名簡報',
-    menuNewSlide: 'AI Slides',
+    menuNewSlide: 'Codexoffice Slides',
     menuOpen: '開啟…',
     menuSave: '儲存',
     menuSaveAs: '另存新檔…',
@@ -1113,18 +886,7 @@ const tMain = createI18n({
     copySuffix: '副本',
     menuHelp: '說明',
     thirdPartyNotices: '第三方軟體聲明',
-    menuExportDocx: '匯出為 Word…',
-    pdfDocxLoginMsg: '匯出為 Word 需要登入 Genspark 帳號。',
-    pdfDocxLoginDetail: '點擊「登入」將開啟瀏覽器完成授權，完成後請重新點擊匯出。',
-    pdfDocxBtnLogin: '登入',
-    pdfDocxConfirmMsg: '將此 PDF 上傳到 Genspark 雲端轉換為 Word？',
-    pdfDocxConfirmDetail: '本次轉換將消耗 5 credits，檔案將上傳至雲端處理。',
-    pdfDocxConfirmBalance: '目前餘額 {balance} credits。',
-    pdfDocxBtnConvert: '繼續',
     btnCancel: '取消',
-    pdfDocxFailedMsg: '匯出為 Word 失敗',
-    pdfDocxNoCliMsg: '無法登入 Genspark：缺少必要元件（gsk），請重新安裝應用程式。',
-    pdfDocxBusyMsg: '正在轉換中，請等待目前的匯出完成。',
   },
 })
 
@@ -1135,6 +897,7 @@ const tm = (key: Parameters<typeof tMain>[1], params?: Parameters<typeof tMain>[
 
 let shellWindow: BrowserWindow | null = null
 let tabManager: TabManager | null = null
+let quitRequested = false
 
 /**
  * When the user creates a file from a specific project view, remember which
@@ -1193,7 +956,7 @@ function createShellWindow(): void {
     height: 900,
     minWidth: 980,
     minHeight: 600,
-    title: 'GenOffice',
+    title: 'Codexoffice',
     // vibrancy: editor modules punch translucent regions (e.g. the slides
     // thumbnail pane) through to the desktop
     ...(process.platform === 'darwin'
@@ -1282,23 +1045,36 @@ function createShellWindow(): void {
     void (async () => {
       for (const tab of dirtySheets) {
         manager.activateTab(tab.id)
-        if (!(await requestSheetsClose(tab.webContents, win))) return
+        if (!(await requestSheetsClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of dirtyPdf) {
         manager.activateTab(tab.id)
-        if (!(await requestPdfClose(tab.webContents, win))) return
+        if (!(await requestPdfClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of dirtySlides) {
         manager.activateTab(tab.id)
-        if (!(await requestSlidesClose(tab.webContents, win))) return
+        if (!(await requestSlidesClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of docsTabs) {
         if (!(await docsQueryDirty(tab.webContents))) continue
         manager.activateTab(tab.id)
-        if (!(await requestDocsClose(tab.webContents, win))) return
+        if (!(await requestDocsClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       closeConfirmed = true
-      if (!win.isDestroyed()) win.close()
+      if (quitRequested) app.quit()
+      else if (!win.isDestroyed()) win.close()
     })()
   })
 
@@ -1331,12 +1107,17 @@ const UNSUPPORTED_DOC_RE = /\.(doc|rtf|odt|ppt|pps|odp|ods|xlsm|xlsb|pages|key|n
  */
 const OPEN_DIALOG_EXTENSIONS = ['docx', 'doc', 'xlsx', 'xls', 'csv', 'pptx', 'ppt', 'pdf']
 
+const existsForOpen = (filePath: string): boolean => {
+  if (PDF_RE.test(filePath)) repairInterruptedPdfCommitSync(filePath)
+  return existsSync(filePath)
+}
+
 function supportedFileIn(argv: string[]): string | null {
   return (
     argv.find(
       (arg) =>
         (DOCX_RE.test(arg) || XLSX_RE.test(arg) || PPTX_RE.test(arg) || PDF_RE.test(arg)) &&
-        existsSync(arg),
+        existsForOpen(arg),
     ) ?? null
   )
 }
@@ -1359,7 +1140,7 @@ function notifyUnsupportedFile(filePath: string): void {
 
 /** the single router: extension decides which module owns the file; false = nothing opened */
 function openDocumentPath(filePath: string): boolean {
-  if (!existsSync(filePath) || !tabManager) return false
+  if (!existsForOpen(filePath) || !tabManager) return false
   if (DOCX_RE.test(filePath)) {
     recordRecentFile(filePath)
     const existing = tabManager.findDocsTabByPath(filePath)
@@ -1448,37 +1229,58 @@ function statEntries(paths: string[]): RecentEntry[] {
   return statExistingPaths(paths, new Set(readStarredFiles()))
 }
 
-function registerHomeIpc(): void {
-  // Genspark account (gsk login state; to be upgraded to a signup/account system later)
-  ipcMain.handle(HOME_CHANNELS.accountStatus, async () => {
-    if (!hasGskAuth()) return { loggedIn: false }
-    const info = await gskLoginInfo()
-    return info ? { loggedIn: true, email: info.email } : { loggedIn: true }
-  })
+async function checkHomeCodexAccount(): Promise<AccountStatus> {
+  try {
+    return await getCodexAccountStatus()
+  } catch {
+    return {
+      loggedIn: false,
+      detail: "Unable to verify this app's Codex account. Try again.",
+    }
+  }
+}
 
-  // login progress is streamed to the requesting renderer; the auth URL is
-  // kept main-side so the "open manually" rescue never opens a renderer-supplied URL
-  let pendingLoginUrl = ''
+function registerHomeIpc(): void {
+  // Codex authentication is owned by the main process. Renderer values never
+  // enter the CLI command line and no token or auth-file contents cross IPC.
+  ipcMain.handle(HOME_CHANNELS.accountStatus, () => checkHomeCodexAccount())
+
+  let activeLoginController: AbortController | undefined
   ipcMain.handle(HOME_CHANNELS.accountLogin, (event) => {
+    if (activeLoginController) return false
     const sender = event.sender
-    pendingLoginUrl = ''
+    const controller = new AbortController()
+    activeLoginController = controller
+    const abortWhenSenderCloses = () => controller.abort()
+    sender.once('destroyed', abortWhenSenderCloses)
     const send = (payload: AccountLoginEvent) => {
       if (!sender.isDestroyed()) sender.send(HOME_CHANNELS.accountLoginEvent, payload)
     }
-    const launched = gskLoginStart((progress) => {
-      if (progress.url) pendingLoginUrl = progress.url
-      send(progress)
-    })
-    if (launched) send({ phase: 'launched' })
-    return launched
-  })
-
-  ipcMain.handle(HOME_CHANNELS.accountLoginOpenUrl, () => {
-    if (pendingLoginUrl) void shell.openExternal(pendingLoginUrl)
+    send({ phase: 'launched' })
+    void loginCodex(controller.signal)
+      .then((status) => send({ phase: status.loggedIn ? 'success' : 'error', error: 'failed' }))
+      .catch(() => send({ phase: 'error', error: 'failed' }))
+      .finally(() => {
+        sender.removeListener('destroyed', abortWhenSenderCloses)
+        if (activeLoginController === controller) activeLoginController = undefined
+      })
+    return true
   })
 
   ipcMain.handle(HOME_CHANNELS.accountLogout, async () => {
-    await gskLogout()
+    const confirmation = await dialog.showMessageBox({
+      type: 'warning',
+      message: "Sign out of this app's Codex account?",
+      detail: 'Your standalone Codex CLI login and other apps are not affected.',
+      buttons: ['Sign Out', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    })
+    if (confirmation.response !== 0) return false
+    activeLoginController?.abort()
+    await logoutCodex()
+    return true
   })
 
   ipcMain.handle(HOME_CHANNELS.getAppVersion, (): string => app.getVersion())
@@ -1644,12 +1446,6 @@ function registerHomeIpc(): void {
 
   ipcMain.handle(HOME_CHANNELS.setOnboardingSeen, () => {
     writeAppSetting(APP_SETTINGS_PATH(), 'onboardingSeen', true)
-  })
-
-  ipcMain.handle(HOME_CHANNELS.openGenTeam, () => {
-    shell.openExternal(GENTEAM_URL).catch(() => {
-      // no browser handler available; nothing actionable for the user here
-    })
   })
 }
 
@@ -1823,11 +1619,6 @@ function buildPdfMenu(): void {
         },
         { type: 'separator' },
         {
-          label: tm('menuExportDocx'),
-          click: () => void exportPdfAsDocx(),
-        },
-        { type: 'separator' },
-        {
           label: tm('menuClose'),
           accelerator: 'CmdOrCtrl+W',
           click: () => tabManager?.closeActiveTab(),
@@ -1880,113 +1671,6 @@ async function savePdfAs(): Promise<void> {
   } finally {
     savingPdfAs = false
     setPdfSaveAsInFlight(tab.webContents, false)
-  }
-}
-
-/**
- * In-flight guard: covers the whole flow (dialogs included, conversion takes
- * ~10s+) so re-triggering from the menu can never start a second paid conversion
- */
-let exportingPdfDocx = false
-
-/**
- * Export as Word for pdf tabs: flush pending edits, confirm the 5-credit cost,
- * pick the destination, then upload + cloud-convert via gsk file_convert. Not
- * logged in → offer browser login and let the user re-trigger the export
- * afterwards. The destination is picked before converting so cancelling the
- * save dialog never wastes a paid conversion.
- */
-async function exportPdfAsDocx(): Promise<void> {
-  const tab = tabManager?.activePdfTab()
-  if (!tab?.filePath || !shellWindow) return
-  if (exportingPdfDocx) {
-    // Re-triggered while a previous export (dialogs or cloud conversion) is
-    // still in flight: tell the user instead of silently ignoring the click.
-    void dialog.showMessageBox(shellWindow, {
-      type: 'info',
-      message: tm('pdfDocxBusyMsg'),
-    })
-    return
-  }
-  exportingPdfDocx = true
-  try {
-    if (!(await flushPdfSave(tab.webContents))) return
-    if (!hasGskAuth()) {
-      // hasGskAuth() is also false when the gsk CLI itself cannot be resolved
-      // (broken install); Sign In could not launch in that case, so surface
-      // the real problem instead of a login dialog that cannot succeed.
-      if (!resolveGskEntry()) {
-        void dialog.showMessageBox(shellWindow, {
-          type: 'error',
-          message: tm('pdfDocxNoCliMsg'),
-        })
-        return
-      }
-      const { response } = await dialog.showMessageBox(shellWindow, {
-        type: 'info',
-        message: tm('pdfDocxLoginMsg'),
-        detail: tm('pdfDocxLoginDetail'),
-        buttons: [tm('pdfDocxBtnLogin'), tm('btnCancel')],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true,
-      })
-      if (response === 0 && !gskLogin()) {
-        void dialog.showMessageBox(shellWindow, {
-          type: 'error',
-          message: tm('pdfDocxNoCliMsg'),
-        })
-      }
-      return
-    }
-    const balance = (await gskLoginInfo())?.creditBalance
-    const balanceLine =
-      balance === undefined
-        ? ''
-        : ` ${tm('pdfDocxConfirmBalance', { balance: Math.floor(balance).toLocaleString('en-US') })}`
-    const confirm = await dialog.showMessageBox(shellWindow, {
-      type: 'question',
-      message: tm('pdfDocxConfirmMsg'),
-      detail: `${tm('pdfDocxConfirmDetail')}${balanceLine}`,
-      buttons: [tm('pdfDocxBtnConvert'), tm('btnCancel')],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-    })
-    if (confirm.response !== 0) return
-    const picked = await dialog.showSaveDialog(shellWindow, {
-      defaultPath: tab.filePath.replace(/\.pdf$/i, '.docx'),
-      filters: [{ name: tm('filterWord'), extensions: ['docx'] }],
-    })
-    if (picked.canceled || !picked.filePath) return
-    // If the destination is already open in a docs tab, close it first (its
-    // normal unsaved-changes guard applies) so the converted file opens fresh
-    // instead of leaving a stale tab whose next save would clobber the result.
-    // Cancelling the close aborts the export before any credits are spent.
-    const staleTabId = tabManager?.findDocsTabByPath(picked.filePath)
-    if (staleTabId) {
-      await tabManager?.closeTab(staleTabId)
-      // closeTab activates the docs tab for its unsaved-changes prompt (and a
-      // fallback tab after a successful close), so bring the pdf tab back
-      // either way — especially when the user cancels and the export aborts.
-      tabManager?.activateTab(tab.id)
-      if (tabManager?.findDocsTabByPath(picked.filePath)) return
-    }
-    shellWindow.setProgressBar(2)
-    const bytes = await gskConvertPdfToDocx(tab.filePath)
-    writeFileSync(picked.filePath, bytes)
-    openDocumentPath(picked.filePath)
-  } catch (err) {
-    if (shellWindow && !shellWindow.isDestroyed()) {
-      void dialog.showMessageBox(shellWindow, {
-        type: 'error',
-        message: tm('pdfDocxFailedMsg'),
-        detail: err instanceof Error ? err.message : String(err),
-      })
-    }
-  } finally {
-    exportingPdfDocx = false
-    if (shellWindow && !shellWindow.isDestroyed()) shellWindow.setProgressBar(-1)
   }
 }
 
@@ -2144,6 +1828,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  quitRequested = true
   // No close prompt may fall through to "Save" during shutdown
   markSheetsShuttingDown()
   stopSheetsSidecar()

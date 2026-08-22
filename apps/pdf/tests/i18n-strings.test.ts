@@ -29,4 +29,16 @@ describe('i18n string tables', () => {
       )
     }
   })
+
+  it.each([...LANGS])('locale %s has no legacy assistant branding or pricing copy', (lang) => {
+    const text = Object.values(dicts[lang]!).join('\n')
+    expect(text).not.toMatch(/genspark|genspark\.ai|credits?|pricing/i)
+    expect(text).toContain('Codex')
+    expect(text).toContain('OpenAI')
+  })
+
+  it.each([...LANGS])('locale %s labels the assistant Codex', (lang) => {
+    expect(dicts[lang]!.aiOpenAssistant).toBe('Codex')
+    expect(dicts[lang]!.ribbonAiAssistant).toBe('Codex')
+  })
 })

@@ -5,18 +5,8 @@
  * no Electron dependency — runs the real openPptx → operations → savePptx → openPptx chain.
  */
 import { describe, it, expect } from 'vitest'
-import PptxGenJS from 'pptxgenjs'
 import { openPptx, savePptx, mergeSlideFromPptx, moveSlide, deleteSlide } from '../src/index'
-
-async function onePagePptx(text: string): Promise<Uint8Array> {
-  const p = new PptxGenJS()
-  p.defineLayout({ name: 'W', width: 13.333, height: 7.5 })
-  p.layout = 'W'
-  const s = p.addSlide()
-  s.addText(text, { x: 1, y: 1, w: 8, h: 1, fontSize: 32 })
-  const buf = (await p.write({ outputType: 'nodebuffer' })) as Buffer
-  return new Uint8Array(buf)
-}
+import { pptxGenJsTextFixture as onePagePptx } from './pptxgenjs-fixture'
 
 /** Readable text per slide (concatenated text/shape elements) */
 function slideTexts(opened: Awaited<ReturnType<typeof openPptx>>): string[] {

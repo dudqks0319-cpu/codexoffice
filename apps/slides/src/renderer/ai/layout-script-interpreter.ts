@@ -30,13 +30,6 @@ class ScriptFunction {
   ) {}
 }
 
-class RegexValue {
-  constructor(
-    readonly source: string,
-    readonly flags: string,
-  ) {}
-}
-
 class Scope {
   private readonly values = new Map<string, ScriptValue>()
 
@@ -401,11 +394,6 @@ export function interpretLayoutScript(
       if (method) return method
       throw new Error(`String property "${key}" is not available in layout scripts`)
     }
-    if (target instanceof RegexValue) {
-      if (key === 'test')
-        return new Builtin((value) => new RegExp(target.source, target.flags).test(String(value)))
-      throw new Error(`Regular-expression property "${key}" is not available in layout scripts`)
-    }
     if (target instanceof Builtin) {
       if (target.members && Object.prototype.hasOwnProperty.call(target.members, key))
         return target.members[key]
@@ -487,7 +475,8 @@ export function interpretLayoutScript(
     switch (node.type) {
       case 'Literal': {
         const regex = node.regex as { pattern: string; flags: string } | undefined
-        return regex ? new RegexValue(regex.pattern, regex.flags) : node.value
+        if (regex) throw new Error('Regular expressions are not available in layout scripts')
+        return node.value
       }
       case 'Identifier':
         return scope.get(String(node.name))

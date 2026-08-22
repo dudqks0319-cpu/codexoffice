@@ -14,9 +14,5 @@ export {
 } from './app-menu'
 export { installNavigationGuard } from './navigation-guard'
 export { safeExternalUrl, type SafeExternalUrlOptions } from './safe-external-url'
-export {
-  fetchWithSsrfGuard,
-  isBlockedAddress,
-  isSafeRemoteUrl,
-  type FetchWithSsrfGuardOptions,
-} from './safe-remote-url'
+export { fetchBoundedRemoteImage, isBlockedAddress, isSafeRemoteUrl } from './safe-remote-url'
+export type { BoundedRemoteImage, FetchBoundedRemoteImageOptions } from './safe-remote-url'

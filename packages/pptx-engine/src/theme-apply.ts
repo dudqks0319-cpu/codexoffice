@@ -23,6 +23,10 @@ export interface ThemeSpec {
   majorFont?: string
   /** Body Latin font; original theme kept if unset */
   minorFont?: string
+  majorEaFont?: string
+  minorEaFont?: string
+  majorCsFont?: string
+  minorCsFont?: string
 }
 
 const SCHEME_KEYS = [
@@ -42,43 +46,108 @@ const SCHEME_KEYS = [
 
 const hex6 = (c: string) => c.replace(/^#/, '').slice(0, 6).toUpperCase()
 
+const unsafeVisibleChar = (value: string): boolean => {
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0
+    if (
+      code <= 0x1f ||
+      (code >= 0x7f && code <= 0x9f) ||
+      code === 0x061c ||
+      code === 0x200e ||
+      code === 0x200f ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069)
+    )
+      return true
+  }
+  return false
+}
+
+/** Validate a complete theme payload before mutating package entries. */
+export function validateThemeSpec(spec: ThemeSpec): void {
+  if (!spec.name.trim() || spec.name.trim().length > 128 || unsafeVisibleChar(spec.name))
+    throw new Error('pptx: invalid theme name')
+  const actual = Object.keys(spec.colors).sort()
+  const expected = [...SCHEME_KEYS].sort()
+  if (actual.length !== expected.length || actual.some((key, i) => key !== expected[i])) {
+    throw new Error('pptx: theme must contain exactly the 12 scheme colors')
+  }
+  for (const key of SCHEME_KEYS) {
+    if (!/^#?[0-9A-Fa-f]{6}$/.test(spec.colors[key] ?? '')) {
+      throw new Error(`pptx: invalid theme color ${key}`)
+    }
+  }
+  for (const font of [
+    spec.majorFont,
+    spec.minorFont,
+    spec.majorEaFont,
+    spec.minorEaFont,
+    spec.majorCsFont,
+    spec.minorCsFont,
+  ]) {
+    if (font != null && (!font.trim() || font.trim().length > 128 || unsafeVisibleChar(font))) {
+      throw new Error('pptx: invalid theme font')
+    }
+  }
+}
+
 /** Rewrite a theme XML's clrScheme/fontScheme; returned as-is if the scheme structure is missing. */
 export function patchThemeXml(xml: string, spec: ThemeSpec): string {
-  let out = xml
-  // Colors: replace the whole <a:dk1>…</a:dk1> section per key (sysClr/srgbClr both become srgbClr)
-  for (const key of SCHEME_KEYS) {
-    const color = spec.colors[key]
-    if (!color) continue
-    out = out.replace(
-      new RegExp(`<a:${key}>[\\s\\S]*?</a:${key}>`),
-      `<a:${key}><a:srgbClr val="${hex6(color)}"/></a:${key}>`,
+  validateThemeSpec(spec)
+  let out = xml.replace(/<a:clrScheme\b[^>]*>[\s\S]*?<\/a:clrScheme>/, (scheme) => {
+    let patched = scheme
+    // Replace only slots inside clrScheme. An override may omit slots; those
+    // remain absent instead of being expanded into a new full scheme.
+    for (const key of SCHEME_KEYS) {
+      const color = spec.colors[key]
+      if (!color) continue
+      patched = patched.replace(
+        new RegExp(`<a:${key}>[\\s\\S]*?</a:${key}>`),
+        `<a:${key}><a:srgbClr val="${hex6(color)}"/></a:${key}>`,
+      )
+    }
+    return patched.replace(
+      /(<a:clrScheme\b[^>]*\bname=")[^"]*(")/,
+      (_match, prefix: string, suffix: string) => `${prefix}${escapeXmlAttr(spec.name)}${suffix}`,
     )
-  }
-  out = out.replace(/(<a:clrScheme name=")[^"]*(")/, `$1${escapeXmlAttr(spec.name)}$2`)
-  // Fonts: replace only the major/minor Latin typeface; East Asian / cs kept
-  if (spec.majorFont) {
-    out = out.replace(
-      /(<a:majorFont>[\s\S]*?<a:latin[^>]*typeface=")[^"]*(")/,
-      `$1${escapeXmlAttr(spec.majorFont)}$2`,
-    )
-  }
-  if (spec.minorFont) {
-    out = out.replace(
-      /(<a:minorFont>[\s\S]*?<a:latin[^>]*typeface=")[^"]*(")/,
-      `$1${escapeXmlAttr(spec.minorFont)}$2`,
-    )
-  }
+  })
+  out = out.replace(/<a:fontScheme\b[^>]*>[\s\S]*?<\/a:fontScheme>/, (scheme) => {
+    let patched = scheme
+    for (const [bucket, script, font] of [
+      ['majorFont', 'latin', spec.majorFont],
+      ['minorFont', 'latin', spec.minorFont],
+      ['majorFont', 'ea', spec.majorEaFont],
+      ['minorFont', 'ea', spec.minorEaFont],
+      ['majorFont', 'cs', spec.majorCsFont],
+      ['minorFont', 'cs', spec.minorCsFont],
+    ] as const) {
+      if (!font) continue
+      patched = patched.replace(
+        new RegExp(`(<a:${bucket}>[\\s\\S]*?<a:${script}[^>]*typeface=")[^"]*(")`),
+        (_match, prefix: string, suffix: string) => `${prefix}${escapeXmlAttr(font)}${suffix}`,
+      )
+    }
+    return patched
+  })
   return out
 }
 
 const THEME_PART_RE = /^ppt\/theme\/theme\d+\.xml$/
+const THEME_OVERRIDE_PART_RE = /^ppt\/theme\/themeOverride\d+\.xml$/i
 
-/** Apply the theme to all theme parts in the package; returns the number rewritten. */
+/**
+ * Apply the theme to base themes and destination-local theme overrides.
+ *
+ * Overrides are deliberately patched in place: patchThemeXml changes only
+ * clrScheme/fontScheme nodes that are already present, so a partial override
+ * stays partial and its fmtScheme/extLst (plus its separate relationships
+ * part) remain untouched.
+ */
 export function applyThemeToArchive(opened: OpenedPptx, spec: ThemeSpec): number {
   const { archive } = opened
   let patched = 0
   for (const path of [...archive.entries.keys()]) {
-    if (!THEME_PART_RE.test(path)) continue
+    if (!THEME_PART_RE.test(path) && !THEME_OVERRIDE_PART_RE.test(path)) continue
     const xml = archive.readText(path)
     if (!xml) continue
     const next = patchThemeXml(xml, spec)

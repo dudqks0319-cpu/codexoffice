@@ -728,6 +728,8 @@ export function Ribbon({
   onInsertImage,
   onBackground,
   onApplyTheme,
+  onImportTheme,
+  themeImportBusy = false,
   onAddSlide,
   onAddSlideWithLayout,
   onAddSection,
@@ -1562,6 +1564,14 @@ export function Ribbon({
                   </button>
                 ))}
               </div>
+              <button
+                className="rb-small theme-import-trigger"
+                disabled={!hasDoc || themeImportBusy}
+                title={t('ribbonImportThemeTip')}
+                onClick={onImportTheme}
+              >
+                {themeImportBusy ? t('themeImportLoading') : t('ribbonImportTheme')}
+              </button>
             </Group>
             <div className="ribbon-sep" />
             <Group label={t('ribbonGroupBackground')}>

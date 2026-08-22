@@ -202,24 +202,78 @@ describe('initAutoUpdater', () => {
     expect(pushUpdateState).toHaveBeenCalledWith({ phase: 'downloaded', percent: 100 })
   })
 
-  it('surfaces a failed download as the error phase', async () => {
+  it('preserves the running version after failure and allows a successful retry', async () => {
     downloadUpdate.mockImplementation(() => Promise.reject(new Error('offline')))
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
     updaterState.listeners.get('update-available')!({ version: '0.2.0' })
-    lastShownActions().onDownload()
+    const actions = lastShownActions()
+    actions.onDownload()
     await flushAsync()
     expect(pushUpdateState).toHaveBeenCalledWith({ phase: 'error' })
+    actions.onInstall()
+    vi.advanceTimersByTime(0)
+    expect(quitAndInstall).not.toHaveBeenCalled()
+
+    downloadUpdate.mockImplementation(() => Promise.resolve([]))
+    actions.onDownload()
+    expect(downloadUpdate).toHaveBeenCalledTimes(2)
+    updaterState.listeners.get('update-downloaded')!({ version: '0.2.0' })
+    actions.onInstall()
+    vi.advanceTimersByTime(0)
+    expect(quitAndInstall).toHaveBeenCalledWith(true, true)
   })
 
   it('closes the window and installs on restart when the user confirms', async () => {
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
     updaterState.listeners.get('update-available')!({ version: '0.2.0' })
+    updaterState.listeners.get('update-downloaded')!({ version: '0.2.0' })
     lastShownActions().onInstall()
     expect(closeUpdateWindow).toHaveBeenCalledTimes(1)
     // quitAndInstall is deferred so the window can finish closing first
     expect(quitAndInstall).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(0)
+    expect(quitAndInstall).toHaveBeenCalledWith(true, true)
+  })
+
+  it('ignores duplicate downloads and install requests before download completion', async () => {
+    const { initAutoUpdater } = await loadUpdater()
+    initAutoUpdater(() => null)
+    updaterState.listeners.get('update-available')!({ version: '0.2.0' })
+    const actions = lastShownActions()
+
+    actions.onDownload()
+    actions.onDownload()
+    actions.onInstall()
+    vi.advanceTimersByTime(0)
+
+    expect(downloadUpdate).toHaveBeenCalledTimes(1)
+    expect(closeUpdateWindow).not.toHaveBeenCalled()
+    expect(quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('does not authorize a stale downloaded version after a newer offer', async () => {
+    const { initAutoUpdater } = await loadUpdater()
+    initAutoUpdater(() => null)
+    const available = updaterState.listeners.get('update-available')!
+    const downloaded = updaterState.listeners.get('update-downloaded')!
+
+    available({ version: '0.2.0' })
+    lastShownActions().onDownload()
+    available({ version: '0.3.0' })
+    downloaded({ version: '0.2.0' })
+    lastShownActions().onInstall()
+    vi.advanceTimersByTime(0)
+
+    expect(showUpdateWindow).toHaveBeenCalledTimes(2)
+    expect(closeUpdateWindow).not.toHaveBeenCalled()
+    expect(quitAndInstall).not.toHaveBeenCalled()
+
+    lastShownActions().onDownload()
+    expect(downloadUpdate).toHaveBeenCalledTimes(2)
+    downloaded({ version: '0.3.0' })
+    lastShownActions().onInstall()
     vi.advanceTimersByTime(0)
     expect(quitAndInstall).toHaveBeenCalledWith(true, true)
   })

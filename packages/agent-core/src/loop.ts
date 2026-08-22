@@ -2,6 +2,7 @@ import type { AgentSkill } from './skill'
 import type {
   AgentImage,
   AgentMessage,
+  AgentStreamErrorCode,
   AgentStreamHandle,
   AgentToolCall,
   AgentToolResult,
@@ -38,7 +39,7 @@ export interface AgentLoopEvents<TSnapshot> {
   /** a turn requested tools and they ran; the loop is going back to the model */
   onTurnEnd?(): void
   onDone?(result: AgentRunResult): void
-  onError?(error: string): void
+  onError?(error: string, code?: AgentStreamErrorCode): void
 }
 
 /** Context compaction config (budget tracked in UTF-8 bytes rather than message count) */
@@ -478,12 +479,13 @@ export class AgentLoop<TSnapshot = unknown> {
           settled = true
           void this.finishTurn()
         },
-        onError: (error) => {
+        onError: (error, code) => {
           if (generation !== this.generation || settled) return
           settled = true
           this.running = false
           this.rollbackFailedRun()
-          this.options.events?.onError?.(error)
+          if (code) this.options.events?.onError?.(error, code)
+          else this.options.events?.onError?.(error)
         },
       },
     )

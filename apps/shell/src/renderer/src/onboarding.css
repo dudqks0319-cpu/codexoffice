@@ -1,11 +1,10 @@
 /* First-run onboarding: full-window overlay above the home screen.
  * Layout follows the design spec: 540×420 white
- * card, left-aligned content column, slide-2 credits offer panel, and a
- * dots-left / Skip-Back-Next-right footer. Genspark tokens: black pill primary,
- * gray ramp, brand blue #0f7fff only on the credits line. */
+ * card, left-aligned content column, slide-2 account note, and a
+ * dots-left / Skip-Back-Next-right footer. */
 
 .onb-overlay {
-  /* Genspark tokens, scoped to the overlay (home.css keeps its own --accent) */
+  /* Onboarding tokens, scoped to the overlay (home.css keeps its own --accent) */
   --onb-font-sans:
     'Arial', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
     sans-serif;
@@ -16,7 +15,7 @@
   --onb-text-secondary: #606366;
   --onb-text-tertiary: #909499;
   --onb-bg-subtle: #f6f7f8;
-  /* offer panel: a whisper of the brand blue instead of neutral gray */
+  /* account prerequisite panel */
   --onb-bg-panel: #f0f7ff;
   --onb-border-default: #eaeaea;
   --onb-border-strong: #d0d3d8;
@@ -119,7 +118,7 @@
 
 /* each glyph carries different padding inside its canvas; pull it out so the
  * visible left edge of the artwork sits on the text axis below */
-.onb-art-gift {
+.onb-art-terminal {
   margin-left: -6px;
 }
 
@@ -152,19 +151,15 @@
   color: var(--onb-text-secondary);
 }
 
-/* slide 3's credits disclaimer reads as a footnote */
+/* slide 3's plan and usage-limit note reads as a footnote */
 .onb-body-dim {
   color: var(--onb-text-tertiary);
 }
 
-/* slide 2's offer: quiet gray lead-in, then the amount in large brand-blue
- * type, grouped with the Join CTA in one panel so the page reads as
- * info / offer / navigation */
-.onb-offer {
+/* Slide 2 presents the existing Codex login prerequisite without a promotional CTA. */
+.onb-account-note {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
   width: 100%;
   margin-top: 14px;
   padding: 17px 16px;
@@ -172,7 +167,7 @@
   background: var(--onb-bg-panel);
 }
 
-.onb-credits {
+.onb-account-note p {
   margin: 0;
   font-size: 16px;
   letter-spacing: -0.154px;
@@ -180,41 +175,9 @@
   color: var(--onb-text-secondary);
 }
 
-.onb-credits strong {
-  display: block;
-  margin-top: 4px;
-  color: var(--onb-brand);
-  font-size: 22px;
+.onb-account-note strong {
   font-weight: 700;
-  font-style: italic;
-  letter-spacing: -0.3px;
-  line-height: normal;
-}
-
-/* the offer CTA is the dialog's standout action: a weighted blue outline —
- * 1.5px border + semibold + a faint blue seat-shadow so it doesn't float on
- * the tinted panel — inverting to solid blue on hover */
-.onb-join {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: none;
-  padding: 10.5px 22.5px;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.154px;
   color: var(--onb-brand);
-  background: #fff;
-  border: 1.5px solid var(--onb-brand);
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(15, 127, 255, 0.18);
-  cursor: pointer;
-  transition: all var(--onb-transition);
-}
-
-.onb-join:hover {
-  color: #fff;
-  background: var(--onb-brand);
 }
 
 /* footer: progress dots on the start side, Skip / Back / Next grouped on the end side */

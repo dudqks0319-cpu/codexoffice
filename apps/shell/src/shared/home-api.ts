@@ -87,38 +87,34 @@ export interface HomeApi {
   getLanguage(): Promise<UiLanguage>
   /** switch + persist the UI language; main rebuilds its menus to match */
   setLanguage(lang: UiLanguage): Promise<void>
-  /** Genspark account status (gsk login state; to be upgraded to a signup/account system later) */
+  /** app-private Codex authentication state; credentials never cross this API */
   accountStatus(): Promise<AccountStatus>
-  /** start Genspark login (opens the browser; accountStatus flips to logged-in on completion); returns whether the launch succeeded */
+  /** start the bundled Codex browser sign-in flow; returns whether the launch was accepted */
   accountLogin(): Promise<boolean>
   /** progress events for the login started via accountLogin; returns an unsubscribe */
   onAccountLogin(handler: (ev: AccountLoginEvent) => void): () => void
-  /** re-open the pending login auth URL in the default browser (rescue when auto-open failed) */
-  openLoginUrl(): Promise<void>
-  /** log out (clears the saved API key; the login state is shared globally with the gsk CLI) */
-  accountLogout(): Promise<void>
+  /** log out after main-process confirmation; true only when sign-out completed */
+  accountLogout(): Promise<boolean>
   /** app version (from package.json / electron app.getVersion) */
   getAppVersion(): Promise<string>
   /** whether the first-run onboarding has been completed or skipped (persisted in userData/app-settings.json) */
   onboardingSeen(): Promise<boolean>
   /** mark the first-run onboarding as done so it never shows again */
   setOnboardingSeen(): Promise<void>
-  /** open the GenTeam community page in the default browser */
-  openGenTeam(): Promise<void>
 }
 
 export interface AccountStatus {
-  /** gsk is installed and logged in */
+  /** the bundled Codex runtime can use this app's ChatGPT or API-key login */
   loggedIn: boolean
-  email?: string
+  authMethod?: 'chatgpt' | 'api-key' | 'unknown'
+  /** normalized, non-secret diagnostic suitable for display */
+  detail?: string
 }
 
-/** login flow progress pushed from main (gsk login CLI output) */
+/** normalized login progress pushed from main; never includes raw CLI output */
 export interface AccountLoginEvent {
-  phase: 'launched' | 'url' | 'success' | 'error'
-  url?: string
-  expiresInSec?: number
-  /** 'network' | 'expired' | raw CLI error text */
+  phase: 'launched' | 'success' | 'error'
+  /** bounded error category, never raw CLI stderr */
   error?: string
 }
 
@@ -189,12 +185,10 @@ export const HOME_CHANNELS = {
   accountStatus: 'home:account-status',
   accountLogin: 'home:account-login',
   accountLoginEvent: 'home:account-login-event',
-  accountLoginOpenUrl: 'home:account-login-open-url',
   accountLogout: 'home:account-logout',
   getAppVersion: 'home:get-app-version',
   onboardingSeen: 'home:onboarding-seen',
   setOnboardingSeen: 'home:set-onboarding-seen',
-  openGenTeam: 'home:open-genteam',
 } as const
 
 export const PROJECT_CHANNELS = {

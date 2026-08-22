@@ -16,6 +16,36 @@ export async function buildCompatibilityFixture(): Promise<Buffer> {
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
 }
 
+/**
+ * A sparse workbook whose declared grid is just over the renderer's 50k-cell
+ * full-load threshold. Only A1:A3 contain data, so the streamed formula
+ * dependency closure remains small and can recalculate live.
+ */
+export async function buildStreamedFormulaFixture(): Promise<Buffer> {
+  const zip = new JSZip()
+  zip.file('[Content_Types].xml', contentTypes)
+  zip.file('_rels/.rels', packageRelationships)
+  zip.file('xl/workbook.xml', workbook)
+  zip.file('xl/_rels/workbook.xml.rels', workbookRelationships)
+  zip.file(
+    'xl/worksheets/sheet1.xml',
+    `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1:Z2000"/>
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <sheetData>
+    <row r="1"><c r="A1"><v>10</v></c></row>
+    <row r="2"><c r="A2"><v>20</v></c></row>
+    <row r="3"><c r="A3"><f>SUM(A1:A2)</f><v>30</v></c></row>
+  </sheetData>
+</worksheet>`,
+  )
+  zip.file('xl/styles.xml', styles)
+  zip.file('customXml/item1.xml', '<streamed-formula-marker value="must-survive"/>')
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+}
+
 /// Exercises the save path: shared strings, styled cells, sparse rows, a
 /// self-closing row, a cached formula, and parts that must survive untouched.
 export async function buildEditFixture(): Promise<Buffer> {
@@ -270,7 +300,7 @@ const kitchenSinkCore = `<?xml version="1.0" encoding="UTF-8"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>fixture</dc:creator></cp:coreProperties>`
 
 const kitchenSinkApp = `<?xml version="1.0" encoding="UTF-8"?>
-<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>GenOffice Fixture</Application></Properties>`
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Codexoffice Fixture</Application></Properties>`
 
 const kitchenSinkWorkbook = `<?xml version="1.0" encoding="UTF-8"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">

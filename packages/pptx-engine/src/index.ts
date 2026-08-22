@@ -66,6 +66,14 @@ import { moveSlide } from './sections'
 
 export * from './types'
 export {
+  PPTX_MAX_INPUT_BYTES,
+  PPTX_MAX_ARCHIVE_ENTRIES,
+  PPTX_MAX_ARCHIVE_PART_BYTES,
+  PPTX_MAX_ARCHIVE_EXPANDED_BYTES,
+  assertPptxInputSize,
+  assertPptxArchiveWithinLimits,
+} from './zip'
+export {
   animClassOf,
   buildTimingXml,
   DEFAULT_MOTION_PATH,
@@ -141,8 +149,15 @@ export {
   patchThemeXml,
   recolorXml,
   remapDeckColors,
+  validateThemeSpec,
   type ThemeSpec,
 } from './theme-apply'
+export {
+  inspectPptxDesign,
+  type InspectPptxDesignOptions,
+  type PptxDesignCandidate,
+  type PptxDesignInspection,
+} from './design-inspect'
 export { escapeXmlText, escapeXmlAttr } from './xml-utils'
 export {
   extractFormat,
@@ -524,7 +539,7 @@ export async function savePptxToFile(opened: OpenedPptx, filePath: string): Prom
     type: 'nodebuffer',
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
-    streamFiles: true,
+    streamFiles: false,
   })
   await pipeline(source, createWriteStream(filePath))
 }

@@ -1,16 +1,16 @@
 {
-  "name": "genoffice",
+  "name": "codexoffice",
   "version": "0.1.0",
   "private": true,
-  "description": "AI-native office suite (docs, sheets, slides, pdf)",
+  "description": "Codexoffice: an AI-native office suite powered by Codex",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=20",
+    "node": ">=22.12.0",
     "npm": ">=10"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/genspark-ai/genoffice.git"
+    "url": "git+https://github.com/dudqks0319-cpu/codexoffice.git"
   },
   "workspaces": [
     "apps/*",
@@ -29,18 +29,39 @@
     "build:all": "npm run build -w @genoffice/docs && npm run build -w @genoffice/sheets && npm run build -w @genoffice/slides && npm run build -w @genoffice/pdf && npm run build -w @genoffice/shell",
     "shell": "npm run build:all && electron apps/shell",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:office-reopen": "playwright test --config e2e/playwright.office.config.ts",
+    "compat:libreoffice": "node tools/verify-libreoffice-corpus.mjs",
+    "release:preflight": "node tools/check-macos-release-preflight.mjs",
+    "release:preflight:enforce": "node tools/check-macos-release-preflight.mjs --enforce",
+    "release:mac:package": "npm run release:preflight:enforce && npm run dist:mac",
+    "verify:office-evidence": "node tools/check-microsoft-office-evidence.mjs",
+    "verify:libreoffice-evidence": "node tools/check-libreoffice-evidence.mjs",
+    "verify:ai-operations-evidence": "node tools/check-ai-operations-evidence.mjs",
+    "verify:update-evidence": "node tools/check-update-evidence.mjs",
+    "audit:release-dependencies": "node tools/check-release-dependencies.mjs",
+    "audit:mac-bundle-size": "node tools/check-macos-bundle-size.mjs --enforce",
     "notices": "node tools/gen-third-party-notices.mjs",
     "licenses": "node tools/check-licenses.mjs",
-    "dist:mac": "npm run notices && npm run build:all && npm run dist:mac -w @genoffice/shell",
-    "dist:win": "npm run notices && npm run build:all && npm run dist:win -w @genoffice/shell"
+    "dist:mac": "npm run audit:release-dependencies && npm run notices && npm run build:all && npm run dist:mac -w @genoffice/shell && npm run audit:mac-bundle-size",
+    "dist:win": "npm run audit:release-dependencies && npm run notices && npm run build:all && npm run dist:win -w @genoffice/shell"
   },
   "dependencies": {
     "ws": "^8.21.1"
+  },
+  "overrides": {
+    "@univerjs/core": {
+      "nanoid": "5.1.16"
+    },
+    "postcss": {
+      "nanoid": "3.3.18"
+    },
+    "js-yaml": "4.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.61.1",
     "concurrently": "^9.2.4",
+    "electron": "41.10.3",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.8.0",

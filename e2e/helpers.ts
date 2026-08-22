@@ -143,24 +143,32 @@ export async function closeAndSaveVideo(
     })
     .catch(() => {})
   let killTimer: NodeJS.Timeout | undefined
+  let forcedShutdown = false
   await Promise.race([
     launched.app.close(),
     new Promise<void>((resolvePromise) => {
       killTimer = setTimeout(() => {
+        forcedShutdown = true
         launched.app.process().kill()
         resolvePromise()
       }, 20_000)
     }),
   ])
   if (killTimer) clearTimeout(killTimer)
-  if (!video) return undefined
-  const target = join(ARTIFACTS_DIR, 'videos', `${name}.webm`)
-  try {
-    await video.saveAs(target)
-    return target
-  } catch {
+  if (!video) {
+    if (forcedShutdown) throw new Error(`Electron did not exit gracefully after ${name}`)
     return undefined
   }
+  const target = join(ARTIFACTS_DIR, 'videos', `${name}.webm`)
+  let savedVideo: string | undefined
+  try {
+    await video.saveAs(target)
+    savedVideo = target
+  } catch {
+    // Video capture is diagnostic-only and must not mask the app result.
+  }
+  if (forcedShutdown) throw new Error(`Electron did not exit gracefully after ${name}`)
+  return savedVideo
 }
 
 export function screenshotPath(name: string): string {

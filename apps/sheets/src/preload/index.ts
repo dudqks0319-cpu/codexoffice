@@ -4,7 +4,14 @@ import type {
   AiChatResponse,
   AiSettings,
   AiStreamChunk,
-  GenSparkAccountStatus,
+  CodexAccountStatus,
+  CodexModelSummary,
+} from '@genoffice/ai-provider'
+import {
+  parseAiJobBudgetTicket,
+  parseAiJobId,
+  parseAiRequestId,
+  parseAiStreamRequest,
 } from '@genoffice/ai-provider'
 import type { ProjectApi } from '@genoffice/project-store'
 import type {
@@ -216,7 +223,9 @@ const desktopApi: DesktopApi = {
     return result as unknown as AiSettings
   },
   async setAiSettings(settings) {
-    await ipcRenderer.invoke(IPC_CHANNELS.aiSetSettings, settings)
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiSetSettings, settings)
+    if (!isRecord(result)) throw new Error('Invalid AI settings response.')
+    return result as unknown as AiSettings
   },
   async aiChat(request) {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiChat, request)
@@ -225,22 +234,39 @@ const desktopApi: DesktopApi = {
     }
     return result as unknown as AiChatResponse
   },
+  async aiJobBegin(jobId) {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiJobBegin, parseAiJobId(jobId))
+    return parseAiJobBudgetTicket(result)
+  },
+  async aiJobEnd(ticket) {
+    await ipcRenderer.invoke(IPC_CHANNELS.aiJobEnd, parseAiJobBudgetTicket(ticket))
+  },
   async aiStream(request) {
-    await ipcRenderer.invoke(IPC_CHANNELS.aiStream, request)
+    await ipcRenderer.invoke(IPC_CHANNELS.aiStream, parseAiStreamRequest(request))
   },
   async aiStreamCancel(requestId) {
-    if (!requestId) throw new Error('Invalid AI stream request id.')
-    await ipcRenderer.invoke(IPC_CHANNELS.aiStreamCancel, requestId)
+    await ipcRenderer.invoke(IPC_CHANNELS.aiStreamCancel, parseAiRequestId(requestId))
   },
-  async aiGskStatus(withEmail) {
-    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiGskStatus, withEmail)
+  async aiCodexStatus() {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiCodexStatus)
     if (!isRecord(result) || typeof result.loggedIn !== 'boolean') {
-      throw new Error('Invalid Genspark account status response.')
+      throw new Error('Invalid Codex account status response.')
     }
-    return result as unknown as GenSparkAccountStatus
+    return result as unknown as CodexAccountStatus
   },
-  async aiGskLogin() {
-    await ipcRenderer.invoke(IPC_CHANNELS.aiGskLogin)
+  async aiCodexLogin() {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiCodexLogin)
+    if (!isRecord(result) || typeof result.loggedIn !== 'boolean') {
+      throw new Error('Invalid Codex account login response.')
+    }
+    return result as unknown as CodexAccountStatus
+  },
+  async aiCodexModels() {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiCodexModels)
+    if (!Array.isArray(result) || !result.every(isCodexModelSummary)) {
+      throw new Error('Invalid Codex model list response.')
+    }
+    return result
   },
   async webSearch(query, maxResults) {
     if (typeof query !== 'string' || !query.trim() || query.length > 512) {
@@ -273,15 +299,11 @@ const desktopApi: DesktopApi = {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.filesPick)
     return result === null ? null : parseAttachmentAddResult(result)
   },
-  async addAttachmentPaths(paths) {
-    if (
-      !Array.isArray(paths) ||
-      paths.length === 0 ||
-      paths.length > 50 ||
-      paths.some((p) => typeof p !== 'string' || p.length === 0 || p.length > 1024)
-    ) {
-      throw new Error('Invalid attachment paths.')
+  async addAttachmentFiles(files) {
+    if (!Array.isArray(files) || files.length === 0 || files.length > 50) {
+      throw new Error('Invalid attachment files.')
     }
+    const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.filesAdd, paths)
     return parseAttachmentAddResult(result)
   },
@@ -342,9 +364,6 @@ const desktopApi: DesktopApi = {
     if (result.mime !== undefined) image.mime = result.mime
     if (result.error !== undefined) image.error = result.error
     return image
-  },
-  getPathForFile(file) {
-    return webUtils.getPathForFile(file)
   },
 }
 
@@ -2078,6 +2097,19 @@ function parseChartPointExplosions(
 
 function isRecord(input: unknown): input is Record<string, unknown> {
   return typeof input === 'object' && input !== null && !Array.isArray(input)
+}
+
+function isCodexModelSummary(input: unknown): input is CodexModelSummary {
+  return (
+    isRecord(input) &&
+    typeof input.id === 'string' &&
+    typeof input.model === 'string' &&
+    typeof input.displayName === 'string' &&
+    typeof input.description === 'string' &&
+    typeof input.hidden === 'boolean' &&
+    typeof input.isDefault === 'boolean' &&
+    typeof input.defaultReasoningEffort === 'string'
+  )
 }
 
 function isUuid(input: unknown): input is string {

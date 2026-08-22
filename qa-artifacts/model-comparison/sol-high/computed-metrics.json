@@ -1,0 +1,57 @@
+{
+  "investment_count": 10,
+  "total_arr": 1950000000,
+  "total_expected_arr": 1175850000.0,
+  "total_investment": 1152000000,
+  "base_net_value": 23849999.999999985,
+  "weighted_success_probability": 0.603,
+  "weighted_attrition_probability": 0.397,
+  "scenario_totals": {
+    "Downside": -618120000.0,
+    "Base": 23849999.999999985,
+    "Upside": 608220000.0
+  },
+  "top3_total_investment": 266000000,
+  "top3_expected_arr": 325100000.0,
+  "top3_base_net": 59100000.0,
+  "top3": [
+    {
+      "rank": 1,
+      "name": "API 모니터링·개발자 포털 SaaS",
+      "score": 58.81666666666667,
+      "base_net": 25500000.0,
+      "success_probability": 0.78
+    },
+    {
+      "rank": 2,
+      "name": "영업 파이프라인 자동화 CRM SaaS",
+      "score": 54.5027027027027,
+      "base_net": 18600000.0,
+      "success_probability": 0.72
+    },
+    {
+      "rank": 3,
+      "name": "HR 인력계획·스킬 매칭 SaaS",
+      "score": 51.3289156626506,
+      "base_net": 15000000.0,
+      "success_probability": 0.7
+    }
+  ],
+  "largest_risks": [
+    {
+      "name": "공급망 수요예측 SaaS",
+      "risk_score": 68,
+      "base_net": -33000000.0
+    },
+    {
+      "name": "B2B 마케팅 어트리뷰션 SaaS",
+      "risk_score": 60,
+      "base_net": -13400000.0
+    },
+    {
+      "name": "B2B 고객지원 AI 챗봇",
+      "risk_score": 55,
+      "base_net": -4800000.0
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "name": "@genoffice/slides",
-  "productName": "GenOffice Slides",
+  "productName": "Codexoffice Slides",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -13,9 +13,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dist:mac": "electron-vite build && electron-builder --mac",
-    "dist:win": "electron-vite build && electron-builder --win",
-    "dist:dir": "electron-vite build && electron-builder --dir"
+    "dist:mac": "node ../../tools/gen-third-party-notices.mjs && electron-vite build && electron-builder --config electron-builder.cjs --mac",
+    "dist:win": "node ../../tools/gen-third-party-notices.mjs && electron-vite build && electron-builder --config electron-builder.cjs --win",
+    "dist:dir": "node ../../tools/gen-third-party-notices.mjs && electron-vite build && electron-builder --config electron-builder.cjs --dir"
   },
   "devDependencies": {
     "@genoffice/agent-core": "*",
@@ -32,7 +32,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.4",
-    "electron": "^41.0.3",
+    "electron": "41.10.3",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "jsdom": "^28.0.0",
@@ -45,47 +45,7 @@
     "vite": "^7.3.1",
     "vitest": "^4.1.0"
   },
-  "author": "GenOffice",
-  "build": {
-    "appId": "com.genoffice.slides",
-    "productName": "GenOffice Slides",
-    "electronVersion": "41.7.1",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "out/**"
-    ],
-    "fileAssociations": [
-      {
-        "ext": "pptx",
-        "name": "PowerPoint Presentation",
-        "role": "Editor"
-      }
-    ],
-    "npmRebuild": false,
-    "mac": {
-      "target": [
-        "dmg"
-      ],
-      "category": "public.app-category.productivity",
-      "identity": null
-    },
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
-  },
+  "author": "Codexoffice contributors",
   "dependencies": {
     "@genoffice/electron-utils": "*",
     "acorn": "^8.18.0",

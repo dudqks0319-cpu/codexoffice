@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type { ProjectApi } from '@genoffice/project-store'
+import {
+  parseAiJobBudgetTicket,
+  parseAiJobId,
+  parseAiRequestId,
+  parseAiStreamRequest,
+} from '@genoffice/ai-provider'
 import type {
   AddChartOp,
   AddElementOp,
@@ -9,6 +15,7 @@ import type {
   AddMediaBytesOp,
   AddSmartArtOp,
   ApplyThemeOp,
+  ApplyImportedThemeOp,
   AddBlankSlideOp,
   AddSlideOp,
   PasteSlideOp,
@@ -71,6 +78,7 @@ import type {
   MasterDeleteElementOp,
   ExportImagesOp,
   ExportPdfOp,
+  GenerateSlideImageOp,
   PrintSlidesOp,
   MenuCommand,
   OpenResult,
@@ -90,24 +98,8 @@ const api: SlidesApi = {
   openPptx: (fitWidthPx) => ipcRenderer.invoke('slides:open', fitWidthPx),
   openPptxPath: (path, fitWidthPx) => ipcRenderer.invoke('slides:open-path', path, fitWidthPx),
   consumePendingOpen: (fitWidthPx) => ipcRenderer.invoke('slides:consume-pending-open', fitWidthPx),
+  setAiReviewPending: (pending) => ipcRenderer.send('slides:ai-review-pending', pending),
   newBlank: (fitWidthPx) => ipcRenderer.invoke('slides:new-blank', fitWidthPx),
-  htmlToPptx: (
-    pagesHtml: string[],
-    fitWidthPx: number,
-    mode?: 'replace' | 'append' | 'replace_at' | 'insert_at',
-    atIndex?: number,
-    deckName?: string,
-  ) => ipcRenderer.invoke('slides:html-to-pptx', pagesHtml, fitWidthPx, mode, atIndex, deckName),
-  cloudGenStatus: () => ipcRenderer.invoke('slides:cloud-gen-status'),
-  cloudGeneratePage: (op: {
-    brief: string
-    title?: string
-    styleSkill?: string
-    deckContext?: Record<string, unknown>
-    images?: { url: string; caption?: string }[]
-    width?: number
-    height?: number
-  }) => ipcRenderer.invoke('slides:cloud-page-generate', op),
   editText: (op: EditTextOp) => ipcRenderer.invoke('slides:edit-text', op),
   setElementFont: (op: SetElementFontOp) => ipcRenderer.invoke('slides:set-element-font', op),
   setElementParagraphFormat: (op: SetElementParagraphFormatOp) =>
@@ -205,6 +197,10 @@ const api: SlidesApi = {
   getHeaderFooter: (slideIndex: number) =>
     ipcRenderer.invoke('slides:get-header-footer', slideIndex),
   applyTheme: (op: ApplyThemeOp) => ipcRenderer.invoke('slides:apply-theme', op),
+  previewThemeImport: () => ipcRenderer.invoke('slides:preview-theme-import'),
+  cancelThemeImport: (token: string) => ipcRenderer.invoke('slides:cancel-theme-import', token),
+  applyImportedTheme: (op: ApplyImportedThemeOp) =>
+    ipcRenderer.invoke('slides:apply-imported-theme', op),
   setTransition: (op: SetTransitionOp) => ipcRenderer.invoke('slides:set-transition', op),
   getTransition: (slideIndex: number) => ipcRenderer.invoke('slides:get-transition', slideIndex),
   setAdvanceTimes: (op: SetAdvanceTimesOp) => ipcRenderer.invoke('slides:set-advance-times', op),
@@ -265,10 +261,16 @@ const api: SlidesApi = {
   },
   getAiSettings: () => ipcRenderer.invoke('ai:get-settings'),
   setAiSettings: (settings: AiSettings) => ipcRenderer.invoke('ai:set-settings', settings),
-  aiStream: (request: AiStreamRequest) => ipcRenderer.invoke('ai:stream', request),
-  aiStreamCancel: (requestId: string) => ipcRenderer.invoke('ai:stream-cancel', requestId),
-  aiGskStatus: (withEmail?: boolean) => ipcRenderer.invoke('ai:gsk-status', withEmail),
-  aiGskLogin: () => ipcRenderer.invoke('ai:gsk-login'),
+  aiJobBegin: async (jobId: string) =>
+    parseAiJobBudgetTicket(await ipcRenderer.invoke('ai:job-begin', parseAiJobId(jobId))),
+  aiJobEnd: (ticket) =>
+    ipcRenderer.invoke('ai:job-end', parseAiJobBudgetTicket(ticket)).then(() => undefined),
+  aiStream: (request: AiStreamRequest) =>
+    ipcRenderer.invoke('ai:stream', parseAiStreamRequest(request)),
+  aiStreamCancel: (requestId: string) =>
+    ipcRenderer.invoke('ai:stream-cancel', parseAiRequestId(requestId)),
+  aiCodexStatus: () => ipcRenderer.invoke('ai:codex-status'),
+  aiCodexLogin: () => ipcRenderer.invoke('ai:codex-login'),
   webSearch: (query: string, maxResults?: number) =>
     ipcRenderer.invoke('ai:web-search', query, maxResults),
   imageSearch: (query: string, maxResults?: number) =>
@@ -282,16 +284,9 @@ const api: SlidesApi = {
     hPx: number
     fitWidthPx: number
   }) => ipcRenderer.invoke('ai:insert-image-url', op),
-  generateImage: (op: {
-    prompt: string
-    model?: string
-    referenceImageUrls?: string[]
-    aspectRatio?: string
-    imageSize?: string
-  }) => ipcRenderer.invoke('ai:generate-image', op),
-  analyzeMedia: (op: { mediaUrls: string[]; requirements: string }) =>
-    ipcRenderer.invoke('ai:analyze-media', op),
-  gskStatus: () => ipcRenderer.invoke('ai:gsk-status'),
+  generateSlideImage: (op: GenerateSlideImageOp) =>
+    ipcRenderer.invoke('ai:generate-slide-image', op),
+  cancelSlideImage: (requestId: string) => ipcRenderer.invoke('ai:cancel-slide-image', requestId),
   onAiStream: (handler: (chunk: AiStreamChunk) => void) => {
     const listener = (_e: IpcRendererEvent, chunk: AiStreamChunk) => handler(chunk)
     ipcRenderer.on('ai:stream-chunk', listener)
@@ -334,13 +329,20 @@ contextBridge.exposeInMainWorld('slidesApi', api)
 // Chat attachment bridge: method names/signatures match the window.desktop attachment subset in docs, so the renderer's files-skill is copied over wholesale
 const filesApi: DesktopFilesApi = {
   pickAttachments: () => ipcRenderer.invoke('slides:files-pick'),
-  addAttachmentPaths: (paths: string[]) => ipcRenderer.invoke('slides:files-add', paths),
+  addAttachmentFiles: (files: File[]) =>
+    ipcRenderer.invoke(
+      'slides:files-add',
+      files
+        .slice(0, 50)
+        .map((file) => webUtils.getPathForFile(file))
+        .filter(Boolean),
+    ),
+  refreshAttachments: (paths: string[]) => ipcRenderer.invoke('slides:files-refresh', paths),
   addPastedImage: (data: ArrayBuffer, ext: string) =>
     ipcRenderer.invoke('slides:files-add-pasted-image', data, ext),
   readAttachment: (path: string, offset: number, maxChars: number) =>
     ipcRenderer.invoke('slides:files-read', path, offset, maxChars),
   readAttachmentImage: (path: string) => ipcRenderer.invoke('slides:files-read-image', path),
-  getPathForFile: (file: File) => webUtils.getPathForFile(file),
 }
 
 contextBridge.exposeInMainWorld('desktop', filesApi)

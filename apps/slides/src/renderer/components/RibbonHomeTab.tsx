@@ -4,10 +4,9 @@ import { saveEditSelection } from '../TextEditOverlay'
 import { armColorInput } from '../color-input'
 import { displayFontFamily } from '../konva-adapter'
 import {
-  GensparkMark,
+  CodexMark,
   IconAiBeautify,
   IconAiFactCheck,
-  IconAiImage,
   IconAlignCenter,
   IconAlignJustify,
   IconAlignLeft,
@@ -133,16 +132,16 @@ export function RibbonHomeTab({ rb }: { rb: RibbonTabCtx }) {
   }
   return (
     <>
-      <Group label="Genspark AI">
+      <Group label="Codex AI">
         <button
           className={`rb-big ai-entry${aiOpen ? ' active' : ''}`}
           title={t('aiOpenAssistant')}
           onClick={onToggleAi}
         >
           <span className="rb-big-icon">
-            <GensparkMark size={26} />
+            <CodexMark size={26} />
           </span>
-          <span>Genspark AI</span>
+          <span>Codex AI</span>
         </button>
         <button
           className="rb-big ai-entry"
@@ -169,19 +168,6 @@ export function RibbonHomeTab({ rb }: { rb: RibbonTabCtx }) {
             </span>
           </span>
           <span>{t('aiFactCheckBtn')}</span>
-        </button>
-        <button
-          className="rb-big ai-entry"
-          disabled={!hasDoc || deckEmpty}
-          title={t('aiImagePrompt')}
-          onClick={() => onAiPreset(t('aiImagePrompt'))}
-        >
-          <span className="rb-big-icon">
-            <span className="ai-feature-icon" aria-hidden="true">
-              <IconAiImage />
-            </span>
-          </span>
-          <span>{t('aiImageBtn')}</span>
         </button>
       </Group>
       <div className="ribbon-sep" />

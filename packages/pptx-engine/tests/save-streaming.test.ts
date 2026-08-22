@@ -10,6 +10,34 @@ const here = dirname(fileURLToPath(import.meta.url))
 const fx = (name: string) => readFileSync(join(here, 'fixtures', name))
 const out = () => join(mkdtempSync(join(tmpdir(), 'save-stream-')), 'out.pptx')
 
+function centralDirectoryFlags(bytes: Uint8Array): number[] {
+  const zip = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const searchStart = Math.max(0, zip.length - 65_557)
+  let eocd = -1
+  for (let offset = zip.length - 22; offset >= searchStart; offset -= 1) {
+    if (zip.readUInt32LE(offset) === 0x06054b50) {
+      eocd = offset
+      break
+    }
+  }
+  if (eocd < 0) throw new Error('ZIP end-of-central-directory record not found')
+
+  const entryCount = zip.readUInt16LE(eocd + 10)
+  const flags: number[] = []
+  let offset = zip.readUInt32LE(eocd + 16)
+  for (let index = 0; index < entryCount; index += 1) {
+    if (zip.readUInt32LE(offset) !== 0x02014b50) {
+      throw new Error(`ZIP central-directory entry ${index} is malformed`)
+    }
+    flags.push(zip.readUInt16LE(offset + 8))
+    const nameLength = zip.readUInt16LE(offset + 28)
+    const extraLength = zip.readUInt16LE(offset + 30)
+    const commentLength = zip.readUInt16LE(offset + 32)
+    offset += 46 + nameLength + extraLength + commentLength
+  }
+  return flags
+}
+
 describe('savePptxToFile', () => {
   it('writes a package that reopens with the same slides as the in-memory save', async () => {
     const opened = await openPptx(fx('01_standard_business.pptx'))
@@ -63,6 +91,16 @@ describe('savePptxToFile', () => {
     // xml parts are still deflated
     const xml = sizes('ppt/presentation.xml')
     expect(xml.compressedSize).toBeLessThan(xml.uncompressedSize)
+  })
+
+  it('writes OOXML entries without data descriptors for LibreOffice compatibility', async () => {
+    const opened = await openPptx(fx('01_standard_business.pptx'))
+    const target = out()
+    await savePptxToFile(opened, target)
+
+    const flags = centralDirectoryFlags(readFileSync(target))
+    expect(flags.length).toBeGreaterThan(0)
+    expect(flags.filter((flag) => (flag & 0x0008) !== 0)).toEqual([])
   })
 
   // commitSaved replaces the post-save reopen; a stale anchor would silently

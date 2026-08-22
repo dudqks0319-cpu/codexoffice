@@ -26,6 +26,7 @@ import type {
   SectionInfo,
   SlideComment,
   TransitionKind,
+  ThemeImportPreview,
 } from '../shared/ipc'
 import { SlideCanvas } from './SlideCanvas'
 import { SlideThumb } from './SlideThumb'
@@ -50,9 +51,11 @@ import { AnimationPane } from './components/AnimationPane'
 import { AnimPreviewOverlay } from './components/AnimatedSlide'
 import { EquationDialog, HeaderFooterDialog, LinkDialog } from './components/InsertDialogs'
 import { CutoutDialog } from './components/CutoutDialog'
+import { ThemeImportDialog } from './components/ThemeImportDialog'
 import type { ChartPresetDef, IconDef, SmartArtDef, WordArtPreset } from './insert-presets'
-import { GensparkMark, IconAiBeautify, IconAiFactCheck, IconAiImage } from './components/icons'
+import { CodexMark, IconAiBeautify, IconAiFactCheck } from './components/icons'
 import { t, useI18n } from './i18n/locale'
+import { themeImportErrorKey } from './i18n/strings-import'
 import { AiPanel } from './ai/AiPanel'
 import { ChartDataDialog } from './components/ChartDataDialog'
 import type { BrushFormat } from './format-brush'
@@ -205,6 +208,11 @@ export function App() {
   const [path, setPath] = useState<string | null>(null)
   /** AiPanel reset key: incremented only on applyOpen (open/new file), not on draft path updates */
   const [aiPanelKey, setAiPanelKey] = useState(0)
+  const [aiReviewPending, setAiReviewPending] = useState(false)
+  useEffect(() => {
+    window.slidesApi.setAiReviewPending(aiReviewPending)
+    return () => window.slidesApi.setAiReviewPending(false)
+  }, [aiReviewPending])
   /** Theme body default font (fallback for the font box when the selection has no text element) */
   const [defaultFont, setDefaultFont] = useState<string | null>(null)
   const [current, setCurrent] = useState(0)
@@ -223,6 +231,11 @@ export function App() {
   const [scaleBox, setScaleBox] = useState<{ w: number; h: number } | null>(null)
   const [dirty, setDirty] = useState(false)
   const [status, setStatus] = useState('')
+  const [themeImport, setThemeImport] = useState<ThemeImportPreview | null>(null)
+  const [themeImportLoading, setThemeImportLoading] = useState(false)
+  const themeImportTrigger = useRef<HTMLElement | null>(null)
+  const themeImportPickingRef = useRef(false)
+  const themeImportRequestRef = useRef(0)
   // Status messages auto-dismiss after 4s: operation feedback needs only a brief showing; persistent info (page number/file name) lives on the left and in the title bar
   useEffect(() => {
     if (!status) return
@@ -508,6 +521,10 @@ export function App() {
       setSelectedIds([])
       setEditing(null)
       setDirty(false)
+      themeImportRequestRef.current += 1
+      themeImportPickingRef.current = false
+      setThemeImportLoading(false)
+      setThemeImport(null)
       setInkTool('select')
       setAiPanelKey((k) => k + 1)
       needsFitRef.current = true
@@ -564,9 +581,13 @@ export function App() {
   )
 
   const openDialog = useCallback(async () => {
+    if (aiReviewPending) {
+      setStatus('Review and apply or reject the pending AI changes before opening another file.')
+      return
+    }
     const r = await window.slidesApi.openPptx(FIT_WIDTH)
     applyOpen(r)
-  }, [applyOpen])
+  }, [aiReviewPending, applyOpen])
 
   // Save/export flows live in file-actions.ts; the editing-active flag lets ⌘S wait for the edit overlay to commit
   const editingActiveRef = useRef(false)
@@ -678,10 +699,13 @@ export function App() {
 
   // Global shortcuts (keyboard-actions.ts): the handler reads the latest state via ctxRef, so attach once
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => handleGlobalKeydown(ctxRef.current, e)
+    const onKey = (e: KeyboardEvent) => {
+      if (themeImport) return
+      handleGlobalKeydown(ctxRef.current, e)
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [themeImport])
 
   // Trackpad pinch zoom: Chromium synthesizes pinch gestures as ctrlKey+wheel events;
   // Ctrl/⌘ + wheel zoom also supported. Needs passive:false to preventDefault.
@@ -819,6 +843,44 @@ export function App() {
     (preset: SlideThemePreset) => styleActions.applyThemePreset(ctxRef.current, preset),
     [],
   )
+  const openThemeImport = useCallback(async () => {
+    if (themeImportPickingRef.current) return
+    themeImportPickingRef.current = true
+    const request = ++themeImportRequestRef.current
+    setThemeImportLoading(true)
+    themeImportTrigger.current = document.activeElement as HTMLElement | null
+    try {
+      const result = await window.slidesApi.previewThemeImport()
+      if (request !== themeImportRequestRef.current) return
+      if (!result) {
+        themeImportTrigger.current?.focus()
+        return
+      }
+      if ('error' in result) {
+        setStatus(t(themeImportErrorKey(result.error)))
+        themeImportTrigger.current?.focus()
+        return
+      }
+      setThemeImport(result)
+    } catch {
+      if (request === themeImportRequestRef.current) {
+        setStatus(t('themeImportPreviewFailed'))
+        themeImportTrigger.current?.focus()
+      }
+    } finally {
+      if (request === themeImportRequestRef.current) {
+        themeImportPickingRef.current = false
+        setThemeImportLoading(false)
+      }
+    }
+  }, [])
+  const closeThemeImport = useCallback(() => {
+    const preview = themeImport
+    themeImportRequestRef.current += 1
+    setThemeImport(null)
+    if (preview) void window.slidesApi.cancelThemeImport(preview.token)
+    requestAnimationFrame(() => themeImportTrigger.current?.focus())
+  }, [themeImport])
   const onStroke = useCallback(
     (sourceId: string, stroke: { color: string; widthPt: number } | null) =>
       styleActions.onStroke(ctxRef.current, sourceId, stroke),
@@ -1455,6 +1517,9 @@ export function App() {
   // Menu commands. Cut/copy/paste dispatch by context: text mode goes back to the native clipboard, canvas mode uses the element clipboard
   useEffect(() => {
     return window.slidesApi.onMenuCommand((cmd) => {
+      // Native macOS menu commands arrive over IPC rather than DOM keydown, so the
+      // modal must gate this second shortcut path as well.
+      if (themeImport) return
       // Master view: only allow save (undo/clipboard etc. target normal pages, not applicable inside the master)
       if (masterItems) {
         if (cmd === 'save') void save()
@@ -1498,6 +1563,7 @@ export function App() {
     copySelected,
     pasteClipboard,
     masterItems,
+    themeImport,
   ])
 
   // Load images (dataUrl → HTMLImageElement): picture elements + picture fills + background images
@@ -1981,6 +2047,7 @@ export function App() {
     setPath,
     setDirty,
     setStatus,
+    aiReviewPending,
     images,
     selectedIds,
     setSelectedIds,
@@ -2115,6 +2182,8 @@ export function App() {
         onInsertImage={() => void insertImage()}
         onBackground={(color, all) => void onBackground(color, all)}
         onApplyTheme={(preset) => void applyThemePreset(preset)}
+        onImportTheme={() => void openThemeImport()}
+        themeImportBusy={themeImportLoading}
         onAddSlide={() => void addSlide()}
         onAddSection={() => void addSectionAt(current)}
         onAddSlideWithLayout={(lp) => void addSlideWithLayout(lp)}
@@ -2362,6 +2431,7 @@ export function App() {
                   open={showAi}
                   onExpand={toggleAi}
                   onCollapse={toggleAi}
+                  onReviewPendingChange={setAiReviewPending}
                   onUndo={() => void undo()}
                   onPathChange={(p) => {
                     setPath(p)
@@ -2371,7 +2441,7 @@ export function App() {
                 />
               ) : (
                 <button className="ai-rail" onClick={toggleAi} title={t('appAiRailExpand')}>
-                  <GensparkMark size={22} />
+                  <CodexMark size={22} />
                 </button>
               )}
             </div>
@@ -2530,8 +2600,8 @@ export function App() {
                       title={t('aiOpenAssistant')}
                       onClick={toggleAi}
                     >
-                      <GensparkMark size={14} />
-                      <span>Genspark AI</span>
+                      <CodexMark size={14} />
+                      <span>Codex AI</span>
                     </button>
                     {/* Same one-click presets as the Home tab; hidden instead of
                         disabled while the deck has no real content */}
@@ -2555,14 +2625,6 @@ export function App() {
                         >
                           <IconAiFactCheck size={14} />
                           <span>{t('aiFactCheckBtn')}</span>
-                        </button>
-                        <button
-                          className="stage-ai-btn"
-                          title={t('aiImagePrompt')}
-                          onClick={() => pushAiPreset(t('aiImagePrompt'))}
-                        >
-                          <IconAiImage size={14} />
-                          <span>{t('aiImageBtn')}</span>
                         </button>
                       </>
                     )}
@@ -3104,6 +3166,22 @@ export function App() {
           y={ctxMenu.y}
           items={ctxItems}
           onClose={() => setCtxMenu(null)}
+        />
+      )}
+      {themeImport && (
+        <ThemeImportDialog
+          preview={themeImport}
+          onClose={closeThemeImport}
+          onApplied={(result, name) => {
+            if (!result || !Array.isArray(result)) return
+            setSlides(result)
+            setSelectedIds([])
+            setEditing(null)
+            setDirty(true)
+            setStatus(t('appStatusThemeApplied', { name }))
+            setThemeImport(null)
+            requestAnimationFrame(() => themeImportTrigger.current?.focus())
+          }}
         />
       )}
     </div>

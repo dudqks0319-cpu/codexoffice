@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Lang } from '@genoffice/i18n'
 import appIcon from './assets/app-icon.png'
 import { useI18n } from './locale'
 import type { StringKey } from './locale'
@@ -15,16 +16,16 @@ interface Slide {
   subtitleKey: StringKey
   /** 16px muted paragraph below the title block */
   bodyKey?: StringKey
-  /** render the body in the dimmer footnote gray (slide 3's credits disclaimer) */
+  /** render the body in the dimmer footnote gray */
   bodyDim?: boolean
-  /** community slide shows the credits offer panel with the "Join GenTeam" call-to-action */
-  showOffer?: boolean
-  art: 'logo' | 'gift' | 'check'
+  /** account slide explains the app-private Codex sign-in boundary */
+  showAccountNote?: boolean
+  art: 'logo' | 'terminal' | 'check'
 }
 
 const SLIDES: readonly Slide[] = [
   { titleKey: 'onbTitle1', subtitleKey: 'onbSubtitle1', bodyKey: 'onbBody1', art: 'logo' },
-  { titleKey: 'onbTitle2', subtitleKey: 'onbBody2', showOffer: true, art: 'gift' },
+  { titleKey: 'onbTitle2', subtitleKey: 'onbBody2', showAccountNote: true, art: 'terminal' },
   {
     titleKey: 'onbTitle3',
     subtitleKey: 'onbBody3',
@@ -33,6 +34,29 @@ const SLIDES: readonly Slide[] = [
     art: 'check',
   },
 ]
+
+/** Publisher disclosure shown before this independent app asks the user to sign in. */
+const INDEPENDENT_PROJECT_NOTICE: Record<Lang, string> = {
+  zh: '**独立开源项目，并非 OpenAI 产品。**',
+  en: '**Independent open-source project; not an OpenAI product.**',
+  ja: '**独立したオープンソースプロジェクトであり、OpenAI の製品ではありません。**',
+  ko: '**독립 오픈소스 프로젝트이며 OpenAI 제품이 아닙니다.**',
+  fr: '**Projet open source indépendant, non affilié à un produit OpenAI.**',
+  de: '**Unabhängiges Open-Source-Projekt; kein OpenAI-Produkt.**',
+  es: '**Proyecto independiente de código abierto; no es un producto de OpenAI.**',
+  th: '**โครงการโอเพนซอร์สอิสระ ไม่ใช่ผลิตภัณฑ์ของ OpenAI**',
+  id: '**Proyek sumber terbuka independen; bukan produk OpenAI.**',
+  ru: '**Независимый проект с открытым исходным кодом; не продукт OpenAI.**',
+  ar: '**مشروع مستقل مفتوح المصدر، وليس منتجًا من OpenAI.**',
+  pt: '**Projeto independente de código aberto; não é um produto da OpenAI.**',
+  it: '**Progetto open source indipendente; non è un prodotto OpenAI.**',
+  pl: '**Niezależny projekt open source; nie jest produktem OpenAI.**',
+  nl: '**Onafhankelijk opensourceproject; geen OpenAI-product.**',
+  ms: '**Projek sumber terbuka bebas; bukan produk OpenAI.**',
+  he: '**פרויקט קוד פתוח עצמאי; אינו מוצר של OpenAI.**',
+  hi: '**स्वतंत्र ओपन-सोर्स परियोजना; यह OpenAI उत्पाद नहीं है।**',
+  'zh-TW': '**獨立開源專案，並非 OpenAI 產品。**',
+}
 
 /** render `**emphasized**` segments of a localized string as <strong> */
 function renderEmphasis(text: string) {
@@ -47,24 +71,19 @@ function SlideArt({ kind }: { kind: Slide['art'] }) {
   if (kind === 'logo') {
     return <img className="onb-art onb-art-logo" src={appIcon} alt="" />
   }
-  if (kind === 'gift') {
-    // hand-drawn gift kept over the spec vector deliberately; 48 canvas at
-    // strokeWidth 3.2 renders the same 4px strokes at 60px as the check icon
+  if (kind === 'terminal') {
     return (
-      <span className="onb-art onb-art-badge onb-art-gift" aria-hidden="true">
+      <span className="onb-art onb-art-badge onb-art-terminal" aria-hidden="true">
         <svg
-          viewBox="0 0 48 48"
+          viewBox="0 0 60 60"
           fill="none"
           stroke="currentColor"
-          strokeWidth="3.2"
+          strokeWidth="4"
           strokeLinecap="round"
           strokeLinejoin="round"
         >
-          <rect x="6" y="14" width="36" height="9" rx="2" />
-          <path d="M9.5 23v15a4 4 0 0 0 4 4h21a4 4 0 0 0 4-4V23" />
-          <path d="M24 14v28" />
-          <path d="M24 14c-7 0-10.5-2.6-10.5-6 0-2.5 2-4.5 4.5-4.5 4.2 0 6 5.3 6 10.5Z" />
-          <path d="M24 14c7 0 10.5-2.6 10.5-6 0-2.5-2-4.5-4.5-4.5-4.2 0-6 5.3-6 10.5Z" />
+          <rect x="5.5" y="8" width="49" height="44" rx="7" />
+          <path d="m17 23 9 8-9 8M31 39h12" />
         </svg>
       </span>
     )
@@ -87,7 +106,7 @@ function SlideArt({ kind }: { kind: Slide['art'] }) {
 }
 
 export function Onboarding({ onDone }: OnboardingProps) {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const [index, setIndex] = useState(0)
   const cardRef = useRef<HTMLDivElement>(null)
   const slide = SLIDES[index]
@@ -105,7 +124,7 @@ export function Onboarding({ onDone }: OnboardingProps) {
   }, [])
 
   // slide changes can strip focus from the active control (leaving slide 2
-  // makes its GenTeam button inert, which blurs it) — pull focus back onto the
+  // can remove the active control, which blurs it) — pull focus back onto the
   // card so it never drops to body
   useEffect(() => {
     const card = cardRef.current
@@ -177,21 +196,10 @@ export function Onboarding({ onDone }: OnboardingProps) {
               {s.bodyKey && (
                 <p className={`onb-body${s.bodyDim ? ' onb-body-dim' : ''}`}>{t(s.bodyKey)}</p>
               )}
-              {s.showOffer && (
-                <div className="onb-offer">
-                  <p className="onb-credits">{renderEmphasis(t('onbCredits'))}</p>
-                  <button className="onb-join" onClick={() => void window.aiOffice.openGenTeam()}>
-                    {t('onbJoinGenTeam')}
-                    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                      <path
-                        d="M3.5 8.5 8.5 3.5M4.5 3.5h4v4"
-                        stroke="currentColor"
-                        strokeWidth="1.4"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
+              {s.showAccountNote && (
+                <div className="onb-account-note">
+                  <p>{renderEmphasis(INDEPENDENT_PROJECT_NOTICE[lang])}</p>
+                  <p>{renderEmphasis(t('onbAccountNote'))}</p>
                 </div>
               )}
             </div>

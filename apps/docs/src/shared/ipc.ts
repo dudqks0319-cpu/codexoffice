@@ -19,10 +19,11 @@ export interface PickImageResult {
 import type {
   AiChatRequest,
   AiChatResponse,
+  AiJobBudgetTicket,
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
-  GenSparkAccountStatus,
+  CodexAccountStatus,
 } from '@genoffice/ai-provider'
 
 export type {
@@ -31,10 +32,11 @@ export type {
   AiProviderConfig,
   AiProviderId,
   AiProviderMeta,
+  AiJobBudgetTicket,
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
-  GenSparkAccountStatus,
+  CodexAccountStatus,
 } from '@genoffice/ai-provider'
 export { AI_PROVIDERS } from '@genoffice/ai-provider'
 
@@ -198,13 +200,16 @@ export interface DesktopApi {
     outPath?: string,
   ): Promise<{ ok: boolean; path?: string; error?: string }>
   aiChat(request: AiChatRequest): Promise<AiChatResponse>
+  /** Begin/end one renderer-visible AI job; every provider turn must use this sender-bound ticket. */
+  aiJobBegin(jobId: string): Promise<AiJobBudgetTicket>
+  aiJobEnd(ticket: AiJobBudgetTicket): Promise<void>
   /** start a streaming AI call; deltas arrive via onAiStream with the same requestId */
   aiStream(request: AiStreamRequest): Promise<void>
   aiStreamCancel(requestId: string): Promise<void>
-  /** Genspark account status (gsk login state); withEmail also returns the email (needs a network request, slower) */
-  aiGskStatus(withEmail?: boolean): Promise<GenSparkAccountStatus>
-  /** Open the browser to log in to Genspark (fire-and-forget; aiGskStatus flips to logged-in when done) */
-  aiGskLogin(): Promise<void>
+  /** Status of the app Codex account; credentials never enter the renderer. */
+  aiCodexStatus(): Promise<CodexAccountStatus>
+  /** Start Codex account authentication and return the resulting status. */
+  aiCodexLogin(): Promise<CodexAccountStatus>
   webSearch(
     query: string,
     maxResults?: number,
@@ -234,16 +239,16 @@ export interface DesktopApi {
   fetchImage(url: string): Promise<{ base64: string; mime: string } | null>
   /** file picker for chat attachments (multi-select) */
   pickAttachments(): Promise<AttachmentAddResult | null>
-  /** validate dropped paths and return attachment metadata */
-  addAttachmentPaths(paths: string[]): Promise<AttachmentAddResult>
+  /** validate genuine dropped/pasted File objects and return attachment metadata */
+  addAttachmentFiles(files: File[]): Promise<AttachmentAddResult>
+  /** refresh metadata only for paths already granted to this tab */
+  refreshAttachments(paths: string[]): Promise<AttachmentAddResult>
   /** persist a pasted clipboard image (no local path) to a temp file and add it as an attachment */
   addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
   /** read a slice of the extracted text of an attachment */
   readAttachment(path: string, offset: number, maxChars: number): Promise<AttachmentReadResult>
   /** read an image attachment as base64 for multimodal input (≤5MB) */
   readAttachmentImage(path: string): Promise<AttachmentImageResult>
-  /** absolute path of a File dropped onto the window (Electron webUtils) */
-  getPathForFile(file: File): string
   /** View → New Tab: open another docs tab, optionally loading the same document */
   openNewTab(openPath?: string | null): Promise<void>
   /** all open docs tabs, for View → Switch Tab */

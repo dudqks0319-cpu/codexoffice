@@ -244,9 +244,15 @@ export function applyFormatPatchToRange(
   if (patch.fillColor !== undefined) range.setBackground(patch.fillColor as unknown as string)
   if (patch.numberFormat !== undefined) range.setNumberFormat(patch.numberFormat ?? 'General')
   if (patch.horizontalAlign !== undefined) {
-    range.setHorizontalAlignment(
-      (patch.horizontalAlign ?? 'normal') as 'left' | 'center' | 'normal',
-    )
+    // Univer's facade setter accepts only left/center/normal even though the
+    // underlying style enum also supports right/justify/distributed. Apply the
+    // neutral style value directly so AI and imported workbook formatting use
+    // the same complete alignment vocabulary.
+    range.setValue({
+      s: {
+        ht: patch.horizontalAlign === null ? null : mapHorizontalAlignment(patch.horizontalAlign),
+      },
+    } as unknown as ICellData)
   }
   if (patch.verticalAlign !== undefined) {
     if (patch.verticalAlign === null) range.setValue({ s: { vt: null } } as unknown as ICellData)
@@ -2052,10 +2058,15 @@ export async function preloadEntireWorkbook(
   const state = lazyWorkbookRef.current
   const workbook = runtime.univerAPI.getActiveWorkbook()
   if (!state || !workbook) return
+  let coverageComplete = true
   for (const sheet of state.file.sheets) {
     const worksheet = workbook.getSheetBySheetId(sheet.id)
-    if (!worksheet) continue
+    if (!worksheet) {
+      if (!state.editJournal.sheets.removed.has(sheet.id)) coverageComplete = false
+      continue
+    }
     const sheetId = sheet.id
+    let sheetComplete = true
     const rowsPerBlock = Math.max(1, Math.floor(20_000 / sheet.columnCount))
     const arrayFollowers = new Set<string>()
     for (let startRow = 0; startRow < sheet.rowCount; startRow += rowsPerBlock) {
@@ -2091,6 +2102,14 @@ export async function preloadEntireWorkbook(
         return
       }
       if (lazyWorkbookRef.current !== state) return
+      if (
+        !result.indexingComplete &&
+        (result.indexedThroughRow === null || result.indexedThroughRow < range.endRow)
+      ) {
+        sheetComplete = false
+        coverageComplete = false
+        break
+      }
       // Structural edits made while the preload runs shift screen positions;
       // install each block through the current mapping.
       const ops = state.editJournal.structuralOps.get(sheetId) ?? []
@@ -2128,15 +2147,17 @@ export async function preloadEntireWorkbook(
         )
       }
     }
-    const finalOps = state.editJournal.structuralOps.get(sheet.id) ?? []
-    state.loadedRanges.set(sheetId, {
-      startRow: 0,
-      endRow: sheet.rowCount - 1 + netAxisDelta(finalOps, 'row'),
-      startColumn: 0,
-      endColumn: sheet.columnCount - 1 + netAxisDelta(finalOps, 'column'),
-    })
+    if (sheetComplete) {
+      const finalOps = state.editJournal.structuralOps.get(sheet.id) ?? []
+      state.loadedRanges.set(sheetId, {
+        startRow: 0,
+        endRow: sheet.rowCount - 1 + netAxisDelta(finalOps, 'row'),
+        startColumn: 0,
+        endColumn: sheet.columnCount - 1 + netAxisDelta(finalOps, 'column'),
+      })
+    }
   }
-  if (lazyWorkbookRef.current === state) {
+  if (lazyWorkbookRef.current === state && coverageComplete) {
     state.flags.preloadComplete = true
     setMessage(t('appFullyLoaded'))
   }

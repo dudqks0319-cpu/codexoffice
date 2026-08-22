@@ -57,4 +57,21 @@ describe('home-screen locale tables', () => {
     // a few shared strings (brand names, "PDF", "OK"-style tokens) are fine
     expect(identical.length).toBeLessThan(referenceKeys.length / 4)
   })
+
+  it.each(locales)('locale %s has no legacy account, credits, or promotion copy', (locale) => {
+    const text = Object.values(strings[locale]).join('\n')
+    expect(text).not.toMatch(/genspark|genteam|credits?|积分|クレジット|크레딧/i)
+    expect(text).not.toMatch(/Codex CLI/i)
+    expect(Object.keys(strings[locale])).not.toContain('logoutConfirm')
+    expect(text).toContain('Codex')
+    expect(text).toContain('OpenAI')
+  })
+
+  it.each(locales)('locale %s uses the Codexoffice product identity', (locale) => {
+    const table = strings[locale] as Record<string, string>
+    expect(table.onbTitle1).toContain('Codexoffice')
+    expect(table.newDoc).toBe('Codexoffice Docs')
+    expect(table.newSheet).toBe('Codexoffice Sheets')
+    expect(table.newSlide).toBe('Codexoffice Slides')
+  })
 })

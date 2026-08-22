@@ -10,10 +10,11 @@
 import type { RenderSlide } from '@genoffice/pptx-render'
 import type { SlideComment, SectionInfo } from '@genoffice/pptx-engine'
 import type {
+  AiJobBudgetTicket,
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
-  GenSparkAccountStatus,
+  CodexAccountStatus,
 } from '@genoffice/ai-provider'
 
 export type { SlideComment, SectionInfo } from '@genoffice/pptx-engine'
@@ -23,10 +24,11 @@ export type {
   AiProviderConfig,
   AiProviderId,
   AiProviderMeta,
+  AiJobBudgetTicket,
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
-  GenSparkAccountStatus,
+  CodexAccountStatus,
 } from '@genoffice/ai-provider'
 export { AI_PROVIDERS } from '@genoffice/ai-provider'
 export type { AgentToolCall, AgentToolDef } from '@genoffice/agent-core'
@@ -52,6 +54,8 @@ export interface AttachmentMeta {
   /** Lowercase extension, without the dot */
   ext: string
   sizeBytes: number
+  /** Trusted local content digest computed by the main process. */
+  sha256?: string
 }
 
 export interface AttachmentAddResult {
@@ -80,20 +84,57 @@ export interface AttachmentImageResult {
   error?: string
 }
 
+/** Provider-neutral request. Authentication and the raw generation response stay in main. */
+export interface GenerateSlideImageOp {
+  requestId: string
+  slideIndex: number
+  prompt: string
+  xPx: number
+  yPx: number
+  wPx: number
+  hPx: number
+  fitWidthPx: number
+}
+
+export type GenerateSlideImageErrorCode =
+  | 'IMAGE_CANCELLED'
+  | 'IMAGE_CONFIRMATION_REQUIRED'
+  | 'IMAGE_DISABLED'
+  | 'IMAGE_DUPLICATE'
+  | 'IMAGE_INPUT_INVALID'
+  | 'IMAGE_QUOTA_EXCEEDED'
+  | 'IMAGE_BUSY'
+  | 'IMAGE_SIGN_IN_REQUIRED'
+  | 'IMAGE_UNAVAILABLE'
+  | 'IMAGE_PROTOCOL_INVALID'
+  | 'IMAGE_OUTPUT_INVALID'
+  | 'IMAGE_TIMEOUT'
+  | 'IMAGE_PROVIDER_FAILED'
+  | 'IMAGE_INSERT_FAILED'
+
+export type GenerateSlideImageResult =
+  | {
+      ok: true
+      slide: RenderSlide
+      sourceId: string
+      image: { mime: 'image/png' | 'image/jpeg' | 'image/webp'; width: number; height: number }
+    }
+  | { ok: false; code: GenerateSlideImageErrorCode; error: string }
+
 /** Attachment bridge (window.desktop): same names/signatures as docs' DesktopApi attachment subset, so files-skill can be copied wholesale */
 export interface DesktopFilesApi {
   /** Multi-select attachment file dialog */
   pickAttachments(): Promise<AttachmentAddResult | null>
-  /** Validate dragged-in paths and return attachment metadata */
-  addAttachmentPaths(paths: string[]): Promise<AttachmentAddResult>
+  /** Validate genuine dropped/pasted File objects and return attachment metadata */
+  addAttachmentFiles(files: File[]): Promise<AttachmentAddResult>
+  /** Refresh metadata only for paths already granted to this tab */
+  refreshAttachments(paths: string[]): Promise<AttachmentAddResult>
   /** Save a clipboard-pasted image (no local path) to a temp file and add it as an attachment */
   addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
   /** Read one slice of an attachment's extracted text */
   readAttachment(path: string, offset: number, maxChars: number): Promise<AttachmentReadResult>
   /** Read an image attachment as base64 for multimodal (≤5MB) */
   readAttachmentImage(path: string): Promise<AttachmentImageResult>
-  /** Absolute path of a File dropped on the window (Electron webUtils) */
-  getPathForFile(file: File): string
 }
 
 /** One rich-text run (sent by the editor, with independent formatting). */
@@ -406,6 +447,43 @@ export interface ApplyThemeOp {
   majorFont?: string
   minorFont?: string
   fitWidthPx: number
+}
+
+export interface ImportedThemeCandidate {
+  id: string
+  name: string
+  slideCount: number
+  colors: Record<string, string>
+  majorFont?: string
+  minorFont?: string
+  majorEaFont?: string
+  minorEaFont?: string
+  majorCsFont?: string
+  minorCsFont?: string
+}
+
+export interface ThemeImportPreview {
+  token: string
+  sourceName: string
+  defaultCandidateId: string
+  candidates: ImportedThemeCandidate[]
+}
+
+export type ThemeImportErrorCode =
+  | 'unavailable'
+  | 'same-file'
+  | 'invalid-file'
+  | 'too-large'
+  | 'unsupported-file'
+  | 'inspection-failed'
+  | 'expired'
+  | 'invalid-selection'
+  | 'apply-failed'
+
+export type ThemeImportPreviewResult = ThemeImportPreview | { error: ThemeImportErrorCode } | null
+export interface ApplyImportedThemeOp {
+  token: string
+  candidateId: string
 }
 
 export type TransitionKind =
@@ -990,41 +1068,10 @@ export interface SlidesApi {
   openPptx: (fitWidthPx: number) => Promise<OpenResult | null>
   openPptxPath: (path: string, fitWidthPx: number) => Promise<OpenResult | null>
   consumePendingOpen: (fitWidthPx: number) => Promise<OpenResult | null>
+  /** Main-process gate for OS/double-click opens while AI changes await review. */
+  setAiReviewPending: (pending: boolean) => void
   /** New blank presentation (single blank 16:9 page, untitled) */
   newBlank: (fitWidthPx: number) => Promise<OpenResult>
-  /** HTML pipeline generation: mode="append" merges with the previously generated pages and rebuilds wholesale (appendedFrom = existing page count);
-   *  mode="replace_at" redoes page atIndex in place from single-page HTML (other pages untouched, undoable, replacedIndex = that page's index);
-   *  mode="insert_at" inserts a new page at atIndex from single-page HTML (later pages shift back, undoable, insertedIndex = that page's index);
-   *  when the pipeline fails it falls back to element-level mode, fallbackReason explains why;
-   *  deckName = the deck name AI derived from user input, used as the filename when saving a new draft (falls back to timestamp naming) */
-  htmlToPptx: (
-    pagesHtml: string[],
-    fitWidthPx: number,
-    mode?: 'replace' | 'append' | 'replace_at' | 'insert_at',
-    atIndex?: number,
-    deckName?: string,
-  ) => Promise<
-    | (OpenResult & {
-        appendedFrom?: number
-        replacedIndex?: number
-        insertedIndex?: number
-        fallbackReason?: string
-        imageFailures?: { page: number; url: string }[]
-      })
-    | { error: string }
-  >
-  /** Whether cloud single-page generation (gsk slide_generate) is available (GENOFFICE_CLOUD_SLIDE=1 + gsk login) */
-  cloudGenStatus: () => Promise<{ enabled: boolean }>
-  /** Cloud single-page generation: brief → one-slide pptx temp file; the marker goes into an htmlToPptx pagesHtml slot in place of HTML */
-  cloudGeneratePage: (op: {
-    brief: string
-    title?: string
-    styleSkill?: string
-    deckContext?: Record<string, unknown>
-    images?: { url: string; caption?: string }[]
-    width?: number
-    height?: number
-  }) => Promise<{ ok: boolean; marker?: string; error?: string }>
   editText: (op: EditTextOp) => Promise<RenderSlide | null>
   /** Change font/size on selected elements wholesale (elements without text ignored; returns null if all ignored) */
   setElementFont: (op: SetElementFontOp) => Promise<RenderSlide | null>
@@ -1177,6 +1224,11 @@ export interface SlidesApi {
   ) => Promise<{ footer: string | null; slideNum: boolean; date: string | null }>
   /** Apply a theme (color/font scheme + per-page background); returns the reparsed full RenderSlide set, null = no-op, { error } = failed (state rolled back) */
   applyTheme: (op: ApplyThemeOp) => Promise<RenderSlide[] | { error: string } | null>
+  previewThemeImport: () => Promise<ThemeImportPreviewResult>
+  cancelThemeImport: (token: string) => Promise<void>
+  applyImportedTheme: (
+    op: ApplyImportedThemeOp,
+  ) => Promise<RenderSlide[] | { error: ThemeImportErrorCode } | null>
   /** Set the transition effect (takes effect in PowerPoint shows of the saved pptx); returns success */
   setTransition: (op: SetTransitionOp) => Promise<boolean>
   /** The current page's transition effect (echoed on page switch) */
@@ -1266,10 +1318,22 @@ export interface SlidesApi {
   exportPdf: (op: ExportPdfOp) => Promise<ExportPdfResult>
   /** Print (system dialog; cancel counts as ok=false without an error) */
   printSlides: (op: PrintSlidesOp) => Promise<{ ok: boolean; error?: string }>
-  save: () => Promise<{ ok: boolean; path?: string; error?: string; slides?: RenderSlide[] }>
-  saveAs: (
-    defaultName: string,
-  ) => Promise<{ ok: boolean; path?: string; error?: string; slides?: RenderSlide[] }>
+  save: () => Promise<{
+    ok: boolean
+    path?: string
+    error?: string
+    slides?: RenderSlide[]
+    dirty?: boolean
+    superseded?: boolean
+  }>
+  saveAs: (defaultName: string) => Promise<{
+    ok: boolean
+    path?: string
+    error?: string
+    slides?: RenderSlide[]
+    dirty?: boolean
+    superseded?: boolean
+  }>
   /** The close guard chose "Save": the main process asks the renderer to run the full save flow */
   onCloseSaveRequest: (handler: () => void) => () => void
   reportCloseSaveResult: (ok: boolean) => void
@@ -1283,12 +1347,14 @@ export interface SlidesApi {
   onRenamed: (handler: (newPath: string) => void) => () => void
   getAiSettings: () => Promise<AiSettings>
   setAiSettings: (settings: AiSettings) => Promise<void>
+  aiJobBegin: (jobId: string) => Promise<AiJobBudgetTicket>
+  aiJobEnd: (ticket: AiJobBudgetTicket) => Promise<void>
   aiStream: (request: AiStreamRequest) => Promise<void>
   aiStreamCancel: (requestId: string) => Promise<void>
-  /** Genspark account status (gsk login state); with withEmail also fetches the email (needs a network request, slower) */
-  aiGskStatus: (withEmail?: boolean) => Promise<GenSparkAccountStatus>
-  /** Open the browser to log into Genspark (fire-and-forget; aiGskStatus turns logged-in once done) */
-  aiGskLogin: () => Promise<void>
+  /** Status of the app Codex account; credentials never enter the renderer. */
+  aiCodexStatus: () => Promise<CodexAccountStatus>
+  /** Start Codex account authentication and return the resulting status. */
+  aiCodexLogin: () => Promise<CodexAccountStatus>
   webSearch: (
     query: string,
     maxResults?: number,
@@ -1320,21 +1386,10 @@ export interface SlidesApi {
     hPx: number
     fitWidthPx: number
   }) => Promise<{ slide: RenderSlide; sourceId: string } | null>
-  /** gsk (Genspark) AI image generation/editing, returns the image URL (error prompts login when logged out) */
-  generateImage: (op: {
-    prompt: string
-    model?: string
-    referenceImageUrls?: string[]
-    aspectRatio?: string
-    imageSize?: string
-  }) => Promise<{ url?: string; error?: string }>
-  /** gsk (Genspark) media analysis: image/audio/video content understanding, returns analysis text */
-  analyzeMedia: (op: {
-    mediaUrls: string[]
-    requirements: string
-  }) => Promise<{ text?: string; error?: string }>
-  /** gsk availability: installed and logged in (for UI/tools to prompt login) */
-  gskStatus: () => Promise<{ available: boolean; email?: string }>
+  /** Confirm, generate, validate, and insert in main; returns the normal bounded RenderSlide. */
+  generateSlideImage: (op: GenerateSlideImageOp) => Promise<GenerateSlideImageResult>
+  /** Cancel an image turn owned by this renderer and request id. */
+  cancelSlideImage: (requestId: string) => Promise<boolean>
   onAiStream: (handler: (chunk: AiStreamChunk) => void) => () => void
   /** Style Skill sidecar: write styleSkill to a same-named .styleskill.json next to the draft */
   saveStyleSidecar: (data: {

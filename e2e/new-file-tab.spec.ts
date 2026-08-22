@@ -2,11 +2,11 @@ import { test, expect } from '@playwright/test'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl, screenshotPath } from './helpers'
 
 test.describe('new file from home', () => {
-  test('AI Docs quick card opens a docs editor tab', async () => {
+  test('Codexoffice Docs quick card opens a docs editor tab', async () => {
     const launched = await launchShell({ onboardingSeen: true, videoDir: 'new-doc-tab' })
     const { app, page } = launched
     try {
-      await expect(page.locator('.quick-card').first()).toContainText('AI Docs')
+      await expect(page.locator('.quick-card').first()).toContainText('Codexoffice Docs')
 
       await page.locator('.quick-card').first().click()
 

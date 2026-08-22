@@ -16,7 +16,7 @@ import {
   workbookCommandBatchSchema,
   type WorkbookOperation,
 } from '../domain/workbook-dsl'
-import type { ApplyOutcome, ChangePlan } from '../domain/workbook.types'
+import type { ChangePlan } from '../domain/workbook.types'
 import { isSheetRemoved } from './edit-journal'
 import { t } from './i18n/locale'
 import { buildLazyChangePlan } from './lazy-plan'
@@ -38,7 +38,6 @@ export interface PlanContext {
     current: { sessionId: string; sheetId: string; plan: ChangePlan } | null
   }
   readonly setPreview: (plan: ChangePlan | null) => void
-  readonly autoApplySafePlan: (plan: ChangePlan) => Promise<ApplyOutcome>
 }
 
 /** shared by the agent's propose_operations tool; identical validation and
@@ -48,7 +47,7 @@ export function proposeOperations(
   ctx: PlanContext,
   operations: readonly WorkbookOperation[],
   summary: string,
-): { ok: true; plan: ChangePlan; applied: Promise<ApplyOutcome> } | { ok: false; error: string } {
+): { ok: true; plan: ChangePlan } | { ok: false; error: string } {
   const state = ctx.lazyWorkbookRef.current
   if (state) {
     const worksheet = ctx.univerRef.current?.univerAPI.getActiveWorkbook()?.getActiveSheet()
@@ -421,9 +420,7 @@ export function proposeOperations(
       const plan = buildLazyChangePlan(batch, lazyCellReader(worksheet), worksheet.getSheetName())
       ctx.lazyPreviewRef.current = { sessionId: state.file.sessionId, sheetId, plan }
       ctx.setPreview(plan)
-      // All plans auto-apply (undo covers them); the caller awaits `applied`
-      // so a failed apply is reported instead of silently claimed as done.
-      return { ok: true, plan, applied: ctx.autoApplySafePlan(plan) }
+      return { ok: true, plan }
     } catch (error: unknown) {
       return {
         ok: false,
@@ -441,9 +438,7 @@ export function proposeOperations(
       operations,
     })
     ctx.setPreview(plan)
-    // All plans auto-apply (undo covers them); on failure the preview
-    // card stays up so the user can Apply manually.
-    return { ok: true, plan, applied: ctx.autoApplySafePlan(plan) }
+    return { ok: true, plan }
   } catch (error: unknown) {
     return {
       ok: false,
@@ -486,7 +481,6 @@ export function runDeterministicPlan(
       const plan = buildLazyChangePlan(command, lazyCellReader(worksheet), worksheet.getSheetName())
       ctx.lazyPreviewRef.current = { sessionId: state.file.sessionId, sheetId, plan }
       ctx.setPreview(plan)
-      void ctx.autoApplySafePlan(plan)
       return { text: t('appPreviewCreated') }
     } catch (error: unknown) {
       return {
@@ -503,7 +497,6 @@ export function runDeterministicPlan(
     })
     const plan = ctx.adapterRef.current.plan(command)
     ctx.setPreview(plan)
-    void ctx.autoApplySafePlan(plan)
     return { text: t('appPreviewCreatedDemo') }
   } catch (error: unknown) {
     return {

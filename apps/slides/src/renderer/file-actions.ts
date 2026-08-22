@@ -5,6 +5,7 @@
 import type { RenderSlide } from '@genoffice/pptx-render'
 import type { ActionCtx } from './action-context'
 import { renderSlidesToPngBase64 } from './export-render'
+import { refreshRuntimeEvidenceHashes, verifyEvidenceDeckForExport } from './ai/slides-skill'
 import { t } from './i18n/locale'
 
 /**
@@ -38,27 +39,56 @@ export function adoptSavedSlides(ctx: ActionCtx, next: RenderSlide[]): void {
 }
 
 export async function save(ctx: ActionCtx): Promise<boolean> {
+  if (ctx.aiReviewPending) {
+    ctx.setStatus('Save blocked: apply or reject the pending AI changes first.')
+    return false
+  }
   await flushActiveEdit(ctx)
   await ctx.flushNotes()
+  const gate = await verifyEvidenceDeckForExport(
+    ctx.slides,
+    (index) => window.slidesApi.getNotes(index),
+    refreshRuntimeEvidenceHashes,
+  )
+  if (!gate.ok) {
+    ctx.setStatus(`Save blocked: ${gate.error}`)
+    return false
+  }
   const r = await window.slidesApi.save()
+  if (r.superseded) return false
   if (r.ok) {
     if (r.slides) adoptSavedSlides(ctx, r.slides)
     if (r.path) ctx.setPath(r.path)
-    ctx.setDirty(false)
+    const dirtyAfterSave = r.dirty === true
+    ctx.setDirty(dirtyAfterSave)
     ctx.setStatus(t('appStatusSaved', { name: r.path?.split('/').pop() ?? '' }))
   } else ctx.setStatus(t('appStatusSaveFailed', { error: r.error ?? t('appErrorCanceled') }))
-  return r.ok
+  return r.ok && r.dirty !== true
 }
 
 export async function saveAs(ctx: ActionCtx): Promise<void> {
+  if (ctx.aiReviewPending) {
+    ctx.setStatus('Save As blocked: apply or reject the pending AI changes first.')
+    return
+  }
   await flushActiveEdit(ctx)
   await ctx.flushNotes()
+  const gate = await verifyEvidenceDeckForExport(
+    ctx.slides,
+    (index) => window.slidesApi.getNotes(index),
+    refreshRuntimeEvidenceHashes,
+  )
+  if (!gate.ok) {
+    ctx.setStatus(`Save As blocked: ${gate.error}`)
+    return
+  }
   const name = ctx.path?.split('/').pop() ?? 'presentation.pptx'
   const r = await window.slidesApi.saveAs(name)
+  if (r.superseded) return
   if (r.ok) {
     if (r.slides) adoptSavedSlides(ctx, r.slides)
     ctx.setPath(r.path ?? ctx.path)
-    ctx.setDirty(false)
+    ctx.setDirty(r.dirty === true)
     ctx.setStatus(t('appStatusSavedAs', { name: r.path?.split('/').pop() ?? '' }))
   }
 }
@@ -70,9 +100,22 @@ export function exportBaseName(ctx: ActionCtx): string {
 
 /** Export as images: each page (skipping hidden ones) rendered offscreen to 2x PNG, written to disk by the main process */
 export async function exportImages(ctx: ActionCtx): Promise<void> {
+  if (ctx.aiReviewPending) {
+    ctx.setStatus('Export blocked: apply or reject the pending AI changes first.')
+    return
+  }
   const visible = ctx.slides.filter((s) => !s.hidden)
   if (visible.length === 0) {
     ctx.setStatus(t('appExportNoSlides'))
+    return
+  }
+  const gate = await verifyEvidenceDeckForExport(
+    ctx.slides,
+    (index) => window.slidesApi.getNotes(index),
+    refreshRuntimeEvidenceHashes,
+  )
+  if (!gate.ok) {
+    ctx.setStatus(`Export blocked: ${gate.error}`)
     return
   }
   const dir = await window.slidesApi.pickExportDir()
@@ -97,9 +140,22 @@ export async function exportImages(ctx: ActionCtx): Promise<void> {
 
 /** Export as PDF: each page (skipping hidden ones) rendered offscreen to 2x PNG; main process printToPDF in a hidden window */
 export async function exportPdf(ctx: ActionCtx): Promise<void> {
+  if (ctx.aiReviewPending) {
+    ctx.setStatus('Export blocked: apply or reject the pending AI changes first.')
+    return
+  }
   const visible = ctx.slides.filter((s) => !s.hidden)
   if (visible.length === 0) {
     ctx.setStatus(t('appExportNoSlides'))
+    return
+  }
+  const gate = await verifyEvidenceDeckForExport(
+    ctx.slides,
+    (index) => window.slidesApi.getNotes(index),
+    refreshRuntimeEvidenceHashes,
+  )
+  if (!gate.ok) {
+    ctx.setStatus(`Export blocked: ${gate.error}`)
     return
   }
   const target = await window.slidesApi.pickExportPdfPath(`${exportBaseName(ctx)}.pdf`)

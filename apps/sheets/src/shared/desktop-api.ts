@@ -3,10 +3,12 @@ import { z } from 'zod'
 import type {
   AiChatRequest,
   AiChatResponse,
+  AiJobBudgetTicket,
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
-  GenSparkAccountStatus,
+  CodexAccountStatus,
+  CodexModelSummary,
 } from '@genoffice/ai-provider'
 
 const MAX_RANGE_CELLS = 20_000
@@ -1682,15 +1684,16 @@ export type WorkbookConditionalRule = z.infer<typeof conditionalRuleSchema>
 
 const aiProviderConfigSchema = z
   .object({
-    apiKey: z.string(),
-    model: z.string(),
-    baseUrl: z.string().optional(),
+    apiKey: z.string().max(4096).optional(),
+    model: z.string().max(128).optional(),
+    reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
+    baseUrl: z.string().max(2048).optional(),
   })
   .strict()
 
 export const aiSettingsInputSchema = z
   .object({
-    provider: z.string().min(1),
+    provider: z.literal('codex'),
     providers: z.record(z.string(), aiProviderConfigSchema),
   })
   .strict()
@@ -1760,6 +1763,13 @@ export const aiChatRequestSchema = z
 export const aiStreamRequestSchema = z
   .object({
     requestId: z.string().min(1),
+    job: z
+      .object({
+        jobId: z.string().min(1).max(128),
+        capability: z.string().min(1).max(128),
+        maximumOutputTokens: z.literal(8_192),
+      })
+      .strict(),
     settings: aiSettingsInputSchema,
     system: z.string(),
     messages: z.array(agentMessageSchema).max(MAX_AI_MESSAGES),
@@ -1895,24 +1905,26 @@ export interface DesktopApi {
   /// shell home.
   consumeNewBlankWorkbook(): Promise<boolean>
   getAiSettings(): Promise<AiSettings>
-  setAiSettings(settings: AiSettings): Promise<void>
+  setAiSettings(settings: AiSettings): Promise<AiSettings>
   aiChat(request: AiChatRequest): Promise<AiChatResponse>
+  aiJobBegin(jobId: string): Promise<AiJobBudgetTicket>
+  aiJobEnd(ticket: AiJobBudgetTicket): Promise<void>
   /// start a streaming AI call; deltas arrive via onAiStream with the same requestId
   aiStream(request: AiStreamRequest): Promise<void>
   aiStreamCancel(requestId: string): Promise<void>
-  /// Genspark account status (gsk login state); withEmail also returns the email
-  /// (needs a network request, slower)
-  aiGskStatus(withEmail?: boolean): Promise<GenSparkAccountStatus>
-  /// Opens the browser to sign in to Genspark (fire-and-forget; aiGskStatus
-  /// becomes signed-in on completion)
-  aiGskLogin(): Promise<void>
+  /// Status of the app Codex account; credentials never enter the renderer.
+  aiCodexStatus(): Promise<CodexAccountStatus>
+  /// Starts Codex account authentication and returns the resulting status.
+  aiCodexLogin(): Promise<CodexAccountStatus>
+  /// Models currently visible to this app's signed-in Codex account.
+  aiCodexModels(): Promise<CodexModelSummary[]>
   /// Web search (main-process Serper/DuckDuckGo, shared with docs/slides)
   webSearch(query: string, maxResults?: number): Promise<WebSearchResult>
   onAiStream(handler: (chunk: AiStreamChunk) => void): () => void
   /// Chat attachments: multi-select file dialog (returns null on cancel)
   pickAttachments(): Promise<AttachmentAddResult | null>
-  /// Validates dropped paths and returns attachment metadata
-  addAttachmentPaths(paths: string[]): Promise<AttachmentAddResult>
+  /// Validates genuine dropped/pasted File objects and returns attachment metadata
+  addAttachmentFiles(files: File[]): Promise<AttachmentAddResult>
   /// Persists a clipboard-pasted image (no local path) to a temp file and adds it
   /// as an attachment
   addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
@@ -1920,8 +1932,6 @@ export interface DesktopApi {
   readAttachment(path: string, offset: number, maxChars: number): Promise<AttachmentReadResult>
   /// Reads an image attachment as base64 for multimodal input (≤5MB)
   readAttachmentImage(path: string): Promise<AttachmentImageResult>
-  /// Absolute path of a File dropped onto the window (Electron webUtils)
-  getPathForFile(file: File): string
 }
 
 export type MenuAction = 'open' | 'save' | 'save-as' | 'export-pdf' | 'undo' | 'redo'

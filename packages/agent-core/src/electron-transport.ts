@@ -1,4 +1,5 @@
 import type {
+  AgentStreamErrorCode,
   AgentStreamRequest,
   AgentToolCall,
   AgentToolDef,
@@ -18,8 +19,8 @@ export interface IpcStreamChunk {
   text?: string
   toolCall?: AgentToolCall
   error?: string
-  /** machine-readable error cause; maps to the localized timeout/credits message */
-  errorCode?: 'timeout' | 'credits'
+  /** machine-readable error cause; maps to a localized safe message */
+  errorCode?: AgentStreamErrorCode
   /** normalized stop reason on 'done' ('max_tokens' = cut off by the token limit) */
   stopReason?: string
 }
@@ -27,10 +28,18 @@ export interface IpcStreamChunk {
 /** The request forwarded to the main process to start one streaming turn. */
 export interface IpcStreamStart<S> {
   requestId: string
+  job: IpcJobBudgetTicket
   settings: S
   system: string
   messages: AgentMessage[]
   tools: AgentToolDef[]
+  maxTokens: number
+}
+
+export interface IpcJobBudgetTicket {
+  jobId: string
+  capability: string
+  maximumOutputTokens: number
 }
 
 /**
@@ -49,12 +58,20 @@ export interface IpcTransportOptions<S> {
   /** abort the in-flight turn in the main process */
   cancel(requestId: string): void
   getSettings(): S
+  /** Current main-issued ticket, reused by every provider turn in one UI job. */
+  getJobTicket(): IpcJobBudgetTicket | null
+  /** Requested output reservation per turn; main clamps it to the job remainder. */
+  maxTokensPerTurn?: number
+  /** Optional per-request override for models that legitimately reason silently longer. */
+  silenceTimeoutMs?(settings: S): number
   /** localized fallback when an error chunk carries no message */
   unknownErrorText(): string
   /** localized message for timeouts (errorCode 'timeout' and the silence watchdog) */
   timeoutErrorText?(): string
   /** localized message for exhausted credits (errorCode 'credits') */
   creditsErrorText?(): string
+  /** localized message for the server-enforced job ceiling (errorCode 'budget') */
+  budgetErrorText?(): string
 }
 
 /**
@@ -67,6 +84,9 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
   return {
     stream(request: AgentStreamRequest, cb) {
       const requestId = crypto.randomUUID()
+      const settings = options.getSettings()
+      const job = options.getJobTicket()
+      const silenceTimeoutMs = options.silenceTimeoutMs?.(settings) ?? IPC_STREAM_SILENCE_TIMEOUT_MS
       let settled = false
       let silenceTimer: ReturnType<typeof setTimeout> | undefined
       const settle = () => {
@@ -84,7 +104,7 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
         silenceTimer = setTimeout(() => {
           options.cancel(requestId)
           fail(timeoutText())
-        }, IPC_STREAM_SILENCE_TIMEOUT_MS)
+        }, silenceTimeoutMs)
       }
       const unsubscribe = options.onStream((chunk) => {
         if (chunk.requestId !== requestId || settled) return
@@ -102,13 +122,17 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
           cb.onDone()
         } else {
           settle()
-          cb.onError(
+          const code = chunk.errorCode
+          const message =
             chunk.errorCode === 'timeout'
               ? timeoutText()
               : chunk.errorCode === 'credits'
                 ? (options.creditsErrorText?.() ?? chunk.error ?? options.unknownErrorText())
-                : (chunk.error ?? options.unknownErrorText()),
-          )
+                : chunk.errorCode === 'budget'
+                  ? (options.budgetErrorText?.() ?? chunk.error ?? options.unknownErrorText())
+                  : (chunk.error ?? options.unknownErrorText())
+          if (code) cb.onError(message, code)
+          else cb.onError(message)
         }
       })
       armSilence()
@@ -117,10 +141,16 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
         Promise.resolve(
           options.start({
             requestId,
-            settings: options.getSettings(),
+            job: job ?? {
+              jobId: 'missing',
+              capability: 'missing',
+              maximumOutputTokens: 8_192,
+            },
+            settings,
             system: request.system,
             messages: request.messages,
             tools: request.tools,
+            maxTokens: options.maxTokensPerTurn ?? 2_048,
           }),
         ).catch((err: unknown) => {
           fail(err instanceof Error ? err.message : options.unknownErrorText())

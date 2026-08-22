@@ -11,6 +11,7 @@ import {
   applyThemeToArchive,
   buildColorMap,
   createBlankPptx,
+  escapeXmlAttr,
   openPptx,
   parseTheme,
   patchThemeXml,
@@ -52,6 +53,80 @@ describe('patchThemeXml', () => {
     expect(parsed.colors.accent2).toBe('#FFB74D')
     expect(parsed.majorFont).toBe('Segoe UI')
     expect(parsed.majorEaFont).toBe('Microsoft YaHei')
+  })
+
+  it('treats replacement metacharacters as plain escaped theme text', async () => {
+    const opened = await openPptx(await createBlankPptx())
+    const xml = opened.archive.readText('ppt/theme/theme1.xml')!
+    for (const value of ['$&', '$`', "$'", 'Quoted " & value']) {
+      const out = patchThemeXml(xml, {
+        name: value,
+        colors: graphite.colors,
+        majorFont: value,
+        minorFont: value,
+      })
+      const escaped = escapeXmlAttr(value)
+      expect(out).toContain(`<a:clrScheme name="${escaped}">`)
+      expect(out).toContain(`<a:latin typeface="${escaped}"/>`)
+    }
+  })
+
+  it('patches destination theme overrides in place without expanding or replacing them', async () => {
+    const opened = await openPptx(await createBlankPptx())
+    const overridePath = 'ppt/theme/themeOverride1.xml'
+    const overrideRelsPath = 'ppt/theme/_rels/themeOverride1.xml.rels'
+    const fmtScheme =
+      '<a:fmtScheme name="Keep Format"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst></a:fmtScheme>'
+    const extLst =
+      '<a:extLst><a:ext uri="keep"><keep:payload xmlns:keep="urn:keep"/>' +
+      '<a:accent1><a:srgbClr val="ABCDEF"/></a:accent1></a:ext></a:extLst>'
+    const override =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<a:themeOverride xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      '<a:clrScheme name="Local Override">' +
+      '<a:accent1><a:srgbClr val="112233"/></a:accent1>' +
+      '<a:accent2><a:srgbClr val="445566"/></a:accent2>' +
+      '</a:clrScheme>' +
+      '<a:fontScheme name="Local Fonts">' +
+      '<a:majorFont><a:latin typeface="Old Major"/><a:ea typeface="Old EA"/></a:majorFont>' +
+      '</a:fontScheme>' +
+      fmtScheme +
+      extLst +
+      '</a:themeOverride>'
+    const overrideRels =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="urn:keep" Target="../media/image1.png"/>' +
+      '</Relationships>'
+    opened.archive.entries.set(overridePath, Buffer.from(override, 'utf8'))
+    opened.archive.entries.set(overrideRelsPath, Buffer.from(overrideRels, 'utf8'))
+
+    expect(
+      applyThemeToArchive(opened, {
+        name: graphite.name,
+        colors: graphite.colors,
+        majorFont: 'Segoe UI',
+        majorEaFont: 'Microsoft YaHei',
+      }),
+    ).toBe(2)
+
+    const base = opened.archive.readText('ppt/theme/theme1.xml')!
+    expect(parseTheme(base).colors.accent1).toBe('#4FC3F7')
+    const patchedOverride = opened.archive.readText(overridePath)!
+    expect(patchedOverride).toContain('<a:clrScheme name="Graphite">')
+    expect(patchedOverride).toContain('<a:accent1><a:srgbClr val="4FC3F7"/></a:accent1>')
+    expect(patchedOverride).toContain('<a:accent2><a:srgbClr val="FFB74D"/></a:accent2>')
+    expect(patchedOverride).not.toContain('<a:accent3>')
+    expect(patchedOverride).toContain('<a:latin typeface="Segoe UI"/>')
+    expect(patchedOverride).toContain('<a:ea typeface="Microsoft YaHei"/>')
+    expect(patchedOverride).not.toContain('<a:minorFont>')
+    expect(patchedOverride).toContain(fmtScheme)
+    expect(patchedOverride).toContain(extLst)
+    expect(opened.archive.readText(overrideRelsPath)).toBe(overrideRels)
+
+    const reopened = await openPptx(await savePptx(opened))
+    expect(reopened.archive.readText(overridePath)).toBe(patchedOverride)
+    expect(reopened.archive.readText(overrideRelsPath)).toBe(overrideRels)
   })
 })
 

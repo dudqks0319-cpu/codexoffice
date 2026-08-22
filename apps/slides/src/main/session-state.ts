@@ -1,5 +1,5 @@
 /**
- * Shared main-process state for GenOffice Slides, extracted from slides-main.ts so
+ * Shared main-process state for Codexoffice Slides, extracted from slides-main.ts so
  * the IPC modules (slides-main, ai-ipc, presenter-show) can share it:
  * per-renderer sessions, snapshot undo/redo history, runtime paths, window
  * references, and RenderSlide rebuild helpers.
@@ -7,7 +7,18 @@
 import { BrowserWindow } from 'electron'
 import type { WebContents } from 'electron'
 import { join } from 'node:path'
-import { materializeSlide, type OpenedPptx, type Slide } from '@genoffice/pptx-engine'
+import {
+  applyThemeToArchive,
+  commitSaved,
+  materializeSlide,
+  remapDeckColors,
+  reparseDeck,
+  setSlideBackground,
+  validateThemeSpec,
+  type OpenedPptx,
+  type Slide,
+  type ThemeSpec,
+} from '@genoffice/pptx-engine'
 import {
   buildRenderSlide,
   type FontMetricsProvider,
@@ -58,8 +69,44 @@ export interface Session {
   transformPreview?: boolean
   /** The part currently edited in master view (exception to the fidelity rule: only that part is written back) */
   masterEdit?: { partPath: string; slide: Slide } | null
+  /** Monotonic edit generation used to avoid clearing edits that land while an async save is running. */
+  revision?: number
 }
 export const sessions = new Map<number, Session>()
+
+export function sessionIsCurrent(webContentsId: number, session: Session): boolean {
+  return sessions.get(webContentsId) === session
+}
+
+export function sessionRevision(session: Session): number {
+  return session.revision ?? 0
+}
+
+export function bumpSessionRevision(session: Session): number {
+  session.revision = sessionRevision(session) + 1
+  return session.revision
+}
+
+export function sessionHasDirtyState(session: Session): boolean {
+  return (
+    !!session.metaDirty ||
+    session.opened.deck.slides.some(
+      (slide) =>
+        !!slide.structureDirty ||
+        slide.elements.some(
+          (element) =>
+            !!(
+              element.dirty ||
+              element.dirtyTransform ||
+              element.dirtyFill ||
+              element.dirtyStroke ||
+              element.dirtySrcRect ||
+              element.dirtyPPr
+            ),
+        ),
+    )
+  )
+}
 
 // ── Undo/redo (snapshot-based) ─────────────────────────────────────────
 // The document's source of truth lives in the main process (deck.slides mutated in place +
@@ -70,6 +117,7 @@ export interface HistorySnapshot {
   slides: Slide[]
   entries: Map<string, Uint8Array>
   size: { cx: number; cy: number }
+  metaDirty: boolean
 }
 const MAX_HISTORY = 50
 
@@ -82,6 +130,7 @@ export function takeSnapshot(session: Session): HistorySnapshot {
     slides: structuredClone(session.opened.deck.slides),
     entries: new Map(session.opened.archive.entries),
     size: { ...session.opened.deck.size },
+    metaDirty: !!session.metaDirty,
   }
 }
 
@@ -91,6 +140,7 @@ function cloneSnapshot(snap: HistorySnapshot): HistorySnapshot {
     slides: structuredClone(snap.slides),
     entries: new Map(snap.entries),
     size: { ...snap.size },
+    metaDirty: snap.metaDirty,
   }
 }
 
@@ -100,6 +150,7 @@ export function pushHistory(session: Session): void {
   trimHistory(session.undoStack)
   session.redoStack = []
   session.htmlPages = null
+  bumpSessionRevision(session)
 }
 
 /** Begin a nestable transaction. Individual edit handlers keep their normal rollback behavior. */
@@ -145,6 +196,7 @@ export function carryHistoryForReplacement(
   replacement.redoStack = previous.redoStack
   replacement.historyBatch = previous.historyBatch
   replacement.aiSnapshots = previous.aiSnapshots
+  replacement.revision = previous.revision
 }
 
 const MAX_AI_SNAPSHOTS = 20
@@ -176,9 +228,67 @@ export function restoreSnapshot(session: Session, snap: HistorySnapshot): void {
   const fresh = cloneSnapshot(snap)
   session.opened.deck.slides = fresh.slides
   session.opened.deck.size = fresh.size
+  session.metaDirty = fresh.metaDirty
   const entries = session.opened.archive.entries
   entries.clear()
   for (const [k, v] of fresh.entries) entries.set(k, v)
+}
+
+/** A save establishes a new clean point; every older history state is dirty relative to it. */
+export function markHistoryDirtyAfterSave(session: Session): void {
+  for (const snapshot of [...session.undoStack, ...session.redoStack]) snapshot.metaDirty = true
+  if (session.historyBatch) session.historyBatch.before.metaDirty = true
+  for (const snapshot of session.aiSnapshots?.values() ?? []) snapshot.metaDirty = true
+}
+
+/** Apply built-in or imported themes through one guarded, rollback-safe history operation. */
+export function applyThemeToSession(
+  session: Session,
+  spec: ThemeSpec,
+  fitWidthPx: number,
+): RenderSlide[] | { error: string } | null {
+  try {
+    validateThemeSpec(spec)
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+  const redoBefore = session.redoStack
+  const undoBefore = session.undoStack.slice()
+  const htmlPagesBefore = session.htmlPages
+  const fitWidthBefore = session.fitWidthPx
+  const revisionBefore = sessionRevision(session)
+  const before = takeSnapshot(session)
+  pushHistory(session)
+  try {
+    commitSaved(session.opened)
+    const patched = applyThemeToArchive(session.opened, spec)
+    const remapped = remapDeckColors(session.opened, spec)
+    if (patched === 0 && remapped === 0) {
+      restoreSnapshot(session, before)
+      session.undoStack = undoBefore
+      session.redoStack = redoBefore
+      session.htmlPages = htmlPagesBefore
+      session.fitWidthPx = fitWidthBefore
+      session.revision = revisionBefore
+      return null
+    }
+    session.opened = reparseDeck(session.opened)
+    const lt1 = spec.colors.lt1
+    for (const slide of session.opened.deck.slides) {
+      if (!slide.background) setSlideBackground(slide, `#${lt1.replace(/^#/, '')}`)
+    }
+    session.metaDirty = true
+    session.fitWidthPx = fitWidthPx
+    return buildAllRenderSlides(session.opened, fitWidthPx)
+  } catch (err) {
+    restoreSnapshot(session, before)
+    session.undoStack = undoBefore
+    session.redoStack = redoBefore
+    session.htmlPages = htmlPagesBefore
+    session.fitWidthPx = fitWidthBefore
+    session.revision = revisionBefore
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 /**
