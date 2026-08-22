@@ -1,8 +1,82 @@
 # GenOffice macOS package release state
 
-Last verified: 2026-08-19 (Asia/Seoul; P0 remote CI plus local P1 PDF lifecycle,
-AI operations and updater evidence gates, full repository regression, and
-LibreOffice corpus evidence)
+Last verified: 2026-08-22 (Asia/Seoul; PPTX LibreOffice packaging repair,
+Word/Excel/PowerPoint reopen coverage, exact-SHA Developer ID package, and
+external release-gate recheck)
+
+## 2026-08-22 signed checkpoint, PPTX resource bound, and Office follow-up
+
+- The three initial checkpoints through
+  `1290d23a4e9cac5cb985e2e441a8f49da9711309` are
+  `52053bf` (LibreOffice-compatible PPTX ZIP output), `7315386` (Word-authored
+  reopen coverage), and `1290d23` (electron-builder Developer ID name
+  normalization). The validated resource-bound follow-up is `854ed3f`. No push
+  occurred in this checkpoint.
+- A real Codexoffice PPTX title edit exposed a LibreOffice repair prompt. The
+  OOXML parts and changed slide XML were valid, but the streamed JSZip archive
+  set the ZIP data-descriptor flag on all 47 package entries. Repacking the same
+  parts without data descriptors opened successfully. `savePptxToFile` now
+  streams without per-entry data descriptors, and a central-directory
+  regression test fixes that compatibility contract. The failing test observed
+  all 47 flags set before the change; the fixed engine suite passes 532/532.
+  A fresh Electron Slides design-save output contains 60 entries with no data
+  descriptors and opens successfully in stable LibreOffice 26.2.5.
+- Codex Security diff scan `1ac867f7-566b-439f-911d-f03520e77a78` completed
+  with full coverage and identified one low-severity save-time resource finding:
+  `streamFiles: false` buffered an unbounded current ZIP entry while the expanded
+  archive was already resident. A 128 MiB fixed input measured a 142,278,656-byte
+  current save-phase RSS delta versus 49,545,216 bytes on the prior path. The
+  follow-up now caps compressed input at 256 MiB, entries at 10,000, one expanded
+  part at 128 MiB, and total expansion at 512 MiB; actual streamed inflation is
+  stopped at the same budgets. A real 129 MiB part is rejected before output
+  creation. TAC status was `not_granted`; this did not gate the local scan.
+- Stable LibreOffice 26.2.5 and Microsoft Word 16.112.1
+  (`16.112.26081720`) are installed. The structural LibreOffice DOCX/XLSX/PPTX
+  corpus passes 3/3. Manual disposable-copy checks preserved 20 DOCX footnote
+  references, three XLSX sheets and two charts, and the selected edits in
+  Writer and Calc. Microsoft Word opened the CodexOffice-edited footnote file
+  without repair, preserved all 20 references, and saved a body edit plus a
+  second-footnote edit. The Office-authored reopen lane now covers Word, Excel,
+  and PowerPoint and passes 3/3 in isolated CodexOffice profiles. These are
+  strong partial observations, not final release evidence: Excel and PowerPoint
+  external-app outputs predate this exact SHA, and complete exact-candidate
+  schema-v2 Microsoft Office and LibreOffice visual packets remain HOLD.
+- The pre-resource-bound `1290d23` local checkpoint was signed with `Developer
+ID Application: Youngbeen Jung (3FG9QJC8WC)`, Hardened Runtime, and an Apple
+  secure timestamp. It is retained as signing-path evidence and is superseded
+  for release by the resource-bound follow-up.
+  `codesign --verify --deep --strict` passes on both the ZIP-extracted and
+  DMG-mounted app, all nested frameworks validate, and `hdiutil verify` passes.
+  The embedded receipt binds `com.genoffice.app`, version `0.5.0`, source SHA
+  `1290d23a4e9cac5cb985e2e441a8f49da9711309`, and app.asar SHA-256
+  `b69269070ed3fb085ca0718aa4ea723f80a4a7778aef5a93694653fe620cd376`.
+
+| Artifact                                         | SHA-256                                                            |
+| ------------------------------------------------ | ------------------------------------------------------------------ |
+| `apps/shell/release/Codexoffice-0.5.0-arm64.zip` | `a80dec7149039a77990d076613da189c4a7e24537ee5cb50bb06ff830c8261cd` |
+| `apps/shell/release/Codexoffice-0.5.0-arm64.dmg` | `84f0978c3011e4ccd5888517cd417c47b99fb24b01c58e2f5ddfa6ef32713f8b` |
+
+- The enforced bundle budget passes: 653.7 MiB total, 233 MiB Electron,
+  307.8 MiB Codex runtime, 74 MiB Office modules, 7.6 MiB native sidecars, and
+  9.1 MiB shell ASAR. The package remains local-only: Gatekeeper reports
+  `source=Unnotarized Developer ID`, no `notarytool` keychain credential exists,
+  and no notarization submission or stapling occurred.
+- Fresh verification after the resource-bound follow-up: all workspace
+  typechecks pass; lint has zero errors and eight existing React Hook warnings;
+  3,892 JavaScript/TypeScript tests pass
+  with one intentional skip; Sheets Rust passes 53/53; all five production
+  builds pass; default Electron E2E passes 17/17; Office-authored reopen passes
+  3/3; formatting and `git diff --check` pass. The sandboxed LibreOffice pivot
+  test aborts at AppKit registration, while the identical permitted-host Sheets
+  suite passes 990/990; only the permitted-host result is product evidence.
+- Remaining external HOLD gates are explicit: create or provide authorized
+  `notarytool` credentials and notarize/staple the next exact candidate;
+  configure a
+  credential-free HTTPS update channel and complete a signed N-to-N+1 exercise;
+  produce exact-SHA Microsoft Office and LibreOffice visual evidence packets;
+  and provide provider-account AI hard-cap, alert, kill-switch, and aggregate
+  spend evidence. No credential creation, provider setting, publication, or
+  update upload was performed.
 
 ## 2026-08-19 source-bound manual compatibility evidence gate
 
